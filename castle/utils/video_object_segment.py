@@ -16,9 +16,9 @@ import numpy as np
 
 from castle.aot.dataloaders import video_transforms as tr
 from castle.aot.utils.checkpoint import load_network
-from castle import aot
 from castle.aot.networks.models import build_vos_model
 from castle.aot.networks.engines import build_engine
+from .download import download_with_gdown
 from torchvision import transforms
 torch.backends.cudnn.benchmark = True
 
@@ -176,12 +176,29 @@ class DeAOTTrackerInferEngine(DeAOTInferEngine):
         self.update_size()
 
 
-def generate_aot(ckpt_path, model_type='r50_deaotl', device='cuda'):
+def download_aot_ckpt(model_type):
+    if model_type == 'r50_deaotl':
+        ckpt_path = 'ckpt/R50_DeAOTL_PRE_YTB_DAV.pth'
+        download_with_gdown('1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ', ckpt_path)
+        return ckpt_path
+    elif model_type == 'swinb_deaotl':
+        ckpt_path = 'ckpt/SwinB_DeAOTL_PRE_YTB_DAV.pth'
+        download_with_gdown('1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq', ckpt_path)
+        return ckpt_path
+    else:
+        assert False, f"model_type mismatch {model_type}, expect r50_deaotl or swinb_deaotl"
+
+def generate_aot(ckpt_path='', model_type='r50_deaotl', device='cuda'):
+    
+    if len(ckpt_path) == 0:
+        ckpt_path = download_aot_ckpt(model_type)
+
+
     args = {
         'phase': 'PRE_YTB_DAV',
         'model': model_type,
         'model_path': ckpt_path,
-        'long_term_mem_gap': 99999,
+        'long_term_mem_gap': int(1e6),
         'max_len_long_term': 30,
         'device': device,
     }

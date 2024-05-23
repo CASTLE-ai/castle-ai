@@ -1,12 +1,13 @@
 import numpy as np
 from PIL import Image
 
-_palette_hex = ['#BCECF4', '#FAE3F2', '#B7ECAB', '#C1B5EA', '#E29DC0', '#AECBEA', '#F7DCAF']
+_palette_hex = ['#7AE4F0', '#FFD0EC', '#6EE368', '#C1B5EA', '#9E83E3', '#A7CCED', '#FBC471']
 
 _palette = [0,0,0]
 for hex_code in _palette_hex:
     r, g, b = int(hex_code[1:3], 16), int(hex_code[3:5], 16), int(hex_code[5:7], 16)
     _palette.extend([r, g, b])
+    
 
 def colorize_mask(pred_mask):
     save_mask = Image.fromarray(pred_mask.astype(np.uint8))

@@ -18,4 +18,7 @@ __pycache__
 umap_learn.egg-info
 
 # test
-test_notebook.ipynb
+test*.ipynb
+notebooks/temp/*
+
+**/ckpt

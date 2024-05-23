@@ -1,0 +1,21 @@
+.venv
+.vscode/
+build/
+dist/
+__pycache__
+*.egg-info/
+**/__pycache__/
+**/.ipynb_checkpoints
+**/.ipynb_checkpoints/**
+*.swp
+*.pth
+
+# Python 2.x & 3.x bytecode cache
+*.pyc
+*__pycache__
+
+# metadata from pip-installing repo
+umap_learn.egg-info
+
+# test
+test_notebook.ipynb

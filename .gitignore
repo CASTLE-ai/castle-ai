@@ -19,6 +19,6 @@ umap_learn.egg-info
 
 # test
 test*.ipynb
-notebooks/temp/*
+notebooks/temp
 
 **/ckpt

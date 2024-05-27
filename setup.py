@@ -16,7 +16,7 @@ def readme():
 
 configuration = {
     "name": "castle-ai",
-    "version": "0.0.2",
+    "version": "0.0.4",
     "description": "Distinguish behavioral clusters Toolbox",
     "long_description": readme(),
     "long_description_content_type": "text/markdown",
@@ -45,6 +45,7 @@ configuration = {
         "opencv-python",
         "torchvision",
         "matplotlib",
+        "umap-learn",
     ],
     # "extras_require": {
     #     "plot": [

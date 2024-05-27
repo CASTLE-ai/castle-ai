@@ -1,5 +1,5 @@
 import numpy as np
-from umap import UMAP
+
 from sklearn.cluster import DBSCAN, HDBSCAN
 
 
@@ -18,7 +18,7 @@ def palette(x):
 
 
 class Latent:
-    def __init__(self, raw, time_window=1):
+    def __init__(self, raw, time_window=1, device='cpu'):
         n = len(raw) // time_window
         num_feature = raw.shape[-1]
         self.time_window = time_window
@@ -27,9 +27,10 @@ class Latent:
         self.cluster[np.isnan(self.data.sum(axis=1))] = -1
         self.num_cluster = 1
         self.need_maintain_key_frames = True
+        self.device=device
 
     def select(self, cluster_id):
-        return LocalLatent(self.data[self.cluster == cluster_id], self.cluster == cluster_id)
+        return LocalLatent(self.data[self.cluster == cluster_id], self.cluster == cluster_id, device=self.device)
     
     def merge(self, cluster_ids):
         cluster_ids = np.array(cluster_ids)
@@ -87,13 +88,19 @@ class Latent:
 
 
 class LocalLatent:
-    def __init__(self, data, index_mask):
+    def __init__(self, data, index_mask, device):
         self.data = data
         self.index_mask = index_mask
+        self.device = device
+
 
         
 
     def build_embedding(self, configs):
+        if self.device == 'cpu':
+            from umap import UMAP
+        elif self.device == 'gpu':
+            from cuml.manifold import UMAP
         Z = self.data
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
@@ -109,6 +116,11 @@ class LocalLatent:
 
 
     def build_cluster(self, method, configs):
+        if self.device == 'cpu':
+            from sklearn.cluster import DBSCAN, HDBSCAN
+        elif self.device == 'gpu':
+            from cuml.cluster import DBSCAN, HDBSCAN
+
         assert hasattr(self, 'embedding')
         if hasattr(self, 'cluster'):
             delattr(self, 'cluster')
@@ -141,6 +153,14 @@ class LocalLatent:
             plt.scatter(x=self.embedding[:,dims[0]], 
                         y=self.embedding[:,dims[1]], 
                         c='grey')
+            
+    def merge(self, cluster_ids):
+        cluster_ids = np.array(cluster_ids)
+        mi = cluster_ids.min()
+
+        for it in cluster_ids:
+            self.cluster[self.cluster == it] = mi
+
 
             
         

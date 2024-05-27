@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -25,3 +26,25 @@ def generate_mix_image(frame, mask, alpha=0.5):
 
 def generate_mask_image(mask):
     return colorize_mask(mask).astype(np.uint8)
+
+
+
+def generate_image_with_dots(image, dots, dots_mode):
+    overlay = image.copy()
+    points = np.array(points)
+    modes = np.array(modes)
+    neg_points = points[np.argwhere(modes == 0)[:, 0]]
+    pos_points = points[np.argwhere(modes == 1)[:, 0]]
+
+    for i in range(len(neg_points)):
+        point = neg_points[i]
+        cv2.circle(overlay, (point[0], point[1]), 2, (255, 80, 80), -1)
+
+    for i in range(len(pos_points)):
+        point = pos_points[i]
+        cv2.circle(overlay, (point[0], point[1]), 2, (0, 153, 255), -1)
+
+    cv2.addWeighted(overlay, 0.5, image, 0.5, 0, image)
+    
+    return image
+

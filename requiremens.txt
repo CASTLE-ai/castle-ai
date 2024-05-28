@@ -1,0 +1,10 @@
+matplotlib
+tqdm
+av
+numpy
+opencv-python
+umap-learn
+plotly
+gradio
+h5py
+natsort

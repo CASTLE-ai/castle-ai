@@ -9,7 +9,7 @@ __pycache__
 **/.ipynb_checkpoints/**
 *.swp
 *.pth
-projects/*
+projects/
 !projects/project file will save here
 # Python 2.x & 3.x bytecode cache
 *.pyc

@@ -53,6 +53,9 @@ def create_project_ui(OS_SYS, root=''):
         root = 'projects/'
     if not root[-1] == '/':
         root += '/'
+    if not os.path.exists(root):
+        os.makedirs(root)
+        
     ui = dict()
     DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
     ui['device'] = gr.Textbox(label='Device',

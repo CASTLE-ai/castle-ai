@@ -58,7 +58,7 @@ def extract_roi_latent(storage_path, project_name, select_model, select_roi, sel
         #     return []
         base_name = source_video.video_name.split('.')[0]
         latent_path = os.path.join(latent_dir_path, f'{base_name}_ROI_{select_roi}_latent.npz')
-        print('latent', type(latent))
+        # print('latent', type(latent))
         np.savez_compressed(latent_path, latent=latent)
 
         if not 'latent' in project_config:

@@ -15,7 +15,7 @@ pip install castle-ai
 # Open
 
 ```
-python web_ui/app.py
+python app.py
 ```
 
 # Reference

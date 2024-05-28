@@ -16,7 +16,7 @@ def readme():
 
 configuration = {
     "name": "castle-ai",
-    "version": "0.0.6",
+    "version": "0.0.7",
     "description": "Distinguish behavioral clusters Toolbox",
     "long_description": readme(),
     "long_description_content_type": "text/markdown",

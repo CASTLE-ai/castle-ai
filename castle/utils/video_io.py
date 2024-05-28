@@ -1,8 +1,10 @@
 import av
+import os
 
 class ReadArray:
     def __init__(self, video_path):
         self.video_path = video_path
+        self.video_name = os.path.basename(video_path)
         self.container = av.open(video_path)
         self.video_stream = self.container.streams.video[0]
         self.fps = self.video_stream.average_rate

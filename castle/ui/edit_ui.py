@@ -29,7 +29,8 @@ def unlock_ui(object_count):
 def edit_btn_event(storage_path, project_name, video_name):
     source_video = ReadArray(os.path.join(storage_path, project_name, 'sources', video_name))
     frame = source_video[0]
-    return source_video, video_name, gr.update(maximum=source_video.total_frames-1), gr.update(maximum=source_video.total_frames-1), gr.update(maximum=source_video.total_frames-1, value=source_video.total_frames-1), frame, frame, frame
+    maxi = len(source_video)-1
+    return source_video, video_name, gr.update(maximum=maxi), gr.update(maximum=maxi), gr.update(maximum=maxi), gr.update(maximum=maxi, value=maxi), frame, frame, frame
 
 def collapse_source_detial():
     return gr.update(open=False)
@@ -97,7 +98,7 @@ def create_edit_ui(storage_path, project_name):
     ui['select_video_edit_btn'].click(
         fn=edit_btn_event, 
         inputs=[storage_path, project_name, ui['select_video_drop']],
-        outputs=[source_video, ui['select_video'], view_ui['index_slide'], label_ui['index_slide'], track_ui['stop_frame'], view_ui['display_view'], label_ui['display_view'], label_ui['select_frame']]
+        outputs=[source_video, ui['select_video'], view_ui['index_slide'], label_ui['index_slide'], track_ui['start_frame'], track_ui['stop_frame'], view_ui['display_view'], label_ui['display_view'], label_ui['select_frame']]
     )
 
     ui['select_video_edit_btn'].click(

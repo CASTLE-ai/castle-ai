@@ -31,8 +31,8 @@ def generate_mask_image(mask):
 
 def generate_image_with_dots(image, dots, dots_mode):
     overlay = image.copy()
-    points = np.array(points)
-    modes = np.array(modes)
+    points = np.array(dots)
+    modes = np.array(dots_mode)
     neg_points = points[np.argwhere(modes == 0)[:, 0]]
     pos_points = points[np.argwhere(modes == 1)[:, 0]]
 

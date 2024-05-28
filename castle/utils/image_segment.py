@@ -5,6 +5,10 @@ import numpy as np
 from PIL import Image
 from .download import download_file
 from castle.sam.segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+import platform
+OS_SYS = platform.uname().system
+DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
+
 
 # np.random.seed(200)
 # _palette = ((np.random.random((3*255))*0.7+0.3)*255).astype(np.uint8).tolist()
@@ -49,9 +53,6 @@ from castle.sam.segment_anything import sam_model_registry, SamAutomaticMaskGene
 # def mask2img(mask):
 #     img = colorize_mask(mask)
 #     return img.astype(np.uint8)
-
-
-
 
 class Segmentor:
     def __init__(self, sam_args):
@@ -176,9 +177,11 @@ def download_sa_ckpt(model_type):
         assert False, f"model_type mismatch {model_type}, expect vit_b."
 
 
-def generate_sa(ckpt_path='', model_type='vit_b', device='cuda'):
+def generate_sa(ckpt_path='', model_type='vit_b', device=''):
     if len(ckpt_path) == 0:
         ckpt_path = download_sa_ckpt(model_type)
+    if len(device) == 0:
+        device = DEFAULT_DEVICE
 
     sam_args = {
         'sam_checkpoint': ckpt_path,

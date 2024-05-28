@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import datetime
 import gradio as gr
 
@@ -10,7 +11,11 @@ def unlock_old_project_btn(object_count):
     return [gr.update(interactive=True) for i in range(object_count)]
 
 def list_project(storage_path):
-    subdirectories = sorted([d for d in os.listdir(storage_path) if os.path.isdir(os.path.join(storage_path, d))])
+    li = [d for d in os.listdir(storage_path) if os.path.isdir(os.path.join(storage_path, d))]
+    if len(li) > 1:
+        subdirectories = sorted(li)
+    else:
+        subdirectories = li
     return gr.update(choices=subdirectories)
 
 def create_new_project(storage_path, project_name):
@@ -31,24 +36,42 @@ def default_new_project_name(new_project_name):
 def set_project_name(project_name):
     return project_name
 
+def delete_old_project(storage_path, project_name):
+    folder_path = os.path.join(storage_path, project_name)
+    if os.path.exists(folder_path):
+        print('folder_path', folder_path)
+        shutil.rmtree(folder_path)
+        gr.Info(f"Deleted {project_name}")
+        print("Deleted")
+    else:
+        print("No such folder")
 
-def create_project_ui(OS_SYS):
+
+
+def create_project_ui(OS_SYS, root=''):
+    if len(root) == 0:
+        root = 'projects/'
+    if not root[-1] == '/':
+        root += '/'
     ui = dict()
     DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
     ui['device'] = gr.Textbox(label='Device',
                               info='For example: mps, cpu, cuda, or cuda:x',
                               value=DEFAULT_DEVICE,
-                              interactive=True)
+                              interactive=False, visible=False)
 
     ui['storage_path'] = gr.Textbox(label='Storage Location',
                         info='The location which storage all project',
-                        value='project/',
+                        value=root,
                         interactive=True)
     
     with gr.Tab(label='Open Old Project'):
         ui['old_project_drop'] = gr.Dropdown(label="Open Project", interactive=True)
-        ui['old_project_open_btn'] = gr.Button('Open', interactive=False)
-        ui['old_project_delete_btn'] = gr.Button('Delete', interactive=False)
+        with gr.Row(visible=True):
+            with gr.Column(scale=9):
+                ui['old_project_open_btn'] = gr.Button('Open', interactive=False)
+            with gr.Column(scale=1):
+                ui['old_project_delete_btn'] = gr.Button('Delete', interactive=False)
     with gr.Tab(label='New Project'):
         ui['new_project_name'] = gr.Textbox(label='New Project Name', interactive=True)
         ui['new_project_create_btn'] = gr.Button('Create', interactive=True)
@@ -90,6 +113,7 @@ def create_project_ui(OS_SYS):
         fn=create_new_project,
         inputs=[ui[it] for it in ['storage_path', 'new_project_name']]
     )
+    
     ui['new_project_name'].focus(
         fn=default_new_project_name,
         inputs=ui['new_project_name'],
@@ -104,6 +128,10 @@ def create_project_ui(OS_SYS):
         fn=set_project_name,
         inputs=ui['old_project_drop'],
         outputs=ui['project_name']
+    )
+    ui['old_project_delete_btn'].click(
+        fn=delete_old_project,
+        inputs=[ui['storage_path'], ui['old_project_drop']],
     )
 
     return ui

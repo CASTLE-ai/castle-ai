@@ -42,16 +42,26 @@ def crop(frame, crop_h, crop_w):
 
 
 
-def roi_connected_components(frame, roi, tolerance=30):
-    mask = np.zeros_like(frame[:, :, 0])
-    lower_bound = np.array([roi[0] - tolerance,
-                            roi[1] - tolerance,
-                            roi[2] - tolerance])
-    upper_bound = np.array([roi[0] + tolerance,
-                            roi[1] + tolerance,
-                            roi[2] + tolerance])
-    within_range = cv2.inRange(frame, lower_bound, upper_bound)
-    mask[within_range > 0] = 255
+def roi_connected_components(frame, select_roi, tolerance=30):
+
+    if type(select_roi) == list and len(select_roi) == 3:
+        h, w = frame.shape[:2]
+        mask = np.zeros((h, w)).astype(np.uint8)
+        lower_bound = np.array([select_roi[0] - tolerance,
+                                select_roi[1] - tolerance,
+                                select_roi[2] - tolerance])
+        upper_bound = np.array([select_roi[0] + tolerance,
+                                select_roi[1] + tolerance,
+                                select_roi[2] + tolerance])
+        within_range = cv2.inRange(frame, lower_bound, upper_bound)
+        mask[within_range > 0] = 255
+    else:
+        select_roi = int(select_roi)
+
+        mask = cv2.inRange(frame, select_roi, select_roi)
+
+
+    
     output = cv2.connectedComponentsWithStats(mask, 8, cv2.CV_32S)
     num_labels = output[0]
     assert num_labels > 1, 'roi_connected_components error'
@@ -75,8 +85,8 @@ def get_contour(frame, roi):
 
 
 
-def get_mask(frame, roi):
-    connected_components = roi_connected_components(frame, roi)
+def get_mask(frame, select_roi):
+    connected_components = roi_connected_components(frame, select_roi)
     num_labels, labels, stats, centroids = connected_components
     areas = [stats[i, cv2.CC_STAT_AREA] for i in range(1, num_labels)]
     max_label = np.argmax(areas)

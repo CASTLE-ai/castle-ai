@@ -1,0 +1,10 @@
+torch 
+torchvision 
+torchaudio
+
+--extra-index-url https://pypi.nvidia.com
+cudf-cu12
+
+--extra-index-url https://pypi.nvidia.com
+cuml-cu12
+

@@ -4,17 +4,19 @@ import cv2
 import h5py
 import numpy as np
 import av
-from media.plot_mask_info import Plotter
-from api.segmentor import merge_frame_and_mask, mask2img
-from media.tracking_io import TrackingIO
 
+from .plot_mask_info import Plotter
+from castle.utils.plot import generate_mix_image, generate_mask_image
+# from api.segmentor import merge_frame_and_mask, mask2img
+# from media.tracking_io import TrackingIO
+from castle.utils.h5_io import H5IO
 
 def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.Progress()):
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
     mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
-    tracker = TrackingIO(mask_list_path)
+    tracker = H5IO(mask_list_path)
 
     with h5py.File(mask_list_path, 'r') as f:
         roi_count = tracker.read_config('roi_count')
@@ -54,7 +56,8 @@ def generate_mask_kinematic_csv(storage_path, project_name, source_video, roi_in
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
-    mask_kinematic_csv_path = os.path.join(track_dir_path, f'basic-infomation.csv')
+    video_name_wo_extension = video_name.split('.')[0]
+    mask_kinematic_csv_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-basic-infomation.csv')
     df = Plotter.create_pandas(roi_info_list)
     df.to_csv(mask_kinematic_csv_path)
     return mask_kinematic_csv_path
@@ -65,7 +68,8 @@ def generate_mask_video(storage_path, project_name, source_video):
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
     mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
-    mask_video_path = os.path.join(track_dir_path, f'mask.mp4')
+    video_name_wo_extension = video_name.split('.')[0]
+    mask_video_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-mask.mp4')
     output = av.open(mask_video_path, 'w')
 
     # Add a stream, specify codec and settings
@@ -73,14 +77,14 @@ def generate_mask_video(storage_path, project_name, source_video):
     stream.options = {'crf': '22'}
     stream.pix_fmt = 'yuv420p'  # Most common pixel format
     
-    tracker = TrackingIO(mask_list_path)
+    tracker = H5IO(mask_list_path)
     stream.height = tracker.read_config('height')
     stream.width = tracker.read_config('width')
     total_frames = tracker.read_config('total_frames')
 
     for i_frame in range(total_frames):
         it = tracker.read_mask(i_frame)
-        frame = av.VideoFrame.from_ndarray(mask2img(it), format='rgb24')
+        frame = av.VideoFrame.from_ndarray(generate_mask_image(it), format='rgb24')
         for packet in stream.encode(frame):
             output.mux(packet)
 
@@ -96,10 +100,10 @@ def generate_mix_video(storage_path, project_name, source_video):
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
     mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
-    tracker = TrackingIO(mask_list_path)
+    tracker = H5IO(mask_list_path)
 
-
-    mix_video_path = os.path.join(track_dir_path, f'mix.mp4')
+    video_name_wo_extension = video_name.split('.')[0]
+    mix_video_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-mix.mp4')
     output = av.open(mix_video_path, 'w')
 
     # Add a stream, specify codec and settings
@@ -112,8 +116,8 @@ def generate_mix_video(storage_path, project_name, source_video):
     stream.pix_fmt = 'yuv420p'  # Most common pixel format
     for i in range(total_frames):
         it = tracker.read_mask(i)
-        frame = source_video.read_by_index(i).to_rgb().to_ndarray()
-        mix = merge_frame_and_mask(frame, it)
+        frame = source_video[i]
+        mix = generate_mix_image(frame, it)
         mix = av.VideoFrame.from_ndarray(mix, format='rgb24')
         for packet in stream.encode(mix):
             output.mux(packet)

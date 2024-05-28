@@ -1,27 +1,27 @@
 import gradio as gr
 import os
 import numpy as np
-from api.segmentor import merge_frame_and_mask, mask2img
 
-from media.tracking_io import TrackingIO
+from castle.utils.plot import generate_mask_image, generate_mix_image
+from castle.utils.h5_io import H5IO
 
 def index_slide_apply(storage_path, project_name, source_video, index, mode):
     if mode == 'Image':
-        return source_video.read_by_index(index).to_rgb().to_ndarray()
+        return source_video[index]
     
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
     mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
 
-    tracker = TrackingIO(mask_list_path)
+    tracker = H5IO(mask_list_path)
 
     if mode == 'Image & Mask':
-        frame = source_video.read_by_index(index).to_rgb().to_ndarray()
-        mix = merge_frame_and_mask(frame, tracker.read_mask(index))
+        frame = source_video[index]
+        mix = generate_mix_image(frame, tracker.read_mask(index))
         return mix
     if mode == 'Mask':
-        return mask2img(tracker.read_mask(index))
+        return generate_mask_image(tracker.read_mask(index))
     
     del tracker
 

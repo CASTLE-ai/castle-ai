@@ -22,7 +22,7 @@ class Latent:
         n = len(raw) // time_window
         num_feature = raw.shape[-1]
         self.time_window = time_window
-        self.data = raw.reshape((-1,  num_feature * time_window))
+        self.data = raw[:n].reshape((-1,  num_feature * time_window))
         self.cluster = np.zeros(len(self.data)).astype(int)
         self.cluster[np.isnan(self.data.sum(axis=1))] = -1
         self.num_cluster = 1
@@ -77,7 +77,7 @@ class Latent:
 
         old_cluster = self.cluster[index_mask]
         old_cluster[cluster == -1] = -1
-        old_cluster[~(cluster == -1)] = cluster + self.num_cluster
+        old_cluster[~(cluster == -1)] = cluster[~(cluster == -1)] + self.num_cluster
         self.num_cluster += num_cluster_add_cluster
         self.cluster[index_mask] = old_cluster
 

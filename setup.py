@@ -16,7 +16,7 @@ def readme():
 
 configuration = {
     "name": "castle-ai",
-    "version": "0.0.4",
+    "version": "0.0.6",
     "description": "Distinguish behavioral clusters Toolbox",
     "long_description": readme(),
     "long_description_content_type": "text/markdown",
@@ -27,7 +27,6 @@ configuration = {
         "Programming Language :: Python",
         "Topic :: Scientific/Engineering",
         "Operating System :: Microsoft :: Windows",
-        "Operating System :: POSIX",
         "Operating System :: Unix",
         "Operating System :: MacOS",
         "Programming Language :: Python :: 3",
@@ -46,9 +45,13 @@ configuration = {
         "torchvision",
         "matplotlib",
         "umap-learn",
+        "h5py",
+        "natsort",
+        "gradio",
+        "plotly",
     ],
     # "extras_require": {
-    #     "plot": [
+    #     "cu11": [
     #         "pandas",
     #         "matplotlib",
     #         "datashader",

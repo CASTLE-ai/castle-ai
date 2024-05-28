@@ -8,6 +8,10 @@ import numpy as np
 import torch
 import torchvision.transforms as tt
 from torch.utils.data import Dataset, DataLoader
+import platform
+OS_SYS = platform.uname().system
+DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
+
 
 
 
@@ -68,12 +72,12 @@ class ObserverDINOv2:
     def nan_latent(self):
         return np.full((self.n_feature), np.nan, dtype=np.float16)
 
-    def extract_image_latent(self, frame, mask, roi_rgb):
-        return self.extract_batch_latent([frame], [mask], roi_rgb)[0]
+    def extract_image_latent(self, frame, mask, select_roi):
+        return self.extract_batch_latent([frame], [mask], select_roi)[0]
 
-    def extract_batch_latent(self, frame_list, mask_list, roi_rgb):
+    def extract_batch_latent(self, frame_list, mask_list, select_roi):
         batch_latent = []
-        mask_roi_list = [img2mask(get_mask(it, roi_rgb)) for it in mask_list]
+        mask_roi_list = [img2mask(get_mask(it, select_roi)) for it in mask_list]
         frame_list = [img2tensor(it) for it in frame_list]
 
         patch_feature = self.model.batch_run(frame_list)
@@ -108,7 +112,9 @@ def download_dinov2_ckpt(model_type):
 
 
 
-def generate_dinov2(model_type='dinov2_vitb14_reg', device='cuda', batch_size=16):
+def generate_dinov2(model_type='dinov2_vitb14_reg', device='', batch_size=16):
+    if len(device) == 0:
+        device = DEFAULT_DEVICE
     dinov2_args = {
         "model_type": model_type,
         "device": device,

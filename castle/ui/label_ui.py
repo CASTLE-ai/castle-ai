@@ -6,7 +6,7 @@ from castle import generate_sa
 from castle.utils.plot import generate_mix_image, generate_image_with_dots
 # from api.segmentor import MultiObjectSegmentor, merge_frame_and_mask
 
-model_config = json.load(open('config/model_config.json', 'r'))
+# model_config = json.load(open('config/model_config.json', 'r'))
 
 def keep_click_mode_switch_only(mode):
     if mode == 'Add':
@@ -15,7 +15,7 @@ def keep_click_mode_switch_only(mode):
 
 def index_slide_event(segmentor, source_video, index):
     del segmentor
-    frame = source_video.read_by_index(index).to_rgb().to_ndarray()
+    frame = source_video[index]
     return None, frame, frame, gr.update(interactive=True)
 
 
@@ -55,11 +55,16 @@ def save_rois(storage_path, project_name, segmentor, index, source_video):
     mask = segmentor.temp_mask
     frame = segmentor.frame
     np.savez_compressed(label_path, frame=frame, mask=mask)
+    gr.Info(f"Save ROI at frame {index}.")
     return
 
 def save_rois_event(storage_path, project_name, segmentor, index, source_video):
     save_rois(storage_path, project_name, segmentor, index, source_video)
     return None
+
+def clean_rois_event():
+    return None
+
 
 def create_label_ui(storage_path, project_name, source_video):
     ui = dict()
@@ -71,6 +76,7 @@ def create_label_ui(storage_path, project_name, source_video):
             ui['click_mode_switch'] = gr.Button('Change mode', interactive=True, visible=False)
             ui['next_roi_btn'] = gr.Button('Label Next ROI', interactive=True, visible=False)
             ui['save_rois_btn'] = gr.Button('Save ROIs', interactive=True, visible=False)
+            ui['clean_rois_btn'] = gr.Button('Clean ROIs', interactive=True, visible=False)
             
         with gr.Column(scale=8):
             ui['display_view'] = gr.Image(label='Display', interactive=False, visible=False)
@@ -110,6 +116,18 @@ def create_label_ui(storage_path, project_name, source_video):
         fn=save_rois_event,
         inputs=[storage_path, project_name, segmentor, ui['index_slide'], source_video],
         outputs=segmentor,
+    )
+
+    ui['clean_rois_btn'].click(
+        fn=clean_rois_event,
+        # inputs=[storage_path, project_name, segmentor, ui['index_slide'], source_video],
+        outputs=segmentor,
+    )
+
+    ui['clean_rois_btn'].click(
+        fn=index_slide_event,
+        inputs=[segmentor, source_video, ui['index_slide']],
+        outputs=[segmentor, ui['select_frame'], ui['display_view'], ui['display_view']]
     )
 
     ui['index_slide'].change(

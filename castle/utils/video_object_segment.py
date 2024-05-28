@@ -20,6 +20,12 @@ from castle.aot.networks.models import build_vos_model
 from castle.aot.networks.engines import build_engine
 from .download import download_with_gdown
 from torchvision import transforms
+import platform
+OS_SYS = platform.uname().system
+DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
+
+
+
 torch.backends.cudnn.benchmark = True
 
 class AOTTracker(object):
@@ -188,10 +194,13 @@ def download_aot_ckpt(model_type):
     else:
         assert False, f"model_type mismatch {model_type}, expect r50_deaotl or swinb_deaotl"
 
-def generate_aot(ckpt_path='', model_type='r50_deaotl', device='cuda'):
+def generate_aot(ckpt_path='', model_type='r50_deaotl', device=''):
     
     if len(ckpt_path) == 0:
         ckpt_path = download_aot_ckpt(model_type)
+        
+    if len(device) == 0:
+        device = DEFAULT_DEVICE
 
 
     args = {

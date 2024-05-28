@@ -1,26 +1,27 @@
 import gradio as gr
-from .cluster_input_ui import create_cluster_input_ui
-from .dimension_reduction_ui import create_dimension_reduction_ui
-from .dbscan_ui import create_dbscan_ui
+
 
 def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui = dict()
-
-    with gr.Tab(label='Build UMAP input from video'):
-        cluster_input_ui = create_cluster_input_ui(storage_path, project_name, cluster_page_tab)
-        pass
-
-    with gr.Tab(label='UMAP') as umap_tab:
-        dimension_reduction_ui = create_dimension_reduction_ui(storage_path, project_name, umap_tab)
-        pass
-
-    with gr.Tab(label='DBSCAN'):
-        dbscan_ui = create_dbscan_ui(storage_path, project_name)
-        pass
-
-    with gr.Tab(label='Export Cluster Information'):
-        pass
-
-
+    ui['reset'] = gr.Button("Initialize", interactive=True, visible=False)
+    with gr.Row(visible=True):
+        with gr.Column(scale=5):
+            ui['display'] = gr.Image(label='Display', interactive=False, visible=False)
+        with gr.Column(scale=5):
+            ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
+    with gr.Row(visible=True):
+        with gr.Column(scale=5):
+            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', interactive=False, visible=False)
+            ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=False)
+            ui['cluster_method'] = gr.Dropdown(['hdbscan', 'dbscan'], label='Cluster method',
+                              value='hdbscan',interactive=True)
+            ui['cluster_config_text'] = gr.Textbox(label='Cluster configs', interactive=False, visible=False)
+            ui['cluster_run'] = gr.Button("Cluster", interactive=True, visible=False)
+        with gr.Column(scale=5):
+            ui['label_cluster_id'] = gr.Number(label='Cluster id', interactive=True, visible=False)
+            ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=False)
+            ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
+            ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
+    ui['syllables_plot'] = gr.Image(label='Syllable', interactive=False, visible=False)
     
     return ui

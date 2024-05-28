@@ -5,7 +5,7 @@ from .project_ui import create_project_ui
 from .source_ui import create_source_ui
 from .edit_ui import create_edit_ui
 from .extract_ui import create_extract_ui
-# from .cluster_page_ui import create_cluster_page_ui
+from .cluster_page_ui import create_cluster_page_ui
 
 def show_ui(project_name, object_count):
     if not project_name == None:
@@ -51,15 +51,15 @@ def create_ui(OS_SYS, root=''):
             )
             pass
 
-        # with gr.Tab(label='Cluster') as cluster_page_tab:
-        #     cluster_ui = create_cluster_page_ui(storage_path, project_name, cluster_page_tab)
-        #     cluster_ui_object_count = gr.State(len(cluster_ui))
-        #     cluster_page_tab.select(
-        #         fn=show_ui, 
-        #         inputs=[project_ui['project_name'], cluster_ui_object_count], 
-        #         outputs=[v for k, v in cluster_ui.items()]
-        #     )
-        #     pass
+        with gr.Tab(label='Latent Explorer') as cluster_page_tab:
+            cluster_ui = create_cluster_page_ui(storage_path, project_name, cluster_page_tab)
+            cluster_ui_object_count = gr.State(len(cluster_ui))
+            cluster_page_tab.select(
+                fn=show_ui, 
+                inputs=[project_ui['project_name'], cluster_ui_object_count], 
+                outputs=[v for k, v in cluster_ui.items()]
+            )
+            pass
 
         # with gr.Tab(label='Export'):
         #     pass

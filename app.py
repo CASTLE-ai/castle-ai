@@ -19,4 +19,4 @@ app = create_ui(OS_SYS, args.root)
 
 if __name__ == '__main__':
      app.queue()
-     app.launch(server_name='0.0.0.0', share=COLAB_GPU or SHARE).queue()
+     app.launch(server_name='0.0.0.0', share=COLAB_GPU or SHARE)

@@ -155,7 +155,7 @@ class Interfence:
         mode = 'a' if os.path.isfile(mask_list_path) else 'w'
         with h5py.File(mask_list_path, mode) as f:
             if f"{index}" in f:
-                dset = f[f"{index}"]
+                dset = f[f"{index}"][:]
                 dset[:] = mask
             else:
                 dset = f.create_dataset(f"{index}", mask.shape, dtype='uint8', compression="gzip", compression_opts=9)
@@ -206,7 +206,7 @@ def create_track_ui(storage_path, project_name, source_video, track_tab):
     interfence = gr.State(None)
     with gr.Accordion('ROIs Knowledge', visible=False) as ui['gallery_accordion']:
         ui['gallery'] = gr.Gallery(
-            label="Label Frame", show_label=True, allow_preview=True, height="auto", object_fit="contain", columns=3)
+            label="Label Frame", show_label=True, allow_preview=False, object_fit="contain", columns=3)
 
     with gr.Accordion('Inference', open=True, visible=False) as ui['inference_accordion']:
         with gr.Row(visible=True):

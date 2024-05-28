@@ -49,7 +49,7 @@ def delete_old_project(storage_path, project_name):
 
 
 def create_project_ui(OS_SYS, root=''):
-    if len(root) == 0:
+    if root == None:
         root = 'projects/'
     if not root[-1] == '/':
         root += '/'

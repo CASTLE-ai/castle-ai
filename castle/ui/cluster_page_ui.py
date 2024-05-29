@@ -26,7 +26,7 @@ hdbscan_config_template ='''{
 
 
 dbscan_config_template='''{
-    "eps": 1.0
+    "eps": 2.0
 }'''
 
 def padding(mi, mx, scale=1.05):

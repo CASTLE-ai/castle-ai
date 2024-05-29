@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
+import platform
+OS_SYS = platform.uname().system
+DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
 
 
 _palette = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
@@ -20,7 +23,9 @@ def generate_palette(avoid):
 
 
 class Latent:
-    def __init__(self, raw, time_window=1, device='cpu'):
+    def __init__(self, raw, time_window=1, device=''):
+        if len(device) == 0:
+            device = DEFAULT_DEVICE
         n = (len(raw) // time_window) * time_window
         num_feature = raw.shape[-1]
         self.time_window = time_window
@@ -86,7 +91,11 @@ class Latent:
         plt.ylim(0, 1)
         plt.yticks([])
         unique_categories = sorted(set(self.cluster[self.key_frames[j]] for j in range(len(self.key_frames)-1)))
+        if -1 in unique_categories:
+            unique_categories.remove(-1)
+
         legend_handles = [Patch(color=self.palette(cat), label=self.cluster_meta[cat]['name']) for cat in unique_categories]
+
         plt.legend(handles=legend_handles, title="Categories")
 
 
@@ -130,10 +139,12 @@ class LocalLatent:
         
 
     def build_embedding(self, configs):
-        if self.device == 'cpu':
+        if self.device == 'cpu' or self.device == 'mps':
             from umap import UMAP
-        elif self.device == 'gpu':
+        elif 'cuda' in self.device:
             from cuml.manifold import UMAP
+        else:
+            assert False, f'device error, expect cpu, mps, or cuda, got {self.device}'
         Z = self.data
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
@@ -152,7 +163,7 @@ class LocalLatent:
         if self.device == 'cpu':
             from sklearn.cluster import DBSCAN
             from hdbscan import HDBSCAN
-        elif self.device == 'gpu':
+        elif 'cuda' in self.device:
             from cuml.cluster import DBSCAN, HDBSCAN
 
         assert hasattr(self, 'embedding')

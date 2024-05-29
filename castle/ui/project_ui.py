@@ -50,9 +50,10 @@ def delete_old_project(storage_path, project_name):
 
 def create_project_ui(OS_SYS, root=''):
     if root == None:
-        root = 'projects/'
-    if not root[-1] == '/':
-        root += '/'
+        root = os.path.join('projects','')
+    sep = os.sep
+    if not root.endswith(sep):
+        root += sep
     if not os.path.exists(root):
         os.makedirs(root)
         

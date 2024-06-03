@@ -1,6 +1,7 @@
 import os
 import h5py
 
+# Maybe can save with format tiff for imageJ
 
 class H5IO:
     def __init__(self, file_path):
@@ -12,7 +13,7 @@ class H5IO:
     def write_mask(self, index, mask):
         self.check()
         if str(index) in self.f:
-            dset = self.f[str(index)][:]
+            dset = self.f[str(index)] # for Overwrite previous results
             dset[:] = mask
         else:
             dset = self.f.create_dataset(str(index), mask.shape, dtype='uint8', compression="gzip", compression_opts=3)

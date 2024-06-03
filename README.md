@@ -18,10 +18,12 @@ pip install castle-ai
 python app.py
 ```
 
-# Reference
+# Reference & Thanks
+
+We would like to express our gratitude for the assistance received from the following projects during the development of this project.
 
 [Segment Anything](https://github.com/facebookresearch/segment-anything.git)
 
-[DeAOT](https://github.com/z-x-yang/Segment-and-Track-Anything.git)
+[DeAOT & Segment-and-Track-Anything](https://github.com/z-x-yang/Segment-and-Track-Anything.git)
 
 [DINOv2](https://github.com/facebookresearch/dinov2.git)

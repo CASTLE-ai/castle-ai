@@ -12,9 +12,17 @@ CASTLE integrates the strengths of visual foundation models trained on large dat
 pip install castle-ai
 ```
 
+for cuda12
+```
+pip install -U xformers --index-url https://download.pytorch.org/whl/cu121
+pip install -U cudf-cu12 cuml-cu12 --extra-index-url=https://pypi.nvidia.com 
+```
+
 # Open
 
 ```
+git clone https://github.com/CASTLE-ai/castle-ai.git
+cd castle-ai/
 python app.py
 ```
 

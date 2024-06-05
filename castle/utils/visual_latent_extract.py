@@ -10,7 +10,12 @@ import torchvision.transforms as tt
 from torch.utils.data import Dataset, DataLoader
 import platform
 OS_SYS = platform.uname().system
-DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
+if OS_SYS == 'Darwin':
+    DEFAULT_DEVICE = 'mps'
+elif torch.cuda.is_available():
+    DEFAULT_DEVICE = 'cuda'
+else:
+    DEFAULT_DEVICE = 'cpu'
 
 
 

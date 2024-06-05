@@ -7,7 +7,12 @@ from .download import download_file
 from castle.sam.segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 import platform
 OS_SYS = platform.uname().system
-DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
+if OS_SYS == 'Darwin':
+    DEFAULT_DEVICE = 'mps'
+elif torch.cuda.is_available():
+    DEFAULT_DEVICE = 'cuda'
+else:
+    DEFAULT_DEVICE = 'cpu'
 
 
 # np.random.seed(200)

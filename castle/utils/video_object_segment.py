@@ -22,7 +22,12 @@ from .download import download_with_gdown
 from torchvision import transforms
 import platform
 OS_SYS = platform.uname().system
-DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
+if OS_SYS == 'Darwin':
+    DEFAULT_DEVICE = 'mps'
+elif torch.cuda.is_available():
+    DEFAULT_DEVICE = 'cuda'
+else:
+    DEFAULT_DEVICE = 'cpu'
 
 
 

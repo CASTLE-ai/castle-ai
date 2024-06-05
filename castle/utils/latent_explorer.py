@@ -3,7 +3,14 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 import platform
 OS_SYS = platform.uname().system
-DEFAULT_DEVICE = 'mps' if OS_SYS == 'Darwin' else 'cuda'
+import torch
+
+if OS_SYS == 'Darwin':
+    DEFAULT_DEVICE = 'mps'
+elif torch.cuda.is_available():
+    DEFAULT_DEVICE = 'cuda'
+else:
+    DEFAULT_DEVICE = 'cpu'
 
 
 _palette = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']

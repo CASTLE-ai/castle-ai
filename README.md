@@ -8,22 +8,23 @@ CASTLE integrates the strengths of visual foundation models trained on large dat
 
 # Install
 
-## Step 1 install CASTLE core function
+## Step 1 Install CASTLE Core Function
 ```
 pip install castle-ai
 ```
 
 
 
-## Step 2 (Speed Up) (not necessery)
+## Step 2 Install xFormer and GPU Version of UMAP (Optional for Speed Up)
 
-for cuda12 user
+For CUDA 12 Users
 ```
 pip install -U xformers --index-url https://download.pytorch.org/whl/cu121
 pip install -U cudf-cu12 cuml-cu12 --extra-index-url=https://pypi.nvidia.com 
 ```
 
-for cuda11 user
+
+For CUDA 11 Users
 ```
 pip install -U xformers --index-url https://download.pytorch.org/whl/cu118
 pip install -U cudf-cu11 cuml-cu11 --extra-index-url=https://pypi.nvidia.com 
@@ -34,20 +35,20 @@ pip install -U cudf-cu11 cuml-cu11 --extra-index-url=https://pypi.nvidia.com
 git clone https://github.com/CASTLE-ai/castle-ai.git
 ```
 
-## Step 4 Download pretrain model
+## Step 4 Download Pretrained Model
 
-for Linux user
+for Linux/Mac user
 ```
 cd castle-ai/
-bash download_ckpt.sh
+sh download_ckpt.sh
 ```
 
 for Windowns user
 ```
 cd castle-ai/
 mkdir ckpt
+# Then, download the models from the web and put them into the ckpt folder.
 ```
-then using Web download model and put they into ckpt folder.
 
 
 ## Run

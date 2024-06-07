@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial import KDTree
 import io
 from castle.utils.video_io import ReadArray
-
+import pandas as pd
 
 umap_config_template = '''[
     {
@@ -212,14 +212,35 @@ def label_local_cluster(local_latents, cluster_id, cluster_name):
     local_latents.label_cluster(cluster_id, cluster_name)  
     gr.Info(f'Name {cluster_id} as {cluster_name}')
 
-def import_info_from_local_latent(latents, local_latents):
+def import_info_from_local_latent(storage_path, project_name,latents, local_latents):
     latents.import_local_latent(local_latents)
 
     fig = plt.figure(figsize=(12, 2))
     latents.plot_syllables()
     plt.tight_layout()
 
-    return fig, update_select_cluster_list(latents)
+    df1 = {
+        'Id': [k for k, v in latents.cluster_meta.items()],
+        'Name': [v['name'] for k, v in latents.cluster_meta.items()],
+    }
+    df1 = pd.DataFrame(df1)
+    df2 = {
+        'behavior': latents.cluster
+    }
+    df2 = pd.DataFrame(df2)
+
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+    os.makedirs(cluster_path, exist_ok=True)
+
+
+    df1_path = os.path.join(cluster_path, 'id.csv')
+    df2_path = os.path.join(cluster_path, 'time_series.csv')
+    df1.to_csv(df1_path, index=False)  
+    df2.to_csv(df2_path)
+
+    
+
+    return fig, update_select_cluster_list(latents), df1_path, df2_path
 
 
 
@@ -268,7 +289,11 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
             
     ui['syllables_plot'] = gr.Plot(label='Syllable', visible=False)
-    
+    with gr.Row(visible=True):
+        with gr.Column(scale=5):
+            ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=False)
+        with gr.Column(scale=5):
+            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=False)
 
     ui['reset'].click(
         fn=init_mulvideo,
@@ -325,9 +350,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
-        inputs=[latents, local_latents],
-        outputs=[ui['syllables_plot'], ui['select_cluster']]
-
+        inputs=[storage_path, project_name, latents, local_latents],
+        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv']]
     )
 
     return ui

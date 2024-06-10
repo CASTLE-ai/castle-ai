@@ -149,7 +149,10 @@ class LocalLatent:
         if self.device == 'cpu' or self.device == 'mps':
             from umap import UMAP
         elif 'cuda' in self.device:
-            from cuml.manifold import UMAP
+            try:
+                from cuml.manifold import UMAP
+            except:
+                from umap import UMAP
         else:
             assert False, f'device error, expect cpu, mps, or cuda, got {self.device}'
         Z = self.data
@@ -171,7 +174,12 @@ class LocalLatent:
             from sklearn.cluster import DBSCAN
             from hdbscan import HDBSCAN
         elif 'cuda' in self.device:
-            from cuml.cluster import DBSCAN, HDBSCAN
+            try:
+                from cuml.cluster import DBSCAN, HDBSCAN
+            except:
+                from sklearn.cluster import DBSCAN
+                from hdbscan import HDBSCAN
+            
 
         assert hasattr(self, 'embedding')
         if hasattr(self, 'cluster'):

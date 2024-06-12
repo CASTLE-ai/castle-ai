@@ -3,6 +3,7 @@ import json
 from re import L
 import gradio as gr
 import numpy as np
+from zmq import has
 from castle.utils.latent_explorer import Latent
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -43,7 +44,7 @@ class MultiVideos:
         latent_list = [(k,v) for k, v in project_config['latent'].items() if f'ROI_{select_roi_id}' in k]
         latent_dir_path = os.path.join(storage_path, project_name, 'latent')
 
-        self.latents = []
+        self.latents = None
         self.videos_meta = []
         self.bin_size = bin_size
 
@@ -51,9 +52,13 @@ class MultiVideos:
         for it, v in latent_list:
             latent = np.load(os.path.join(latent_dir_path, it))['latent']
             n = (len(latent) // bin_size)* bin_size
-            self.latents.append(latent[:n])
+            if self.latents == None:
+                self.latents = np.zeros((0, latent.shape[-1]))
+            self.latents = np.append(self.latents, latent[:n], axis=0)
             self.videos_meta.append(((len(latent) // bin_size), v))
+            print(it, self.latents[-1].shape)
 
+            print(len(self.latents))
     
     def bin_index2frame(self, index):
 
@@ -68,7 +73,7 @@ class MultiVideos:
         return None
 
     def get_latents(self):
-        return Latent(np.array(self.latents), self.bin_size)
+        return Latent(self.latents, self.bin_size)
 
 
 
@@ -129,7 +134,10 @@ class EmbeddingScatterPlot:
 
 
 def embedding_plot_click(mulvideo, Z_plt, evt: gr.SelectData):
-    emb_plot = Z_plt.click(evt.index[0], evt.index[1])
+    if hasattr(evt, 'index'):
+        emb_plot = Z_plt.click(evt.index[0], evt.index[1])
+    else:
+        gr.Info('click event error')
     index = Z_plt.selected_index
     # gr.Info(f'index: {index}')
     frame = mulvideo.bin_index2frame(index)
@@ -139,26 +147,15 @@ def embedding_plot_click(mulvideo, Z_plt, evt: gr.SelectData):
 def collapse_accordion():
     return gr.update(open=False)
 
-# def init_latent_explorer(storage_path, project_name, select_roi_id, bin_size):
-#     if project_name == None:
-#         return None
-    
-#     project_path = os.path.join(storage_path, project_name)
-#     project_config_path = os.path.join(project_path, 'config.json')
-#     project_config = json.load(open(project_config_path, 'r'))
-#     latent_list = [k for k, v in project_config['latent'].items() if f'ROI_{select_roi_id}' in k]
-#     latent_dir_path = os.path.join(storage_path, project_name, 'latent')
-#     latents = []
-#     for it in latent_list:
-#         # latent = np.load(f'{latent_dir_path}/{it}')['latent']
-#         latent = np.load(os.path.join(latent_dir_path, it))['latent']
-#         latents.append(latent)
 
-#     return Latent(np.array(latents), bin_size)
 
 
 def update_select_cluster_list(latents):
-    li = [k for k,v in latents.behavior_name2cluster_id.items()]
+    if hasattr(latents, 'behavior_name2cluster_id'):
+        li = [k for k,v in latents.behavior_name2cluster_id.items()]
+    else:
+        li = []
+        gr.Info('latent init error')
 
     return gr.update(choices=li)
 
@@ -225,7 +222,7 @@ def import_info_from_local_latent(storage_path, project_name,latents, local_late
     }
     df1 = pd.DataFrame(df1)
     df2 = {
-        'behavior': latents.cluster
+        'behavior': np.repeat(latents.cluster, latents.time_window)
     }
     df2 = pd.DataFrame(df2)
 
@@ -240,7 +237,7 @@ def import_info_from_local_latent(storage_path, project_name,latents, local_late
 
     
 
-    return fig, update_select_cluster_list(latents), df1_path, df2_path
+    return fig, update_select_cluster_list(latents), df1_path, df2_path, None
 
 
 
@@ -290,10 +287,14 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             
     ui['syllables_plot'] = gr.Plot(label='Syllable', visible=False)
     with gr.Row(visible=True):
-        with gr.Column(scale=5):
+        with gr.Column(scale=2):
             ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=False)
-        with gr.Column(scale=5):
+        with gr.Column(scale=2):
             ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=False)
+        with gr.Column(scale=2):
+            ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=False)
+
+
 
     ui['reset'].click(
         fn=init_mulvideo,
@@ -351,7 +352,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
         inputs=[storage_path, project_name, latents, local_latents],
-        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv']]
+        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt']]
     )
 
     return ui

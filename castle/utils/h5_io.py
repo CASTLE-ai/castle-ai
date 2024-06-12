@@ -9,6 +9,8 @@ class H5IO:
         self.config = dict()
         self.reset()
 
+    def __setitem__(self, index, mask):
+        self.write_mask(index, mask)
 
     def write_mask(self, index, mask):
         self.check()
@@ -18,6 +20,9 @@ class H5IO:
         else:
             dset = self.f.create_dataset(str(index), mask.shape, dtype='uint8', compression="gzip", compression_opts=3)
             dset[:] = mask
+
+    def __getitem__(self, index):
+        return self.read_mask(index)
 
     def read_mask(self, index):
         assert str(index) in self.f, f"Without mask at frame {index}"

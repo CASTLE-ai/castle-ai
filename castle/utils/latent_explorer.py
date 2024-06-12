@@ -37,6 +37,7 @@ class Latent:
         num_feature = raw.shape[-1]
         self.time_window = time_window
         self.data = raw[:n].reshape((-1,  num_feature * time_window))
+        print('self.data:', self.data.shape)
         self.cluster = np.zeros(len(self.data)).astype(int)
         self.cluster[np.isnan(self.data.sum(axis=1))] = -1
         self.cluster_meta = dict()

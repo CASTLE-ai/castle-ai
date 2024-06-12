@@ -18,5 +18,5 @@ args = parser.parse_args()
 app = create_ui(OS_SYS, args.root)
 
 if __name__ == '__main__':
-     app.queue()
+     app.queue(max_size=20)
      app.launch(server_name='0.0.0.0', share=COLAB_GPU or SHARE)

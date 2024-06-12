@@ -54,24 +54,6 @@ def read_label_to_gallery(storage_path, project_name, source_video):
     return label_list, gallery_list
 
 
-# def setting_start_frame(label_list, evt: gr.SelectData):
-#     label_index = evt.index
-#     frame_index = label_list[label_index]['index']
-#     return frame_index
-
-
-# def collapse_accordion():
-#     return gr.update(open=False)
-
-
-# def open_accordion():
-#     return gr.update(open=True)
-
-# def init_display(label_list, evt: gr.SelectData):
-#     label_index = evt.index
-#     frame, mask = label_list[label_index]['frame'], label_list[label_index]['mask']
-#     mix = generate_mix_image(frame, mask)
-#     return mix
 
 
 
@@ -88,7 +70,6 @@ class Interfence:
         self.track_dir_path = track_dir_path
 
         label_path = os.path.join(project_path, 'label', video_name, f'{start}.npz')
-        # self.first_label = np.load(label_path)
         self.source_video = source_video
         self.start = int(start)
         self.stop = int(stop)
@@ -109,12 +90,17 @@ class Interfence:
 
 
     def tracking(self, progress):
-        
-        time.sleep(1)
+        time.sleep(0.5)
         start, stop, max_len = self.start, self.stop, self.max_len,
         tracker = generate_aot(model_type=self.model_aot)
-        # self.roi_count = np.max(self.first_label['mask'])
-        self.write_mask_config()
+        mask_list_path = os.path.join(self.track_dir_path, f'mask_list.h5')       
+        mask_seq = H5IO(mask_list_path)
+
+        mask_seq.write_config('roi_count', self.roi_count)
+        mask_seq.write_config('total_frames', len(self.source_video))
+        mask_seq.write_config('height', self.source_video.video_stream.height)
+        mask_seq.write_config('width', self.source_video.video_stream.width)
+
         for f, m in self.knowledges:
             tracker.add_reference_frame(f, m, self.roi_count, -1)
 
@@ -127,39 +113,19 @@ class Interfence:
             if self.cancel:
                 self.show_middle_result = False
                 self.cancel = False
+                del mask_seq
                 return "Cancel"
             
             frame = self.source_video[i]
             mask = tracker.track(frame)
             tracker.update_memory(mask)
             self.frame, self.mask = frame, mask.squeeze().detach().cpu().numpy().astype(np.uint8)
-            self.write_mask(i, self.mask)
+            mask_seq.write_mask(i, self.mask)
 
         self.show_middle_result = False
+        del mask_seq
         return "Done"
-    
-    def write_mask_config(self):
-        mask_list_path = os.path.join(self.track_dir_path, f'mask_list.h5')       
 
-
-        tracker = H5IO(mask_list_path)
-        tracker.write_config('roi_count', self.roi_count)
-        tracker.write_config('total_frames', len(self.source_video))
-        tracker.write_config('height', self.source_video.video_stream.height)
-        tracker.write_config('width', self.source_video.video_stream.width)
-        del tracker
-
-
-    def write_mask(self, index, mask):
-        mask_list_path = os.path.join(self.track_dir_path, f'mask_list.h5')            
-        mode = 'a' if os.path.isfile(mask_list_path) else 'w'
-        with h5py.File(mask_list_path, mode) as f:
-            if f"{index}" in f:
-                dset = f[f"{index}"][:]
-                dset[:] = mask
-            else:
-                dset = f.create_dataset(f"{index}", mask.shape, dtype='uint8', compression="gzip", compression_opts=9)
-                dset[:] = mask
 
 
     def set_cancel(self):

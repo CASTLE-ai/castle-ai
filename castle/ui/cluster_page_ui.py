@@ -3,7 +3,7 @@ import json
 from re import L
 import gradio as gr
 import numpy as np
-from zmq import has
+# from zmq import has
 from castle.utils.latent_explorer import Latent
 from PIL import Image
 import matplotlib.pyplot as plt

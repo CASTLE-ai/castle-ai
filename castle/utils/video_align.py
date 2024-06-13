@@ -3,6 +3,7 @@ import numpy as np
 
     
 def get_centroids(frame, roi):
+
     connected_components = roi_connected_components(frame, roi)
     num_labels, _, stats, centroids = connected_components
     areas = [stats[i, cv2.CC_STAT_AREA] for i in range(1, num_labels)]
@@ -18,6 +19,7 @@ def center_roi(frame, mask, roi_color):
     roi_x, roi_y = get_centroids(mask, roi_color)
     matrix = np.float32([[1, 0, center[0] - roi_x], [0, 1, center[1] - roi_y]])
     return cv2.warpAffine(frame, matrix, (w, h))
+
 
 
 

@@ -3,7 +3,6 @@ import json
 from re import L
 import gradio as gr
 import numpy as np
-# from zmq import has
 from castle.utils.latent_explorer import Latent
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -51,9 +50,13 @@ class MultiVideos:
 
         for it, v in latent_list:
             latent = np.load(os.path.join(latent_dir_path, it))['latent']
-            n = (len(latent) // bin_size)* bin_size
+            n = (len(latent) // bin_size) * bin_size
+            if n == 0:
+                continue
+            
             if self.latents == None:
                 self.latents = np.zeros((0, latent.shape[-1]))
+
             self.latents = np.append(self.latents, latent[:n], axis=0)
             self.videos_meta.append(((len(latent) // bin_size), v))
             print(it, self.latents[-1].shape)

@@ -8,6 +8,8 @@ CASTLE integrates the strengths of visual foundation models trained on large dat
 
 # Install
 
+**Now we only support colab(with GPU) and Linux(with NVIDIA GPU).**
+
 ## Step 1 Install CASTLE Core Function
 ```
 pip install castle-ai
@@ -23,14 +25,6 @@ pip install -U xformers --index-url https://download.pytorch.org/whl/cu121
 pip install -U cudf-cu12 cuml-cu12 --extra-index-url=https://pypi.nvidia.com 
 ```
 
-
-For CUDA 11 Users
-```
-pip install -U xformers --index-url https://download.pytorch.org/whl/cu118
-pip install -U cudf-cu11 cuml-cu11 --extra-index-url=https://pypi.nvidia.com 
-```
-
-
 ## Step 3 Download Web UI
 ```
 git clone https://github.com/CASTLE-ai/castle-ai.git
@@ -38,18 +32,6 @@ git clone https://github.com/CASTLE-ai/castle-ai.git
 
 ## Step 4 Download Pretrained Model
 
-### for Colab/Linux user
-
-The model will download when you need to use it.
-
-If you want to download models now
-```
-cd castle-ai/
-mkdir ckpt
-bash download_ckpt.sh 
-```
-
-### for other user
 ```
 cd castle-ai/
 mkdir ckpt

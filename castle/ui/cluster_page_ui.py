@@ -13,7 +13,7 @@ import pandas as pd
 
 umap_config_template = '''[
     {
-        "n_neighbors": 30,
+        "n_neighbors": 100,
         "min_dist": 0.0,
         "n_components": 2
     }
@@ -26,7 +26,7 @@ hdbscan_config_template ='''{
 
 
 dbscan_config_template='''{
-    "eps": 2.0
+    "eps": 1.0
 }'''
 
 def padding(mi, mx, scale=1.05):
@@ -126,7 +126,7 @@ class EmbeddingScatterPlot:
         self.selected_index = index
 
         self.selected_index = np.arange(len(self.local_latents.index_mask))[self.local_latents.index_mask][index]
-        gr.Info(f'select frame {index}')
+        gr.Info(f'select frame {self.selected_index}')
         return self.plot()
         
     
@@ -158,7 +158,7 @@ def update_select_cluster_list(latents):
         li = [k for k,v in latents.behavior_name2cluster_id.items()]
     else:
         li = []
-        gr.Info('latent init error')
+        gr.Info('latent init error, please wait 1s and try one times.')
 
     return gr.update(choices=li)
 
@@ -174,7 +174,7 @@ def generate_embedding(latents, cluster_name, cfg):
         cfg = json.loads(cfg)
     except:
         cfg = dict()
-        gr.Info('Json format error')
+        gr.Info('UMAP config Json format error')
         return None, None
     local_latents = latents.select(selected_cluster=cluster_name)
     local_latents.build_embedding(cfg)
@@ -186,7 +186,7 @@ def generate_local_cluster(local_latents, method, cfg):
     try:
         cfg = json.loads(cfg)
     except:
-        gr.Info('Json format error')
+        gr.Info('Cluster Json format error')
         return None, None
     local_latents.build_cluster(method=method, configs=cfg)
     Z_plt = EmbeddingScatterPlot(local_latents)
@@ -213,7 +213,12 @@ def label_local_cluster(local_latents, cluster_id, cluster_name):
     gr.Info(f'Name {cluster_id} as {cluster_name}')
 
 def import_info_from_local_latent(storage_path, project_name,latents, local_latents):
-    latents.import_local_latent(local_latents)
+    try:
+        latents.import_local_latent(local_latents)
+    except:
+        gr.Info('Do not use same cluster name')
+        return None, update_select_cluster_list(latents), None, None, None
+
 
     fig = plt.figure(figsize=(12, 2))
     latents.plot_syllables()
@@ -276,7 +281,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=5, max_lines=30, interactive=True, visible=False)
             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=False)
         with gr.Column(scale=2):
-            ui['cluster_method'] = gr.Dropdown(['dbscan', 'hdbscan'], label='Cluster method',
+            ui['cluster_method'] = gr.Dropdown(['dbscan'], label='Cluster method',
                               value='dbscan',interactive=True)
             ui['cluster_config_text'] = gr.Textbox(label='Cluster configs', lines=5, max_lines=30, interactive=True, visible=False)
             ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=False)

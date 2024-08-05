@@ -8,10 +8,14 @@ CASTLE integrates the strengths of visual foundation models trained on large dat
 
 # Install
 
-**Now we only support colab(with GPU) and Linux(with NVIDIA GPU).**
+**Now we only support colab(with GPU) and Ubuntu 22.04 (with NVIDIA GPU).**
+
+
 
 ## Step 1 Install CASTLE Core Function
 ```
+pip install torch==2.3.0+cu121 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
 pip install castle-ai
 ```
 

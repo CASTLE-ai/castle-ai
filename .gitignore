@@ -22,7 +22,7 @@ umap_learn.egg-info
 test*
 notebooks/temp
 
-**/ckpt
+ckpt/*.pth
 
 # public_script
 public_script.sh

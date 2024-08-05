@@ -120,7 +120,7 @@ def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, s
                 latent_list.append(latent)
             except:
                 latent_list.append(observer.nan_latent())
-                print(f'fail at frame {i*batch_size+j}')
+                print(f'fail at frame {i+j}')
 
     latent_list = np.array(latent_list)
     print('latent_list', latent_list.shape)
@@ -131,8 +131,8 @@ class Preprocess:
     def __init__(self, center_roi_switch, center_roi_id, center_roi_crop_width, center_roi_crop_height,  rotate_roi_tail_switch, rotate_roi_tail_id):
         self.center_roi_switch = center_roi_switch
         self.center_roi_id=center_roi_id
-        self.center_roi_crop_width=center_roi_crop_width
-        self.center_roi_crop_height=center_roi_crop_height
+        self.center_roi_crop_width=int(center_roi_crop_width)
+        self.center_roi_crop_height=int(center_roi_crop_height)
         self.rotate_roi_tail_switch=rotate_roi_tail_switch
         self.rotate_roi_tail_id=rotate_roi_tail_id
 

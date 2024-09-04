@@ -179,7 +179,7 @@ class LocalLatent:
                 from cuml.cluster import DBSCAN, HDBSCAN
             except:
                 from sklearn.cluster import DBSCAN
-                from hdbscan import HDBSCAN
+                # from hdbscan import HDBSCAN
             
 
         assert hasattr(self, 'embedding')

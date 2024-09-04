@@ -173,13 +173,13 @@ class LocalLatent:
     def build_cluster(self, method, configs):
         if self.device == 'cpu':
             from sklearn.cluster import DBSCAN
-            from hdbscan import HDBSCAN
+
         elif 'cuda' in self.device:
             try:
-                from cuml.cluster import DBSCAN, HDBSCAN
+                from cuml.cluster import DBSCAN
             except:
                 from sklearn.cluster import DBSCAN
-                # from hdbscan import HDBSCAN
+
             
 
         assert hasattr(self, 'embedding')
@@ -187,12 +187,10 @@ class LocalLatent:
             delattr(self, 'cluster')
 
 
-        if method == 'hdbscan':
-            self.cluster = HDBSCAN(**configs).fit_predict(self.embedding)
-        elif method == 'dbscan':
+        if method == 'dbscan':
             self.cluster = DBSCAN(**configs).fit_predict(self.embedding)
         else:
-            assert False, f"method name should be hdbscan or dbscan, but got {method}."
+            assert False, f"method name should be dbscan, but got {method}."
 
     def palette(self, x):
         if x == -1:

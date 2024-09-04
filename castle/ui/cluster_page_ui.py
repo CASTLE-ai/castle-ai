@@ -19,10 +19,7 @@ umap_config_template = '''[
     }
 ]'''
 
-hdbscan_config_template ='''{
-    "n_neighbors": 50,
-    "min_dist": 0.0
-}'''
+
 
 
 dbscan_config_template='''{
@@ -196,10 +193,8 @@ def generate_local_cluster(local_latents, method, cfg):
 def change_cluster_method_template(method):
     if method == 'dbscan':
         return dbscan_config_template
-    elif method == 'hdbscan':
-        return hdbscan_config_template
     else:
-        gr.Info(f'method error got{method}, expect dbscan or hdbscan')
+        gr.Info(f'method error got{method}, expect dbscan')
 
 
 

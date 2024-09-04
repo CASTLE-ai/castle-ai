@@ -49,7 +49,6 @@ configuration = {
         "natsort",
         "gradio",
         "plotly",
-        "hdbscan",
     ],
     # "extras_require": {
     #     "cu11": [

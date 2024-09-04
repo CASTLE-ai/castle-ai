@@ -2,7 +2,7 @@
 
 
 [![PyPI version](https://badge.fury.io/py/castle-ai.svg)](https://badge.fury.io/py/castle-ai)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CASTLE-ai/castle-ai/blob/main/notebooks/colab.ipynb)
+<!-- [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CASTLE-ai/castle-ai/blob/main/notebooks/colab.ipynb) -->
 
 CASTLE integrates the strengths of visual foundation models trained on large datasets possess open-world visual concepts, including Segment Anything (SA), DeAOT, and DINOv2, for one-shot image segmentation and unsupervised visual feature extraction. Furthermore, CASTLE employs unsupervised multi-stage and/or multi-layer UMAP clustering algorithms to distinguish behavioral clusters with unique temporal variability. 
 
@@ -10,24 +10,41 @@ CASTLE integrates the strengths of visual foundation models trained on large dat
 
 **Now we only support colab(with GPU) and Ubuntu 22.04 (with NVIDIA GPU).**
 
+## Step 0 安裝 python 3.9 or 3.10
+參考以下兩個網頁安裝python
 
+https://www.anaconda.com/download/success
 
-## Step 1 Install CASTLE Core Function
 ```
-pip install torch==2.3.0+cu121 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+python -V
+```
+Python 3.X.Y
 
+
+
+## Step 1 Check Pytorch GPU & CUML UMAP
+參考以下兩個網頁安裝 torch 與 RAPIDS 並且檢查是否能正確使用。
+
+https://docs.rapids.ai/install#selector
+
+https://pytorch.org/get-started/locally
+
+```
+python -c "import torch; print(torch.cuda.is_available())"
+```
+True
+
+
+```
+python -c "from cuml.manifold import UMAP; print(type(UMAP))"
+```
+???
+
+
+```
 pip install castle-ai
 ```
 
-
-
-## Step 2 Install xFormer and GPU Version of UMAP (Optional for Speed Up)
-
-For CUDA 12 Users
-```
-pip install -U xformers --index-url https://download.pytorch.org/whl/cu121
-pip install -U cudf-cu12 cuml-cu12 --extra-index-url=https://pypi.nvidia.com 
-```
 
 ## Step 3 Download Web UI
 ```

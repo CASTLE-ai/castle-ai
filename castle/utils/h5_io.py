@@ -58,10 +58,6 @@ class H5IO:
 
 
     def __del__(self):
-        if hasattr(self, 'f'):
+        if hasattr(self, 'f') and self.f.id.valid:
             self.f.close()
-
-
-
-
-
+            del self.f

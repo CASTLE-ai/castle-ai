@@ -19,8 +19,8 @@ projects/
 umap_learn.egg-info
 
 # test
-test*
 notebooks/temp
+local_tmp*
 
 ckpt/*.pth
 

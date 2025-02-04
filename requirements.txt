@@ -8,3 +8,4 @@ plotly
 gradio==4.32.2
 h5py
 natsort
+pytest

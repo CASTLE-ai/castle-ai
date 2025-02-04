@@ -15,50 +15,6 @@ else:
     DEFAULT_DEVICE = 'cpu'
 
 
-# np.random.seed(200)
-# _palette = ((np.random.random((3*255))*0.7+0.3)*255).astype(np.uint8).tolist()
-# _palette = [0,0,0]+_palette
-
-# def colorize_mask(pred_mask):
-#     save_mask = Image.fromarray(pred_mask.astype(np.uint8))
-#     save_mask = save_mask.convert(mode='P')
-#     save_mask.putpalette(_palette)
-#     save_mask = save_mask.convert(mode='RGB')
-#     return np.array(save_mask)
-
-# def draw_points(points, modes, frame):
-
-#     overlay = frame.copy()
-#     points = np.array(points)
-#     modes = np.array(modes)
-#     neg_points = points[np.argwhere(modes == 0)[:, 0]]
-#     pos_points = points[np.argwhere(modes == 1)[:, 0]]
-
-#     for i in range(len(neg_points)):
-#         point = neg_points[i]
-#         cv2.circle(overlay, (point[0], point[1]), 2, (255, 80, 80), -1)
-
-#     for i in range(len(pos_points)):
-#         point = pos_points[i]
-#         cv2.circle(overlay, (point[0], point[1]), 2, (0, 153, 255), -1)
-
-#     cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
-    
-#     return frame
-
-# def merge_frame_and_mask(frame, mask, points = [], modes = [], alpha=0.5):
-#     mix = np.array(frame)
-#     binary_mask = (mask != 0)
-#     foreground = frame * (1-alpha) + colorize_mask(mask) * alpha
-#     mix[binary_mask] = foreground[binary_mask]
-#     mix = draw_points(points, modes, mix)
-#     return mix.astype(np.uint8)
-
-
-# def mask2img(mask):
-#     img = colorize_mask(mask)
-#     return img.astype(np.uint8)
-
 class Segmentor:
     def __init__(self, sam_args):
         """

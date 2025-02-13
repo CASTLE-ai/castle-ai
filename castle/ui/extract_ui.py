@@ -65,11 +65,11 @@ def extract_roi_crop_video(storage_path, project_name, select_model, select_roi,
         #     return []
         
         # print('latent', type(latent))
-        np.savez_compressed(latent_path, latent=latent)
+
 
     del observer
     del tracker
-    return latent_file_list
+    return out_video_path
 
 
 # class CustomImageDataset(Dataset):
@@ -83,44 +83,52 @@ def extract_roi_crop_video(storage_path, project_name, select_model, select_roi,
 #     def __getitem__(self, index):
 #         return self.source_video[index], self.tracker.read_mask(index)
     
-def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress):
 
-    latent_list = []
+def extract_roi_latent(storage_path, project_name, select_model, select_roi, select_video, batch_size, preprocess, progress=gr.Progress()):
     batch_size = int(batch_size)
-    print('batch_size', (batch_size))
+    project_path = os.path.join(storage_path, project_name)
+    project_config_path = os.path.join(project_path, 'config.json')
+    project_config = json.load(open(project_config_path, 'r'))
+    latent_dir_path = os.path.join(storage_path, project_name, 'latent')
+    os.makedirs(latent_dir_path, exist_ok=True)
+    observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    project_config['observer_dim'] = observer.n_feature
+    latent_file_list = []
+    select_roi = int(select_roi)
+    
+    if select_video == "All":
+        subdirectories = sorted(project_config['source'])
 
+    else:
+        subdirectories = [select_video]
 
-    for i in progress.tqdm(range(0, len(source_video), batch_size)):
-        frames = [source_video[i+j] for j in range(batch_size) if j+i < len(source_video)]
-        masks = [tracker.read_mask(i+j) for j in range(batch_size) if j+i < len(source_video)]
+    for it in subdirectories:
+        source_video = ReadArray(os.path.join(storage_path, project_name, 'sources', it))
+        track_dir_path = os.path.join(project_path, 'track', it)
+        mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
+        tracker = H5IO(mask_list_path)
+        latent = extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress)
+        # try:
+        #     latent = extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, progress)
+        # except:
+        #     gr.Info("latent extract fail")
+        #     del observer
+        #     return []
+        base_name = source_video.video_name.split('.')[0]
+        latent_path = os.path.join(latent_dir_path, f'{base_name}_ROI_{select_roi}_latent.npz')
+        # print('latent', type(latent))
+        np.savez_compressed(latent_path, latent=latent)
+
+        if not 'latent' in project_config:
+            project_config['latent'] = dict()
         
-        frames_process, masks_process = [], []
-        for f, m in zip(frames, masks):
-            ff, mm = preprocess.transform(f, m)
-            frames_process.append(ff)
-            masks_process.append(mm)
+        project_config['latent'][f'{base_name}_ROI_{select_roi}_latent.npz'] = source_video.video_name
+        json.dump(project_config, open(project_config_path,'w'))
+        latent_file_list.append(latent_path)
+    del observer
+    del tracker
+    return latent_file_list
 
-        frames = frames_process
-        masks = masks_process
-
-        try:
-            latent = observer.extract_batch_latent(frames, masks, select_roi)
-            latent_list.extend(latent)
-            continue
-        except:
-            print(f"batch {i} error, try to run frame one by one")
-
-        for j in range(batch_size):
-            try:
-                latent = observer.extract_image_latent(frames[j], masks[j], select_roi)
-                latent_list.append(latent)
-            except:
-                latent_list.append(observer.nan_latent())
-                print(f'fail at frame {i+j}')
-
-    latent_list = np.array(latent_list)
-    print('latent_list', latent_list.shape)
-    return latent_list
 
 def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress):
 

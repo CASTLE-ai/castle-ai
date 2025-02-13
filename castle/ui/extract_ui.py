@@ -37,7 +37,7 @@ def extract_roi_crop_video(storage_path, project_name, select_model, select_roi,
     os.makedirs(latent_dir_path, exist_ok=True)
     observer = generate_dinov2(model_type='dinov2_vitb14_reg')
     project_config['observer_dim'] = observer.n_feature
-    latent_file_list = []
+
     select_roi = int(select_roi)
     
     if select_video == "All":
@@ -170,7 +170,7 @@ def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, s
     return latent_list
 
 
-def _extract_roi_crop_video(out_path, observer, source_video, tracker, batch_size, select_roi, preprocess, progress):
+def _extract_roi_crop_video(out_path, observer, source_video, tracker, select_roi, preprocess, progress):
     fps = source_video.fps
     crf = 15
     out = WriteArray(out_path, fps, crf)
@@ -184,7 +184,7 @@ def _extract_roi_crop_video(out_path, observer, source_video, tracker, batch_siz
         except:
             return False
 
-    del out
+    out.close()
     return True
 
 

@@ -17,7 +17,7 @@ def upload_local_videos(storage_path, project_name, upload_video_path):
         if os.path.basename(it.name) in project_config['source']:
              gr.Info("Already in this project")
              continue
-        shutil.copy(it.name, source_dir_path)
+        shutil.copyfile(it.name, os.path.join(source_dir_path, os.path.basename(it.name)))
         project_config['source'].append(os.path.basename(it.name))
     json.dump(project_config, open(project_config_path,'w'))
 

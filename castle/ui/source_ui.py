@@ -57,7 +57,7 @@ def upload_server_video(storage_path, project_name, video_storage_path, select_s
           gr.Info("Already in this project")
           return
      
-     shutil.copy(os.path.join(video_storage_path, select_server_video), source_dir_path)
+     shutil.copyfile(os.path.join(video_storage_path, select_server_video), os.path.join(source_dir_path, select_server_video))
      project_config['source'].append(os.path.basename(select_server_video))
      json.dump(project_config, open(project_config_path,'w'))
 

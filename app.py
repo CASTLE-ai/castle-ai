@@ -13,6 +13,7 @@ SHARE = False
 
 parser = ArgumentParser()
 parser.add_argument("--project-folder", dest="root")
+# parser.add_argument("--video_storage_path", dest="root") # TODO
 args = parser.parse_args()
 
 app = create_ui(OS_SYS, args.root)

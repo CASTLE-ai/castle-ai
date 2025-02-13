@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 import torchvision.transforms as tt
-
+from castle.utils.video_io import ReadArray, WriteArray
 from castle.utils.h5_io import H5IO
 from castle.utils.video_align import center_roi, rotate_based_on_roi_closest_center_point, crop, blank_page
 from castle.utils.plot import generate_mix_image
@@ -28,7 +28,7 @@ def init_select_video_list(storage_path, project_name):
     return gr.update(choices=subdirectories)
 
 
-def extract_roi_latent(storage_path, project_name, select_model, select_roi, select_video, batch_size, preprocess, progress=gr.Progress()):
+def extract_roi_crop_video(storage_path, project_name, select_model, select_roi, select_video, batch_size, preprocess, progress=gr.Progress()):
     batch_size = int(batch_size)
     project_path = os.path.join(storage_path, project_name)
     project_config_path = os.path.join(project_path, 'config.json')
@@ -51,24 +51,22 @@ def extract_roi_latent(storage_path, project_name, select_model, select_roi, sel
         track_dir_path = os.path.join(project_path, 'track', it)
         mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
         tracker = H5IO(mask_list_path)
-        latent = extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress)
+        base_name = source_video.video_name.split('.')[0]
+        out_video_path = os.path.join(latent_dir_path, f'{base_name}_ROI_{select_roi}_crop.mp4')
+        is_ok = _extract_roi_crop_video(out_video_path, observer, source_video, tracker, select_roi, preprocess, progress)
+        if not is_ok:
+            gr.Info("_extract_roi_crop_video fail")
+        # latent = extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress)
         # try:
         #     latent = extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, progress)
         # except:
         #     gr.Info("latent extract fail")
         #     del observer
         #     return []
-        base_name = source_video.video_name.split('.')[0]
-        latent_path = os.path.join(latent_dir_path, f'{base_name}_ROI_{select_roi}_latent.npz')
+        
         # print('latent', type(latent))
         np.savez_compressed(latent_path, latent=latent)
 
-        if not 'latent' in project_config:
-            project_config['latent'] = dict()
-        
-        project_config['latent'][f'{base_name}_ROI_{select_roi}_latent.npz'] = source_video.video_name
-        json.dump(project_config, open(project_config_path,'w'))
-        latent_file_list.append(latent_path)
     del observer
     del tracker
     return latent_file_list
@@ -85,7 +83,44 @@ def extract_roi_latent(storage_path, project_name, select_model, select_roi, sel
 #     def __getitem__(self, index):
 #         return self.source_video[index], self.tracker.read_mask(index)
     
+def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress):
 
+    latent_list = []
+    batch_size = int(batch_size)
+    print('batch_size', (batch_size))
+
+
+    for i in progress.tqdm(range(0, len(source_video), batch_size)):
+        frames = [source_video[i+j] for j in range(batch_size) if j+i < len(source_video)]
+        masks = [tracker.read_mask(i+j) for j in range(batch_size) if j+i < len(source_video)]
+        
+        frames_process, masks_process = [], []
+        for f, m in zip(frames, masks):
+            ff, mm = preprocess.transform(f, m)
+            frames_process.append(ff)
+            masks_process.append(mm)
+
+        frames = frames_process
+        masks = masks_process
+
+        try:
+            latent = observer.extract_batch_latent(frames, masks, select_roi)
+            latent_list.extend(latent)
+            continue
+        except:
+            print(f"batch {i} error, try to run frame one by one")
+
+        for j in range(batch_size):
+            try:
+                latent = observer.extract_image_latent(frames[j], masks[j], select_roi)
+                latent_list.append(latent)
+            except:
+                latent_list.append(observer.nan_latent())
+                print(f'fail at frame {i+j}')
+
+    latent_list = np.array(latent_list)
+    print('latent_list', latent_list.shape)
+    return latent_list
 
 def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress):
 
@@ -125,6 +160,25 @@ def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, s
     latent_list = np.array(latent_list)
     print('latent_list', latent_list.shape)
     return latent_list
+
+
+def _extract_roi_crop_video(out_path, observer, source_video, tracker, batch_size, select_roi, preprocess, progress):
+    fps = source_video.fps
+    crf = 15
+    out = WriteArray(out_path, fps, crf)
+
+    for i in progress.tqdm(range(0, len(source_video))):
+        try:
+            f = source_video[i]
+            m = tracker.read_mask(i)
+            ff, mm = preprocess.transform(f, m)
+            out.append(ff)
+        except:
+            return False
+
+    del out
+    return True
+
 
 
 class Preprocess:
@@ -206,6 +260,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         with gr.Column(scale=4):
             ui['display'] = gr.Image(
                     label='Display', interactive=False, visible=False)
+            ui['extract_crop_video_btn'] = gr.Button("Extract Crop Video", visible=False)
             ui['extract_btn'] = gr.Button("Extract", visible=False)
             ui['latent_file_list'] = gr.File(label="ROI Visual Representation File List", visible=False)
             
@@ -216,6 +271,11 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         outputs=ui['select_video']
     )
 
+    ui['extract_crop_video_btn'].click(
+        fn=extract_roi_crop_video,
+        inputs=[storage_path, project_name, ui['select_model'], ui['select_roi_id'], ui['select_video'], ui['batch_size'], preprocess],
+        outputs=ui['latent_file_list']
+    )
     ui['extract_btn'].click(
         fn=extract_roi_latent,
         inputs=[storage_path, project_name, ui['select_model'], ui['select_roi_id'], ui['select_video'], ui['batch_size'], preprocess],

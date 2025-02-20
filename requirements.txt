@@ -5,7 +5,7 @@ numpy
 opencv-python
 umap-learn
 plotly
-gradio==4.32.2
+gradio==4.44.0
 h5py
 natsort
 pytest

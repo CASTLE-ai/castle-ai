@@ -75,7 +75,7 @@ def load_network_and_optimizer_v2(net, opt, pretrained_dir, gpu, scaler=None):
 
 def load_network(net, pretrained_dir, gpu):
     pretrained = torch.load(pretrained_dir,
-                            map_location=gpu)
+                            map_location=gpu, weights_only=False)
     if 'state_dict' in pretrained.keys():
         pretrained_dict = pretrained['state_dict']
     elif 'model' in pretrained.keys():

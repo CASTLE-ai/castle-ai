@@ -4,6 +4,7 @@ from .video_io import ReadArray
 from .video_align import get_mask
 from tqdm import tqdm
 import numpy as np
+import gc
 
 import torch
 import torchvision.transforms as tt

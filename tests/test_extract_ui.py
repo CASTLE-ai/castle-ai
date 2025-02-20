@@ -95,7 +95,8 @@ def test_extract_roi_latent_frame_count(actual_data_paths):
         center_roi_crop_width=210,
         center_roi_crop_height=210,
         rotate_roi_tail_switch="False",
-        rotate_roi_tail_id=2
+        rotate_roi_tail_id=2,
+        remove_background_switch="False"
     )
 
     latent_file_list = extract_roi_latent(
@@ -135,7 +136,7 @@ def test_extract_rotation_latent_frame_count(actual_data_paths):
     select_model = "dinov2_vitb14_reg"  # 請依照你的實際模型設定
     select_roi = "1"                    # 測試時使用 ROI 1
     select_video = "test-c_elegans-1min.mp4"   # 必須與 config.json 中的影片名稱一致
-    batch_size = 4                    # 批次處理數，可依實際情況調整
+    batch_size = 8                # 批次處理數，可依實際情況調整
 
     # 使用 setting_preprocess 初始化 preprocess 物件（此處不啟用中心 ROI 與旋轉）
     preprocess, _ = setting_preprocess(

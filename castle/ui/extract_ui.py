@@ -33,8 +33,8 @@ API 調用結構圖
         └──────────────────────────────────────────────────┘
 
 其他輔助函數：
-  - init_select_video_list：初始化影片選單
-  - load_project_config：統一讀取專案設定與目錄路徑
+  - init_select_video_list: 初始化影片選單
+  - load_project_config: 統一讀取專案設定與目錄路徑
 ────────────────────────────────────────────────────────────
 """
 
@@ -200,6 +200,8 @@ def extract_roi_rotation_latent_from_video(observer, source_video, tracker, batc
                 frames.append(pf)
                 masks.append(pm)
         latent_batch = observer.extract_batch_latent(frames, masks, select_roi)
+        latent_batch = np.array(latent_batch)
+        latent_batch = latent_batch.reshape(len(latent_batch) // 24, 24, 768).mean(axis=1)
         latent_list.extend(latent_batch)
     latent_array = np.array(latent_list)
     print('Extracted rotation latent shape:', latent_array.shape)
@@ -233,13 +235,14 @@ def extract_rotation_latent(storage_path, project_name, select_model, select_roi
 # 預處理類別
 # ---------------------------
 class Preprocess:
-    def __init__(self, center_roi_switch, center_roi_id, center_roi_crop_width, center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id):
+    def __init__(self, center_roi_switch, center_roi_id, center_roi_crop_width, center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id, remove_background_switch='False'):
         self.center_roi_switch = (center_roi_switch == 'True')
         self.center_roi_id = center_roi_id
         self.center_roi_crop_width = int(center_roi_crop_width)
         self.center_roi_crop_height = int(center_roi_crop_height)
         self.rotate_roi_tail_switch = (rotate_roi_tail_switch == 'True')
         self.rotate_roi_tail_id = rotate_roi_tail_id
+        self.remove_background_switch = (remove_background_switch == 'True')
 
     def transform(self, frame, mask, deg=0):
         try:
@@ -256,6 +259,8 @@ class Preprocess:
                 m = crop(m, self.center_roi_crop_height, self.center_roi_crop_width)
             else:
                 f, m = frame, mask
+            if self.remove_background_switch:
+                f[m == 0] = 255
         except Exception as e:
             print(f"Error in Preprocess.transform: {e}")
             f = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
@@ -263,9 +268,9 @@ class Preprocess:
         return f, m
 
 def setting_preprocess(storage_path, project_name, select_video, center_roi_switch, center_roi_id,
-                       center_roi_crop_width, center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id):
+                       center_roi_crop_width, center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id, remove_background_switch):
     preprocess = Preprocess(center_roi_switch, center_roi_id, center_roi_crop_width,
-                            center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id)
+                            center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id, remove_background_switch)
     project_path, config, _, _ = load_project_config(storage_path, project_name)
     video_list = sorted(config['source']) if select_video == "All" else [select_video]
     first_video = video_list[0]
@@ -296,7 +301,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                 label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=False
             )
             ui['batch_size'] = gr.Textbox(
-                label="Batch size", value="16", info="ex: 1, 16, 64 ...", visible=False
+                label="Batch size", value="8", info="ex: 1, 16, 64 ...", visible=False
             )
             ui['select_video'] = gr.Dropdown(
                 label="Select Target Video", value='All', visible=False
@@ -312,6 +317,9 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                 label="Rotate based on Tail", value='False', choices=['True', 'False'], visible=False
             )
             ui['rotate_roi_tail_id'] = gr.Number(label="Tail ROI ID", value=2, visible=False)
+            ui['remove_background_switch'] = gr.Dropdown(
+                label="Remove Background", value='False', choices=['True', 'False'], visible=False
+            )
             ui['apply_preprocess'] = gr.Button("Apply", visible=False)
         with gr.Column(scale=4):
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)
@@ -347,7 +355,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         fn=setting_preprocess,
         inputs=[storage_path, project_name, ui['select_video'], ui['center_roi_switch'],
                 ui['center_roi_id'], ui['center_roi_crop_width'], ui['center_roi_crop_height'],
-                ui['rotate_roi_tail_switch'], ui['rotate_roi_tail_id']],
+                ui['rotate_roi_tail_switch'], ui['rotate_roi_tail_id'], ui['remove_background_switch']],
         outputs=[preprocess_state, ui['display']]
     )
     return ui

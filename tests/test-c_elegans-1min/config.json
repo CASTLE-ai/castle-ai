@@ -1,0 +1,1 @@
+{"project_name": "test-c_elegans-1min", "source": ["test-c_elegans-1min.mp4"], "observer_dim": 768, "latent": {"test-c_elegans-1min_ROI_1_latent.npz": "test-c_elegans-1min.mp4"}}

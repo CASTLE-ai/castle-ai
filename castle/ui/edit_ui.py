@@ -1,7 +1,6 @@
 import os
 import gradio as gr
 import json
-# from media.source_video import SourceVideo
 from castle.utils.video_io import ReadArray
 
 from .view_ui import create_view_ui

@@ -1,265 +1,364 @@
-import os
-
-import json
-import h5py
 import time
-import glob
-import gradio as gr
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Generator
+
 import numpy as np
+import gradio as gr
 from natsort import natsorted
+
 from castle import generate_aot
-from castle.utils.plot import generate_mix_image
 from castle.utils.h5_io import H5IO
-
-# from api.segmentor import merge_frame_and_mask
-
-# from api.tracker import get_aot
-# from media.tracking_io import TrackingIO
-
-# model_config = json.load(open('config/model_config.json', 'r'))
+from castle.utils.plot import generate_mix_image
 
 
-def read_label(storage_path, project_name, source_video):
-    if source_video == None:
+def read_label(
+    storage_path: str, project_name: str, source_video: Optional[Any]
+) -> List[Dict[str, Any]]:
+    """
+    Read all label files for the given project and return a list of labels.
+
+    Each label is a dict with keys:
+        - index: a string identifier combining file index and video basename.
+        - frame: the frame data.
+        - mask: the corresponding mask.
+
+    Args:
+        storage_path: Base storage directory.
+        project_name: Name of the project.
+        source_video: Video source object; if None, an empty list is returned.
+
+    Returns:
+        A list of dictionaries containing label information.
+    """
+    if source_video is None:
         return []
-    project_path = os.path.join(storage_path, project_name)
-    video_name = source_video.video_name
-    label_dir_path = os.path.join(project_path, 'label', video_name)
-    label_file_list = natsorted(glob.glob(f'{label_dir_path}/*.npz'))
-    print('label_file_list', label_file_list)
+
+    project_path = Path(storage_path) / project_name
+    label_dir = project_path / "label"
+
     label_list = []
-    for it in label_file_list:
-        index = os.path.basename(it).split('.')[0]
-        f = np.load(it)
-        frame, mask = f['frame'], f['mask']
-        label = dict()
-        label['index'] = index
-        label['frame'] = frame
-        label['mask'] = mask
-
-        label_list.append(label)
-
+    # Iterate through all subdirectories in natural sorted order
+    for label_folder in natsorted([p for p in label_dir.iterdir() if p.is_dir()]):
+        video_basename = label_folder.name
+        # Iterate through all .npz files in the folder
+        for npz_file in natsorted(list(label_folder.glob("*.npz"))):
+            index = npz_file.stem
+            data = np.load(npz_file)
+            # Expect keys 'frame' and 'mask'
+            if "frame" not in data or "mask" not in data:
+                continue
+            frame = data["frame"]
+            mask = data["mask"]
+            label_list.append(
+                {
+                    "index": f"{index}, {video_basename}",
+                    "frame": frame,
+                    "mask": mask,
+                }
+            )
     return label_list
 
 
-def read_label_to_gallery(storage_path, project_name, source_video):
-    label_list = read_label(storage_path, project_name, source_video)
-    gallery_list = []
-    for it in label_list:
-        index = it['index']
-        frame, mask = it['frame'], it['mask']
-        mix = generate_mix_image(frame, mask)
-        gallery_list.append((mix, index))
+def read_label_to_gallery(
+    storage_path: str, project_name: str, source_video: Optional[Any]
+) -> Tuple[List[Dict[str, Any]], List[Tuple[Any, str]]]:
+    """
+    Generate a gallery list based on the label data.
 
+    Each gallery entry is a tuple (mixed_image, label_index).
+
+    Args:
+        storage_path: Base storage directory.
+        project_name: Name of the project.
+        source_video: Video source object.
+
+    Returns:
+        A tuple containing the original label list and a gallery list.
+    """
+    label_list = read_label(storage_path, project_name, source_video)
+    gallery_list = [
+        (generate_mix_image(label["frame"], label["mask"]), label["index"])
+        for label in label_list
+    ]
     return label_list, gallery_list
 
 
+class InferenceTracker:
+    """
+    This class sets up a tracker for performing ROI tracking on a video,
+    using previously known frames and masks as references.
+    """
 
+    def __init__(
+        self,
+        storage_path: str,
+        project_name: str,
+        source_video: Any,
+        start: int,
+        stop: int,
+        model_aot: str,
+    ) -> None:
+        self.cancel: bool = False
+        self.show_middle_result: bool = False
+        self.model_aot: str = model_aot
 
-
-class Interfence:
-    def __init__(self, storage_path, project_name, source_video, start, stop, max_len, model_aot):
-        self.cancel = False
-        self.show_middle_result = False
-        self.model_aot = model_aot
-
-        project_path = os.path.join(storage_path, project_name)
+        project_path = Path(storage_path) / project_name
         video_name = source_video.video_name
-        track_dir_path = os.path.join(project_path, 'track', video_name)
-        os.makedirs(track_dir_path, exist_ok=True)
-        self.track_dir_path = track_dir_path
+        self.track_dir_path: Path = project_path / "track" / video_name
+        self.track_dir_path.mkdir(parents=True, exist_ok=True)
 
-        label_path = os.path.join(project_path, 'label', video_name, f'{start}.npz')
         self.source_video = source_video
         self.start = int(start)
         self.stop = int(stop)
-        self.max_len = int(max_len)
+        self.max_len = 30
 
-        self.knowledges = []
+        # Prepare reference knowledge from labels
+        self.knowledges: List[Tuple[Any, Any]] = []
         label_list = read_label(storage_path, project_name, source_video)
-        self.roi_count = 0
-        for it in label_list:
-            index = it['index']
-            frame, mask = it['frame'], it['mask']
+        self.roi_count: int = 0
+        for label in label_list:
+            frame, mask = label["frame"], label["mask"]
             self.knowledges.append((frame, mask))
-            self.roi_count = max(self.roi_count, np.max(mask))
+            # Update roi_count to be the maximum value found in masks
+            self.roi_count = max(self.roi_count, int(np.max(mask)))
 
-        
-        pass
+    def tracking(self, progress: gr.Progress) -> str:
+        """
+        Track ROIs over the specified frames and write each frame's result into an H5 file.
 
+        Args:
+            progress: A gradio Progress object for displaying progress.
 
-
-    def tracking(self, progress):
+        Returns:
+            A status message ("Done" or "Cancel").
+        """
         time.sleep(0.5)
-        start, stop, max_len = self.start, self.stop, self.max_len,
         tracker = generate_aot(model_type=self.model_aot)
-        mask_list_path = os.path.join(self.track_dir_path, f'mask_list.h5')       
-        mask_seq = H5IO(mask_list_path)
+        mask_list_path = self.track_dir_path / "mask_list.h5"
+        mask_seq = H5IO(str(mask_list_path))
 
-        mask_seq.write_config('roi_count', self.roi_count)
-        mask_seq.write_config('total_frames', len(self.source_video))
-        mask_seq.write_config('height', self.source_video.video_stream.height)
-        mask_seq.write_config('width', self.source_video.video_stream.width)
+        # Write video and ROI configuration settings
+        mask_seq.write_config("roi_count", self.roi_count)
+        mask_seq.write_config("total_frames", len(self.source_video))
+        mask_seq.write_config("height", self.source_video.video_stream.height)
+        mask_seq.write_config("width", self.source_video.video_stream.width)
 
-        for f, m in self.knowledges:
-            tracker.add_reference_frame(f, m, self.roi_count, -1)
+        # Add all reference ROI frames to the tracker’s memory
+        for frame, mask in self.knowledges:
+            tracker.add_reference_frame(frame, mask, self.roi_count, -1)
 
-
-        # tracker.add_reference_frame(self.first_label['frame'], self.first_label['mask'], self.roi_count, -1)
-        delta = 1 if start < stop else -1
-  
-
-        for i in progress.tqdm(range(start, stop + delta, delta)):
+        delta = 1 if self.start < self.stop else -1
+        for i in progress.tqdm(range(self.start, self.stop + delta, delta)):
             if self.cancel:
                 self.show_middle_result = False
                 self.cancel = False
                 del mask_seq
                 return "Cancel"
-            
+
             frame = self.source_video[i]
             mask = tracker.track(frame)
             tracker.update_memory(mask)
-            self.frame, self.mask = frame, mask.squeeze().detach().cpu().numpy().astype(np.uint8)
+            # Save latest frame and processed mask for potential display
+            self.frame = frame
+            self.mask = mask.squeeze().detach().cpu().numpy().astype(np.uint8)
             mask_seq.write_mask(i, self.mask)
 
         self.show_middle_result = False
         del mask_seq
         return "Done"
 
-
-
-    def set_cancel(self):
+    def set_cancel(self) -> None:
+        """Set the flag to cancel tracking."""
         self.cancel = True
-        pass
 
-    def flip_show_middle_result(self):
-        if self.show_middle_result:
-            self.show_middle_result = False
-        else:
-            self.show_middle_result = True
+    def flip_show_middle_result(self) -> None:
+        """Toggle the display of intermediate results."""
+        self.show_middle_result = not self.show_middle_result
 
 
-def init_Interfence(storage_path, project_name, source_video, start, stop, max_len, model_aot):
-    print('init_Interfence', start, stop)
-    return Interfence(storage_path, project_name, source_video, start, stop, max_len, model_aot)
+def init_inference_tracker(
+    storage_path: str,
+    project_name: str,
+    source_video: Any,
+    start: int,
+    stop: int,
+    model_aot: str,
+) -> InferenceTracker:
+    """
+    Initialize and return an instance of InferenceTracker.
+    """
+    print("Initializing InferenceTracker with start:", start, "and stop:", stop)
+    return InferenceTracker(storage_path, project_name, source_video, start, stop, model_aot)
 
-def run_interfence(interfence, progress=gr.Progress()):
-    status = interfence.tracking(progress)
-    return f"{status}. From {interfence.start} to {interfence.stop}"
 
-def click_middle_result(interfence):
-    print('enter click_middle_result', interfence.show_middle_result)
-    interfence.flip_show_middle_result()
-    while interfence.show_middle_result:
+def run_inference_tracker(
+    tracker: InferenceTracker, progress: gr.Progress = gr.Progress()
+) -> str:
+    """
+    Run the tracking process.
+
+    Args:
+        tracker: The InferenceTracker instance.
+        progress: A gradio Progress instance.
+
+    Returns:
+        A status message.
+    """
+    status = tracker.tracking(progress)
+    return f"{status}. From {tracker.start} to {tracker.stop}"
+
+
+def click_middle_result(
+    tracker: InferenceTracker,
+) -> Generator[Tuple[Any, str], None, None]:
+    """
+    Toggle the display of intermediate results and yield updates.
+
+    This generator repeatedly yields a tuple (mixed_image, display_mode) every second.
+    """
+    print("Toggling middle result display. Current state:", tracker.show_middle_result)
+    tracker.flip_show_middle_result()
+    while tracker.show_middle_result:
         time.sleep(1)
-        yield generate_mix_image(interfence.frame, interfence.mask), display_middle_result_mode(interfence.show_middle_result)
-
-def display_middle_result_mode(res):
-    if res:
-       return "Show"
-    else:
-       return "Close"
-
-def set_cancel(interfence):
-    interfence.set_cancel()
+        mixed_image = generate_mix_image(tracker.frame, tracker.mask)
+        yield mixed_image, display_middle_result_mode(tracker.show_middle_result)
 
 
+def display_middle_result_mode(is_showing: bool) -> str:
+    """
+    Return the display mode string based on a boolean flag.
 
-def create_track_ui(storage_path, project_name, source_video, track_tab):
-    ui = dict()
+    Args:
+        is_showing: True if the intermediate result is being shown.
 
-    label_list = gr.State(None)
-    interfence = gr.State(None)
-    with gr.Accordion('ROIs Knowledge', visible=False) as ui['gallery_accordion']:
-        ui['gallery'] = gr.Gallery(
-            label="Label Frame", show_label=True, allow_preview=False, object_fit="contain", columns=3)
+    Returns:
+        "Show" if is_showing is True, otherwise "Close".
+    """
+    return "Show" if is_showing else "Close"
 
-    with gr.Accordion('Inference', open=True, visible=False) as ui['inference_accordion']:
+
+def set_cancel(tracker: InferenceTracker) -> None:
+    """Trigger cancellation of the tracking process."""
+    tracker.set_cancel()
+
+
+def create_track_ui(
+    storage_path: str, project_name: str, source_video: Any, track_tab: gr.Tab
+) -> Dict[str, Any]:
+    """
+    Create and return the Gradio UI components for tracking.
+
+    Args:
+        storage_path: Base storage directory.
+        project_name: Name of the project.
+        source_video: Video source object.
+        track_tab: The Gradio Tab component where UI elements are added.
+
+    Returns:
+        A dictionary of UI elements.
+    """
+    ui: Dict[str, Any] = {}
+
+    label_list_state = gr.State(None)
+    tracker_state = gr.State(None)
+
+    with gr.Accordion("ROIs Knowledge", visible=False) as gallery_accordion:
+        gallery = gr.Gallery(
+            label="Label Frame",
+            show_label=True,
+            allow_preview=False,
+            object_fit="contain",
+            columns=3,
+        )
+        ui["gallery"] = gallery
+
+    with gr.Accordion("Inference", open=True, visible=False) as inference_accordion:
         with gr.Row(visible=True):
             with gr.Column(scale=2):
-                # ui['start_frame'] = gr.Textbox(
-                #     label="Start Frame", interactive=False, visible=False)
-                ui['start_frame'] = gr.Slider(
-                    label="Start Frame (include)", minimum=0, step=1, maximum=1, value=0, interactive=True, visible=False)
-                ui['stop_frame'] = gr.Slider(
-                    label="Stop Frame (include)", minimum=0, step=1, maximum=1, value=1, interactive=True, visible=False)
-                ui['deaot_model'] = gr.Dropdown(['r50_deaotl', 'swinb_deaotl'], label='tracking_model',
-                              info='swim_transformer or res50',
-                              value='r50_deaotl',
-                              interactive=True)
-                ui['long_term_max_len'] = gr.Number(
-                    label="Long term menary length",
-                    info="Bigger is better, but this depends on the GPU's RAM capacity",
-                    value=30, interactive=True, visible=False
+                start_frame = gr.Slider(
+                    label="Start Frame (include)",
+                    minimum=0,
+                    step=1,
+                    maximum=1,
+                    value=0,
+                    interactive=True,
+                    visible=False,
                 )
-                ui['init_tracker'] = gr.Button(
-                    "init Tracker", interactive=True, visible=False)
-                ui['tracking_btm'] = gr.Button(
-                    "Tracking ROIs", interactive=True, visible=False)
-                ui['progress_edit'] = gr.Textbox(
-                    label="Progress", visible=False)
-                ui['display_middle_result_mode'] = gr.Textbox(value="Close",
-                    label="Display Mode", interactive=False, visible=False)
-                ui['display_middle_result'] = gr.Button(
-                    "Display middle result", interactive=True, visible=False)
-                ui['cancel_btn'] = gr.Button(
-                    "Cancel", interactive=True, visible=False)
+                stop_frame = gr.Slider(
+                    label="Stop Frame (include)",
+                    minimum=0,
+                    step=1,
+                    maximum=1,
+                    value=1,
+                    interactive=True,
+                    visible=False,
+                )
+                model_dropdown = gr.Dropdown(
+                    choices=["r50_deaotl", "swinb_deaotl"],
+                    label="Tracking Model",
+                    info="ResNet-50 or Swin-transformer",
+                    value="r50_deaotl",
+                    interactive=True,
+                )
+                init_tracker_btn = gr.Button("Init Tracker", interactive=True, visible=False)
+                tracking_btn = gr.Button("Tracking ROIs", interactive=True, visible=False)
+                progress_text = gr.Textbox(label="Progress", visible=False)
+                display_mode_text = gr.Textbox(
+                    value="Close", label="Display Mode", interactive=False, visible=False
+                )
+                display_middle_result_btn = gr.Button(
+                    "Display middle result", interactive=True, visible=False
+                )
+                cancel_btn = gr.Button("Cancel", interactive=True, visible=False)
 
             with gr.Column(scale=8):
-                ui['display'] = gr.Image(
-                    label='Display', interactive=False, visible=False)
+                display = gr.Image(label="Display", interactive=False, visible=False)
 
+    # Store UI elements into the ui dict for external access if needed.
+    ui.update(
+        {
+            "gallery_accordion": gallery_accordion,
+            "inference_accordion": inference_accordion,
+            "start_frame": start_frame,
+            "stop_frame": stop_frame,
+            "model_dropdown": model_dropdown,
+            "init_tracker_btn": init_tracker_btn,
+            "tracking_btn": tracking_btn,
+            "progress_text": progress_text,
+            "display_mode_text": display_mode_text,
+            "display_middle_result_btn": display_middle_result_btn,
+            "cancel_btn": cancel_btn,
+            "display": display,
+        }
+    )
 
-    tracking_config = [ui['start_frame'], ui['stop_frame'], ui['long_term_max_len'], ui['deaot_model']]
+    tracking_config = [start_frame, stop_frame, model_dropdown]
+    # Set up the gallery from the label data.
     track_tab.select(
         fn=read_label_to_gallery,
         inputs=[storage_path, project_name, source_video],
-        outputs=[label_list, ui['gallery']]
+        outputs=[label_list_state, gallery],
     )
 
-    # ui['gallery'].select(
-    #     fn=setting_start_frame,
-    #     inputs=[label_list],
-    #     outputs=ui['start_frame']
-    # )
-    # ui['gallery'].select(
-    #     fn=collapse_accordion,
-    #     outputs=ui['gallery_accordion']
-    # )
-    # ui['gallery'].select(
-    #     fn=open_accordion,
-    #     outputs=ui['inference_accordion']
-    # )
-
-    # ui['gallery'].select(
-    #     fn=init_display,
-    #     inputs=label_list,
-    #     outputs=ui['display']
-    # )
-
-    init_Interfence_input = [storage_path, project_name, source_video]
-    init_Interfence_input.extend(tracking_config)
-    ui['init_tracker'].click(
-        fn=init_Interfence,
-        inputs=init_Interfence_input,
-        outputs= interfence
+    init_tracker_inputs = [storage_path, project_name, source_video] + tracking_config
+    init_tracker_btn.click(
+        fn=init_inference_tracker,
+        inputs=init_tracker_inputs,
+        outputs=tracker_state,
     )
 
-    ui['tracking_btm'].click(
-        fn=run_interfence,
-        inputs = interfence,
-        outputs=ui['progress_edit']
+    tracking_btn.click(
+        fn=run_inference_tracker,
+        inputs=tracker_state,
+        outputs=progress_text,
     )
 
-    ui['display_middle_result'].click(
+    display_middle_result_btn.click(
         fn=click_middle_result,
-        inputs=interfence,
-        outputs=[ui['display'], ui['display_middle_result_mode']]
+        inputs=tracker_state,
+        outputs=[display, display_mode_text],
     )
 
-    ui['cancel_btn'].click(
-        fn=set_cancel,
-        inputs=interfence,
-    )
+    cancel_btn.click(fn=set_cancel, inputs=tracker_state)
 
     return ui

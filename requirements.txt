@@ -9,3 +9,6 @@ gradio==4.44.0
 h5py
 natsort
 pytest
+
+--extra-index-url=https://pypi.nvidia.com
+cuml-cu12==25.2.*

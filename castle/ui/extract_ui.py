@@ -281,6 +281,7 @@ def setting_preprocess(storage_path, project_name, select_video, center_roi_swit
     frame, mask = source_video[0], tracker.read_mask(0)
     processed_frame, processed_mask = preprocess.transform(frame, mask)
     mixed_image = generate_mix_image(processed_frame, processed_mask)
+    del tracker
     return preprocess, mixed_image
 
 # ---------------------------

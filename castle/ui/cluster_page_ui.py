@@ -82,6 +82,7 @@ class MultiVideos:
                 index -= vn
                 continue
             video_path = os.path.join(self.source_path, v)
+            gr.Info(f'select frame {index*self.bin_size + self.bin_size // 2} from video {v}')
             return ReadArray(video_path)[index*self.bin_size + self.bin_size // 2]
         gr.Info('bin_index2frame error')
         return None
@@ -96,8 +97,8 @@ class MultiVideos:
         subtitle_list = []
 
         cum = 0
-        for vn, v in self.videos_meta:
-            bin_length = int(vn // self.bin_size)
+        for vn, v in self.videos_meta: # what is the define of vn?
+            bin_length = vn
             this_video_syllabels = syllabels[cum:cum+bin_length]
             data = np.repeat(this_video_syllabels, self.bin_size)
             srt_entries = []
@@ -179,7 +180,7 @@ class EmbeddingScatterPlot:
         self.selected_index = index
 
         self.selected_index = np.arange(len(self.local_latents.index_mask))[self.local_latents.index_mask][index]
-        gr.Info(f'select frame {self.selected_index}')
+        # gr.Info(f'select frame {self.selected_index}')
         return self.plot()
         
     

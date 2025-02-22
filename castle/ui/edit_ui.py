@@ -5,6 +5,7 @@ from castle.utils.video_io import ReadArray
 
 from .view_ui import create_view_ui
 from .label_ui import create_label_ui
+from .knowledge_ui import create_knowledge_ui
 from .track_ui import create_track_ui
 from .post_track_ui import create_post_track_ui
 
@@ -50,6 +51,9 @@ def create_edit_ui(storage_path, project_name):
     with gr.Tab(label='Label ROI'):
         label_ui = create_label_ui(storage_path, project_name, source_video)
 
+    with gr.Tab(label='ROI Knowledge') as knowledge_tab:
+        knowledge_ui = create_knowledge_ui(storage_path, project_name, source_video, knowledge_tab)
+
     with gr.Tab(label='Tracking') as track_tab:
         track_ui = create_track_ui(storage_path, project_name, source_video, track_tab)
 
@@ -61,6 +65,7 @@ def create_edit_ui(storage_path, project_name):
 
     view_ui_object_count = gr.State(len(view_ui))
     label_ui_object_count = gr.State(len(label_ui))
+    knowledge_ui_object_count = gr.State(len(knowledge_ui))
     track_ui_object_count = gr.State(len(track_ui))
     post_track_ui_object_count = gr.State(len(post_track_ui))
 
@@ -82,6 +87,11 @@ def create_edit_ui(storage_path, project_name):
         fn=unlock_ui,
         inputs=label_ui_object_count,
         outputs=[v for k, v in label_ui.items()]
+    )
+    ui['select_video_edit_btn'].click(
+        fn=unlock_ui,
+        inputs=knowledge_ui_object_count,
+        outputs=[v for k, v in knowledge_ui.items()]
     )
     ui['select_video_edit_btn'].click(
         fn=unlock_ui,

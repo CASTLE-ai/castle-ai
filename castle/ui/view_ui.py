@@ -26,6 +26,22 @@ def index_slide_apply(storage_path, project_name, source_video, index, mode):
     del tracker
 
 
+def adding_to_knowledge(storage_path, project_name, source_video, index):
+    project_path = os.path.join(storage_path, project_name)
+    video_name = source_video.video_name
+    label_dir_path = os.path.join(project_path, 'label', video_name)
+    os.makedirs(label_dir_path, exist_ok=True)
+
+    track_dir_path = os.path.join(project_path, 'track', video_name)
+    mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
+
+    tracker = H5IO(mask_list_path)
+    frame = source_video[index]
+    mask = tracker.read_mask(index)
+    label_path = os.path.join(label_dir_path, f'{index}')
+    np.savez_compressed(label_path, frame=frame, mask=mask)
+    gr.Info(f"Save ROI at frame {index}.")
+
 
 def create_view_ui(storage_path, project_name, source_video):
     ui = dict()
@@ -40,6 +56,7 @@ def create_view_ui(storage_path, project_name, source_video):
                     choices=["1", "5", "10", "100", "1000", "10000"],
                     label="Frame step number", value="1",
                     interactive=True, visible=False)
+            ui['adding_to_knowledge_btn'] = gr.Button('Adding to Knowledge', interactive=True, visible=False)
             
         with gr.Column(scale=8):
             ui['display_view'] = gr.Image(label='Display', interactive=False, visible=False)
@@ -55,6 +72,11 @@ def create_view_ui(storage_path, project_name, source_video):
         fn=step_frame_apply,
         inputs=ui['step_frame'],
         outputs=ui['index_slide']
+    )
+    ui['adding_to_knowledge_btn'].click(
+        fn=adding_to_knowledge,
+        inputs=[storage_path, project_name, source_video, ui['index_slide']]
+        # outputs=ui['click_mode']
     )
     return ui
     

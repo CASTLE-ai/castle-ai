@@ -61,7 +61,7 @@ def read_label(
 
 def read_label_to_gallery(
     storage_path: str, project_name: str, source_video: Optional[Any]
-) -> Tuple[List[Dict[str, Any]], List[Tuple[Any, str]]]:
+) -> Tuple[List[Dict[str, Any]]]:
     """
     Generate a gallery list based on the label data.
 
@@ -80,7 +80,7 @@ def read_label_to_gallery(
         (generate_mix_image(label["frame"], label["mask"]), label["index"])
         for label in label_list
     ]
-    return label_list, gallery_list
+    return label_list
 
 
 class InferenceTracker:
@@ -262,15 +262,15 @@ def create_track_ui(
     label_list_state = gr.State(None)
     tracker_state = gr.State(None)
 
-    with gr.Accordion("ROIs Knowledge", visible=False) as gallery_accordion:
-        gallery = gr.Gallery(
-            label="Label Frame",
-            show_label=True,
-            allow_preview=False,
-            object_fit="contain",
-            columns=3,
-        )
-        ui["gallery"] = gallery
+    # with gr.Accordion("ROIs Knowledge", visible=False) as gallery_accordion:
+    #     gallery = gr.Gallery(
+    #         label="Label Frame",
+    #         show_label=True,
+    #         allow_preview=False,
+    #         object_fit="contain",
+    #         columns=3,
+    #     )
+    #     ui["gallery"] = gallery
 
     with gr.Accordion("Inference", open=True, visible=False) as inference_accordion:
         with gr.Row(visible=True):
@@ -317,7 +317,7 @@ def create_track_ui(
     # Store UI elements into the ui dict for external access if needed.
     ui.update(
         {
-            "gallery_accordion": gallery_accordion,
+            # "gallery_accordion": gallery_accordion,
             "inference_accordion": inference_accordion,
             "start_frame": start_frame,
             "stop_frame": stop_frame,
@@ -337,7 +337,7 @@ def create_track_ui(
     track_tab.select(
         fn=read_label_to_gallery,
         inputs=[storage_path, project_name, source_video],
-        outputs=[label_list_state, gallery],
+        outputs=[label_list_state],
     )
 
     init_tracker_inputs = [storage_path, project_name, source_video] + tracking_config

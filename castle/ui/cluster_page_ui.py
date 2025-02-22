@@ -13,7 +13,7 @@ import pandas as pd
 
 umap_config_template = '''[
     {
-        "n_neighbors": 100,
+        "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2
     }
@@ -31,16 +31,27 @@ def padding(mi, mx, scale=1.05):
     d = mx - mi
     return (mid - (d / 2) * scale), (mid + (d / 2) * scale)
 
+
+# Define a function to convert frame number to timestamp
+def frame_to_timestamp(frame_number, fps):
+    seconds = frame_number / fps
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    seconds = seconds % 60
+    milliseconds = (seconds % 1) * 1000
+    return f"{hours:02}:{minutes:02}:{int(seconds):02},{int(milliseconds):03}"
+
 class MultiVideos:
     def __init__(self, storage_path, project_name, select_roi_id, bin_size):
         self.source_path = os.path.join(storage_path, project_name, 'sources')
         project_path = os.path.join(storage_path, project_name)
+        self.project_path = project_path
         project_config_path = os.path.join(project_path, 'config.json')
         project_config = json.load(open(project_config_path, 'r'))
         latent_list = [(k,v) for k, v in project_config['latent'].items() if f'ROI_{select_roi_id}' in k]
         latent_dir_path = os.path.join(storage_path, project_name, 'latent')
 
-        self.latents = None
+        # self.latents = None
         self.videos_meta = []
         self.bin_size = bin_size
 
@@ -51,8 +62,11 @@ class MultiVideos:
             if n == 0:
                 continue
             
-            if self.latents == None:
+            if not hasattr(self, "latents"):
                 self.latents = np.zeros((0, latent.shape[-1]))
+            
+            if not hasattr(self, "fps"):
+                self.fps = ReadArray(os.path.join(self.source_path, v)).fps
 
             self.latents = np.append(self.latents, latent[:n], axis=0)
             self.videos_meta.append(((len(latent) // bin_size), v))
@@ -74,6 +88,48 @@ class MultiVideos:
 
     def get_latents(self):
         return Latent(self.latents, self.bin_size)
+    
+
+    def generate_subtitle(self, syllabels, meta):
+        subtitle_path = os.path.join(self.project_path, 'subtitles')
+        os.makedirs(subtitle_path, exist_ok=True)
+        subtitle_list = []
+
+        cum = 0
+        for vn, v in self.videos_meta:
+            bin_length = int(vn // self.bin_size)
+            this_video_syllabels = syllabels[cum:cum+bin_length]
+            data = np.repeat(this_video_syllabels, self.bin_size)
+            srt_entries = []
+            n = len(data)
+            delta_index = np.arange(n-1)[(data[:-1] != data[1:])]
+            delta_index = np.concatenate([[-1],delta_index,[n-1]])
+            for i in range(len(delta_index)-1):
+
+                start_frame = delta_index[i]+1
+                end_frame = delta_index[i+1]
+                start_time = frame_to_timestamp(start_frame, self.fps)
+                end_time = frame_to_timestamp(end_frame, self.fps)
+                behavior = data[start_frame+1]
+                srt_entries.append(f"{i + 1}\n{start_time} --> {end_time}\n{meta[behavior]['name']}\n")
+                
+            srt_content = "\n".join(srt_entries)
+
+            video_basename = os.path.basename(v).split('.')[0]
+            output_path = os.path.join(subtitle_path, video_basename) + '.srt'
+            with open(output_path, 'w', encoding='utf-8') as file:
+                file.write(srt_content)
+                
+            subtitle_list.append(output_path)
+            # Join all entries into a single SRT content string
+            
+
+
+            cum += bin_length
+
+
+
+        return subtitle_list
 
 
 
@@ -207,7 +263,16 @@ def label_local_cluster(local_latents, cluster_id, cluster_name):
     local_latents.label_cluster(cluster_id, cluster_name)  
     gr.Info(f'Name {cluster_id} as {cluster_name}')
 
-def import_info_from_local_latent(storage_path, project_name,latents, local_latents):
+def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo):
+    # project_path = os.path.join(storage_path, project_name)
+    # source_path =  os.path.join(storage_path, 'sources')
+    # project_config_path = os.path.join(project_path, 'config.json')
+    # project_config = json.load(open(project_config_path, 'r'))
+    # video_path = os.path.join(source_path, project_config["source"][0])
+    return mulvideo.generate_subtitle(latents.cluster, latents.cluster_meta)
+
+
+def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo):
     try:
         latents.import_local_latent(local_latents)
     except:
@@ -238,9 +303,10 @@ def import_info_from_local_latent(storage_path, project_name,latents, local_late
     df1.to_csv(df1_path, index=False)  
     df2.to_csv(df2_path)
 
+    subtitle_path = convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo)
     
 
-    return fig, update_select_cluster_list(latents), df1_path, df2_path, None
+    return fig, update_select_cluster_list(latents), df1_path, df2_path, subtitle_path
 
 
 
@@ -354,7 +420,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
-        inputs=[storage_path, project_name, latents, local_latents],
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo],
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt']]
     )
 

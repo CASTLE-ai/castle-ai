@@ -16,7 +16,7 @@ def keep_click_mode_switch_only(mode):
 def index_slide_event(segmentor, source_video, index):
     del segmentor
     frame = source_video[index]
-    return None, frame, frame, gr.update(interactive=True)
+    return None, frame, frame, gr.update(interactive=False)
 
 
 def label_click_fn(segmentor, frame, mode, evt: gr.SelectData):

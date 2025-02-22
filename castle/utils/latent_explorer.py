@@ -56,7 +56,8 @@ class Latent:
         
         self.used_palette = set()
         
-        
+    def get_time_window(self):
+        return self.time_window
 
     def select(self, selected_cluster):
         if type(selected_cluster) == str:
@@ -153,7 +154,8 @@ class LocalLatent:
             from umap import UMAP
         elif 'cuda' in self.device:
             try:
-                from cuml.manifold import UMAP
+                # from cuml.manifold import UMAP
+                from castle.utils.myumap import UMAP
             except:
                 from umap import UMAP
         else:

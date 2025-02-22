@@ -7,6 +7,7 @@ import numpy as np
 
 class UMAP:
     def __init__(self,  n_neighbors, n_components, min_dist=0.1, n_epochs=10000, init='spectral', random_state=np.random.randint(1, 1000), verbose=False):
+        print("here is mix UMAP")
         self.n_epochs = n_epochs
         self.n_neighbors = n_neighbors
         self.n_components = n_components

@@ -87,7 +87,7 @@ class MultiObjectSegmentor():
         self.sam_args = sam_args
         self.click_points = []
         self.click_modes = []
-        self.roi_count = 0
+        self.n_rois = 0
         self.next = True
         pass
 
@@ -98,7 +98,7 @@ class MultiObjectSegmentor():
 
     def segment_with_click(self, point, mode):
         if self.next:
-            self.roi_count += 1
+            self.n_rois += 1
             self.next = False
 
         self.click_points.append(point)
@@ -112,7 +112,7 @@ class MultiObjectSegmentor():
         )
         del sam
         self.temp_mask = np.array(self.pre_mask)
-        self.temp_mask[mask > 0] = self.roi_count
+        self.temp_mask[mask > 0] = self.n_rois
         return self.temp_mask
 
     def next_roi(self):

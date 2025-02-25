@@ -115,12 +115,12 @@ class InferenceTracker:
         # Prepare reference knowledge from labels
         self.knowledges: List[Tuple[Any, Any]] = []
         label_list = read_label(storage_path, project_name, source_video)
-        self.roi_count: int = 0
+        self.n_rois: int = 0
         for label in label_list:
             frame, mask = label["frame"], label["mask"]
             self.knowledges.append((frame, mask))
-            # Update roi_count to be the maximum value found in masks
-            self.roi_count = max(self.roi_count, int(np.max(mask)))
+            # Update n_rois to be the maximum value found in masks
+            self.n_rois = max(self.n_rois, int(np.max(mask)))
 
     def tracking(self, progress: gr.Progress) -> str:
         """
@@ -138,14 +138,13 @@ class InferenceTracker:
         mask_seq = H5IO(str(mask_list_path))
 
         # Write video and ROI configuration settings
-        mask_seq.write_config("roi_count", self.roi_count)
+        mask_seq.write_config("n_rois", self.n_rois)
         mask_seq.write_config("total_frames", len(self.source_video))
         mask_seq.write_config("height", self.source_video.video_stream.height)
         mask_seq.write_config("width", self.source_video.video_stream.width)
-
         # Add all reference ROI frames to the tracker’s memory
         for frame, mask in self.knowledges:
-            tracker.add_reference_frame(frame, mask, self.roi_count, -1)
+            tracker.add_reference_frame(frame, mask, self.n_rois, -1)
 
         delta = 1 if self.start < self.stop else -1
         for i in progress.tqdm(range(self.start, self.stop + delta, delta)):
@@ -262,15 +261,7 @@ def create_track_ui(
     label_list_state = gr.State(None)
     tracker_state = gr.State(None)
 
-    # with gr.Accordion("ROIs Knowledge", visible=False) as gallery_accordion:
-    #     gallery = gr.Gallery(
-    #         label="Label Frame",
-    #         show_label=True,
-    #         allow_preview=False,
-    #         object_fit="contain",
-    #         columns=3,
-    #     )
-    #     ui["gallery"] = gallery
+
 
     with gr.Accordion("Inference", open=True, visible=False) as inference_accordion:
         with gr.Row(visible=True):

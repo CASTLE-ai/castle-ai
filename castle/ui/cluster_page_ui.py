@@ -57,6 +57,7 @@ class MultiVideos:
 
 
         for it, v in latent_list:
+            gr.Info(f'Loading: {v}')
             latent = np.load(os.path.join(latent_dir_path, it))['latent']
             n = (len(latent) // bin_size) * bin_size
             if n == 0:
@@ -108,7 +109,7 @@ class MultiVideos:
             for i in range(len(delta_index)-1):
 
                 start_frame = delta_index[i]+1
-                end_frame = delta_index[i+1]
+                end_frame = delta_index[i+1]+1
                 start_time = frame_to_timestamp(start_frame, self.fps)
                 end_time = frame_to_timestamp(end_frame, self.fps)
                 behavior = data[start_frame+1]
@@ -230,7 +231,12 @@ def generate_embedding(latents, cluster_name, cfg):
         cfg = dict()
         gr.Info('UMAP config Json format error')
         return None, None
+    
     local_latents = latents.select(selected_cluster=cluster_name)
+    if len(local_latents.data) == 0:
+        gr.Info('This Cluster is empty.')
+        return None, None, None
+    
     local_latents.build_embedding(cfg)
     Z_plt = EmbeddingScatterPlot(local_latents)
     return local_latents, Z_plt, Z_plt.plot()
@@ -265,11 +271,7 @@ def label_local_cluster(local_latents, cluster_id, cluster_name):
     gr.Info(f'Name {cluster_id} as {cluster_name}')
 
 def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo):
-    # project_path = os.path.join(storage_path, project_name)
-    # source_path =  os.path.join(storage_path, 'sources')
-    # project_config_path = os.path.join(project_path, 'config.json')
-    # project_config = json.load(open(project_config_path, 'r'))
-    # video_path = os.path.join(source_path, project_config["source"][0])
+    
     return mulvideo.generate_subtitle(latents.cluster, latents.cluster_meta)
 
 

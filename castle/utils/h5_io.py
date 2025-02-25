@@ -1,7 +1,6 @@
 import os
 import h5py
 
-# Maybe can save with format tiff for imageJ
 
 class H5IO:
     def __init__(self, file_path):
@@ -23,6 +22,9 @@ class H5IO:
 
     def __getitem__(self, index):
         return self.read_mask(index)
+    
+    def has_mask(self, index):
+        return str(index) in self.f
 
     def read_mask(self, index):
         assert str(index) in self.f, f"Without mask at frame {index}"
@@ -56,8 +58,17 @@ class H5IO:
         mode = 'a' if os.path.isfile(self.file_path) else 'w'
         self.f = h5py.File(self.file_path, mode)
 
+    def get_n_rois(self):
+        return int(self.f['n_rois'][()])
+    
+    def __len__(self):
+        return int(self.f['total_frames'][()])
+    
+
 
     def __del__(self):
         if hasattr(self, 'f') and self.f.id.valid:
             self.f.close()
             del self.f
+
+

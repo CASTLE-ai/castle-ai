@@ -79,3 +79,7 @@ class WriteArray:
             self.output.mux(packet)
             
         self.output.close()
+
+
+    def __del__(self):
+        self.close()

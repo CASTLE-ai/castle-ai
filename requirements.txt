@@ -4,7 +4,7 @@ av
 numpy
 opencv-python
 umap-learn
-plotly
+plotly==5.22.0
 gradio==4.44.0
 h5py
 natsort

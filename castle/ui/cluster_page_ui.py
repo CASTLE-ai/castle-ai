@@ -74,6 +74,7 @@ class MultiVideos:
             print(it, self.latents[-1].shape)
 
             print(len(self.latents))
+        gr.Info(f'Finish')
     
     def bin_index2frame(self, index):
 
@@ -83,7 +84,7 @@ class MultiVideos:
                 index -= vn
                 continue
             video_path = os.path.join(self.source_path, v)
-            gr.Info(f'select frame {index*self.bin_size + self.bin_size // 2} from video {v}')
+            gr.Info(f'{index*self.bin_size + self.bin_size // 2}\n{v}')
             return ReadArray(video_path)[index*self.bin_size + self.bin_size // 2]
         gr.Info('bin_index2frame error')
         return None
@@ -171,6 +172,52 @@ class EmbeddingScatterPlot:
         self.width, self.height = img.size
 
         return img
+    
+    def plot_named_embedding(self):
+        plt.figure()
+        self.local_latents.plot_name_embedding()
+        plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
+        plt.axis('off')
+        plt.xlim(self.xlim)
+        plt.ylim(self.ylim[1], self.ylim[0])
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
+        plt.close()
+        buf.seek(0)
+        img = Image.open(buf)
+
+        self.width, self.height = img.size
+
+        return img
+
+        
+
+    def save_named_embedding(self, save_path):
+        index_mask = self.local_latents.index_mask
+        masked_emb = self.local_latents.embedding
+        masked_cls = self.local_latents.cluster
+        n_samples = len(index_mask)
+        n_features = masked_emb.shape[-1]
+
+        emb = np.zeros((n_samples, n_features)) + np.nan
+        emb[index_mask] = masked_emb
+
+        cls = np.zeros(n_samples, dtype=np.int16) - 1
+        cls[index_mask] = masked_cls
+
+
+
+        np.savez_compressed(save_path, emb=emb, cls=cls)
+        # plt.figure()
+        # self.local_latents.plot_name_embedding()
+        # plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
+        # plt.axis('off')
+        # plt.xlim(self.xlim)
+        # plt.ylim(self.ylim[1], self.ylim[0])
+        # plt.savefig(save_path)#, bbox_inches='tight', pad_inches=0)
+
+
     
     def click(self, x, y):
         x, y = self.pixel_2_embedding(x, y)
@@ -277,6 +324,7 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulv
 
 def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo):
     try:
+        start_cluster_id = latents.num_cluster
         latents.import_local_latent(local_latents)
     except:
         gr.Info('Do not use same cluster name')
@@ -308,8 +356,14 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
 
     subtitle_path = convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo)
     
+    Z_plt = EmbeddingScatterPlot(local_latents)
+    cluster_name = ""
+    for _, it in local_latents.export.items():
+        cluster_name += it['name'] + '_'
 
-    return fig, update_select_cluster_list(latents), df1_path, df2_path, subtitle_path
+    local_embedding_path = os.path.join(cluster_path, f'cluster_{cluster_name}.npz')
+    Z_plt.save_named_embedding(save_path = local_embedding_path)
+    return fig, update_select_cluster_list(latents), df1_path, df2_path, subtitle_path, Z_plt, Z_plt.plot_named_embedding(), local_embedding_path
 
 
 
@@ -336,8 +390,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     with gr.Row(visible=True):
         with gr.Column(scale=5):
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
+            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
         with gr.Column(scale=5):
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
+            
 
     with gr.Row(visible=True):
         with gr.Column(scale=2):
@@ -424,7 +480,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo],
-        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt']]
+        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
     )
 
     return ui

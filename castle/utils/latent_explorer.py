@@ -14,8 +14,8 @@ elif torch.cuda.is_available():
 else:
     DEFAULT_DEVICE = 'cpu'
 
-
-_palette = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
+_palette = ['#7AE4F0', '#FFD0EC', '#6EE368', '#C1B5EA',  '#A7CCED', '#FBC471', '#9E83E3']
+_palette += ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
 _palette += ['#FD3216', '#00FE35', '#6A76FC', '#FED4C4', '#FE00CE', '#0DF9FF', '#F6F926', '#FF9616', '#479B55', '#EEA6FB', '#DC587D', '#D626FF', '#6E899C', '#00B5F7', '#B68E00', '#C9FBE5', '#FF0092', '#22FFA7', '#E3EE9E', '#86CE00', '#BC7196', '#7E7DCD', '#FC6955', '#E48F72']
 _palette += ['#66c5cc', '#f6cf71', '#f89c74', '#dcb0f2', '#87c55f', '#9eb9f3', '#fe88b1', '#c9db74', '#8be0a4', '#b497e7', '#b3b3b3']
 _palette += ['#e58606', '#5d69b1', '#52bca3', '#99c945', '#cc61b0', '#24796c', '#daa51b', '#2f8ac4', '#764e9f', '#ed645a', '#a5aa99']
@@ -221,7 +221,44 @@ class LocalLatent:
             plt.scatter(x=self.embedding[:, dims[0]], 
                         y=self.embedding[:, dims[1]], 
                         c='grey')
-            
+    
+    def plot_name_embedding(self, dims=[0, 1]):
+        assert hasattr(self, 'embedding')
+        assert len(dims) == 2, 'dims should'
+        if hasattr(self, 'cluster'):
+            for it in range(0, self.cluster.max()+1):
+                if it in self.export:
+                    c = self.export[it]['color']
+                    label = self.export[it]['name']
+                else:
+                    c = self.palette(-1)
+                    label = it
+                plt.scatter(x=self.embedding[self.cluster == it, dims[0]], 
+                            y=self.embedding[self.cluster == it, dims[1]], 
+                            c=c,
+                            label=label)
+           
+           
+            # for key, it in self.export.items():
+            #     plt.scatter(x=self.embedding[self.cluster == key, dims[0]], 
+            #                 y=self.embedding[self.cluster == key, dims[1]], 
+            #                 c=it['color'],
+            #                 label=it['name'])
+            # for it in range(-1, self.cluster.max()+1):
+            #     if it in self.export:
+            #         continue
+            #     plt.scatter(x=self.embedding[self.cluster == -1, dims[0]], 
+            #                 y=self.embedding[self.cluster == -1, dims[1]], 
+            #                 c='grey',
+            #                 label=it)
+            plt.legend()
+        else:
+            plt.scatter(x=self.embedding[:, dims[0]], 
+                        y=self.embedding[:, dims[1]], 
+                        c='grey')
+
+
+
     def merge(self, cluster_ids):
         cluster_ids = np.array(cluster_ids)
         mi = cluster_ids.min()

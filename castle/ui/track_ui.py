@@ -137,11 +137,12 @@ class InferenceTracker:
         mask_list_path = self.track_dir_path / "mask_list.h5"
         mask_seq = H5IO(str(mask_list_path))
 
+        first_frame = self.source_video[0]
         # Write video and ROI configuration settings
         mask_seq.write_config("n_rois", self.n_rois)
         mask_seq.write_config("total_frames", len(self.source_video))
-        mask_seq.write_config("height", self.source_video.video_stream.height)
-        mask_seq.write_config("width", self.source_video.video_stream.width)
+        mask_seq.write_config("height", first_frame.shape[0])
+        mask_seq.write_config("width", first_frame.shape[1])
         # Add all reference ROI frames to the tracker’s memory
         for frame, mask in self.knowledges:
             tracker.add_reference_frame(frame, mask, self.n_rois, -1)

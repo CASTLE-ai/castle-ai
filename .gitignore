@@ -26,3 +26,7 @@ ckpt/*.pth
 
 # public_script
 public_script.sh
+
+
+toolbox/*.mp4
+toolbox/*.h5

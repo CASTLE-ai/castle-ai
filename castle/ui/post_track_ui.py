@@ -51,8 +51,10 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
         roi_info_list[i]['y'] = np.array(roi_info_list[i]['y'])
         roi_info_list[i]['area'] = np.array(roi_info_list[i]['area']).astype(int)
 
+    mask_kinematic_csv_path = generate_mask_kinematic_csv(storage_path, project_name, source_video, roi_info_list)
+
     del rois_results
-    return Plotter.plot_position(roi_info_list), Plotter.plot_speed(roi_info_list), Plotter.plot_area(roi_info_list), roi_info_list
+    return Plotter.plot_position(roi_info_list), Plotter.plot_speed(roi_info_list), Plotter.plot_area(roi_info_list), roi_info_list, mask_kinematic_csv_path
 
 
 def generate_mask_kinematic_csv(storage_path, project_name, source_video, roi_info_list):
@@ -113,17 +115,16 @@ def create_post_track_ui(storage_path, project_name, source_video):
     # with gr.Accordion('Basic Kinematic Infomation', open=True, visible=False) as ui['basic_mask_info_accordion']:
     ui['analysis_mask'] = gr.Button("Analysis Mask", interactive=True, visible=False)
     with gr.Row(visible=True):
-        with gr.Tab(label='position'):
-            ui['position_plot'] = gr.Plot(label="Position", visible=False)
-        with gr.Tab(label='speed'):
-            ui['velocity_plot'] = gr.Plot(label="Speed", visible=False)
-        with gr.Tab(label='area'):
-            ui['area_plot'] = gr.Plot(label="Area", visible=False)  
+        ui['position_plot'] = gr.Plot(label="Position", visible=False)
     with gr.Row(visible=True):
-        with gr.Column(scale=2):
-            ui['generate_mask_kinematic_btn'] = gr.Button("Generate Basic Kinematic CSV", interactive=False, visible=False)
-        with gr.Column(scale=8):
-            ui['mask_kinematic_file'] = gr.File(label="Basic Kinematic CSV", interactive=False, visible=False)
+        ui['velocity_plot'] = gr.Plot(label="Speed", visible=False)
+    with gr.Row(visible=True):
+        ui['area_plot'] = gr.Plot(label="Area", visible=False)  
+    with gr.Row(visible=True):
+        # with gr.Column(scale=2):
+        #     ui['generate_mask_kinematic_btn'] = gr.Button("Generate Basic Kinematic CSV", interactive=False, visible=False)
+        # with gr.Column(scale=8):
+        ui['mask_kinematic_file'] = gr.File(label="Basic Kinematic CSV", interactive=False, visible=False)
     with gr.Row(visible=True):
         with gr.Column(scale=2):
             ui['generate_mask_video_btn'] = gr.Button("Generate ROIs Video", interactive=True, visible=False)
@@ -138,14 +139,14 @@ def create_post_track_ui(storage_path, project_name, source_video):
     ui['analysis_mask'].click(
         fn=plot_basic_mask_info,
         inputs=[storage_path, project_name, source_video],
-        outputs=[ui['position_plot'], ui['velocity_plot'], ui['area_plot'], roi_info_list]
+        outputs=[ui['position_plot'], ui['velocity_plot'], ui['area_plot'], roi_info_list, ui['mask_kinematic_file']]
     )
 
-    ui['generate_mask_kinematic_btn'].click(
-        fn=generate_mask_kinematic_csv,
-        inputs=[storage_path, project_name, source_video, roi_info_list],
-        outputs=ui['mask_kinematic_file']
-    )
+    # ui['generate_mask_kinematic_btn'].click(
+    #     fn=generate_mask_kinematic_csv,
+    #     inputs=[storage_path, project_name, source_video, roi_info_list],
+    #     outputs=ui['mask_kinematic_file']
+    # )
 
     ui['generate_mask_video_btn'].click(
         fn=generate_mask_video,

@@ -14,9 +14,11 @@ def readme():
 
 
 
+
+
 configuration = {
     "name": "castle-ai",
-    "version": "0.0.14",
+    "version": "0.0.15",
     "description": "Distinguish behavioral clusters Toolbox",
     "long_description": readme(),
     "long_description_content_type": "text/markdown",
@@ -36,34 +38,8 @@ configuration = {
     "maintainer_email": "rainsoon717@gmail.com",
     "license": "AGPL-3.0 license",
     "packages": find_packages(),
-    "install_requires": [
-        "numpy",
-        "tqdm",
-        "torch",
-        "av",
-        "opencv-python",
-        "torchvision",
-        "matplotlib",
-        "umap-learn",
-        "h5py",
-        "natsort",
-        "gradio",
-        "plotly",
-    ],
-    # "extras_require": {
-    #     "cu11": [
-    #         "pandas",
-    #         "matplotlib",
-    #         "datashader",
-    #         "bokeh",
-    #         "holoviews",
-    #         "colorcet",
-    #         "seaborn",
-    #         "scikit-image",
-    #     ],
-    #     "parametric_umap": ["tensorflow >= 2.1"],
-    #     "tbb": ["tbb >= 2019.0"],
-    # },
+    # "install_requires": read_requirements(),
+
     "ext_modules": [],
     "cmdclass": {},
     "test_suite": "pytest",

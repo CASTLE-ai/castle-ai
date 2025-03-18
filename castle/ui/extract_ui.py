@@ -83,6 +83,7 @@ def _extract_roi_crop_video(out_path, observer, source_video, tracker, select_ro
     fps = source_video.fps
     crf = 15
     writer = WriteArray(out_path, fps, crf)
+    last_good_mask = None
     for i in progress.tqdm(range(len(source_video))):
         try:
             frame = source_video[i]
@@ -91,8 +92,9 @@ def _extract_roi_crop_video(out_path, observer, source_video, tracker, select_ro
             writer.append(processed_frame)
         except Exception as e:
             print(f"Error processing frame {i}: {e}")
-            writer.close()
-            return False
+            h, w = frame.shape[:2]
+            writer.append(blank_page(h, w))
+
     writer.close()
     return True
 

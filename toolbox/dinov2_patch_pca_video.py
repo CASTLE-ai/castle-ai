@@ -116,7 +116,7 @@ def main(video_path, mask_path, output_path, roi_id, fit_ratio, seed, chunk_size
     selected_indices = cp.random.choice(n_frames, size=sample_size, replace=False)
     selected_indices = cp.sort(selected_indices)
     selected_indices_cpu = cp.asnumpy(selected_indices)
-    print(f"Selected frames for PCA fitting (n={len(selected_indices_cpu)}): {selected_indices_cpu[:10]}")
+    print(f"Selected frames for PCA fitting (n={len(selected_indices_cpu)}): {selected_indices_cpu[:3]} ... {selected_indices_cpu[-3:]}")
     
     # 取得選取 frame 的 patch latents（以 chunk 方式處理）
     patch_selected = vit.get_patch_latents(vr, selected_indices_cpu, chunk_size)

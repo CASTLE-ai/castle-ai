@@ -197,6 +197,7 @@ class EmbeddingScatterPlot:
         index_mask = self.local_latents.index_mask
         masked_emb = self.local_latents.embedding
         masked_cls = self.local_latents.cluster
+        config = self.local_latents.configs
         n_samples = len(index_mask)
         n_features = masked_emb.shape[-1]
 
@@ -208,7 +209,7 @@ class EmbeddingScatterPlot:
 
 
 
-        np.savez_compressed(save_path, emb=emb, cls=cls)
+        np.savez_compressed(save_path, emb=emb, cls=cls, config=config)
         # plt.figure()
         # self.local_latents.plot_name_embedding()
         # plt.scatter(self.selected_point[0], self.selected_point[1], color='red')

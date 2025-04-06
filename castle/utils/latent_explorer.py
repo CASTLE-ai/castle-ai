@@ -171,6 +171,7 @@ class LocalLatent:
             Z = UMAP(**it).fit_transform(Z)
 
         self.embedding = np.array(Z)
+        self.configs = configs
 
 
 

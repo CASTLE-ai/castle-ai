@@ -42,8 +42,8 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
 
             areas = [stats[j, cv2.CC_STAT_AREA] for j in range(1, num_labels)]
             max_label = np.argmax(areas)
-            roi_info_list[i]['x'].append(round(centroids[max_label + 1][0]))
-            roi_info_list[i]['y'].append(round(centroids[max_label + 1][1]))
+            roi_info_list[i]['x'].append((centroids[max_label + 1][0]))
+            roi_info_list[i]['y'].append((centroids[max_label + 1][1]))
             roi_info_list[i]['area'].append(areas[max_label])
             
     for i in range(n_rois):
@@ -64,7 +64,7 @@ def generate_mask_kinematic_csv(storage_path, project_name, source_video, roi_in
     video_name_wo_extension = video_name.split('.')[0]
     mask_kinematic_csv_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-basic-infomation.csv')
     df = Plotter.create_pandas(roi_info_list)
-    df.to_csv(mask_kinematic_csv_path)
+    df.to_csv(mask_kinematic_csv_path, float_format="%.4f")
     return mask_kinematic_csv_path
 
 

@@ -114,7 +114,15 @@ class MultiVideos:
                 start_time = frame_to_timestamp(start_frame, self.fps)
                 end_time = frame_to_timestamp(end_frame, self.fps)
                 behavior = data[start_frame+1]
-                srt_entries.append(f"{i + 1}\n{start_time} --> {end_time}\n{meta[behavior]['name']}\n")
+                if behavior == -1:
+                    behavior_name = "Unclustered"
+                else:
+                    try:
+                        behavior_name = meta[behavior]['name']
+                    except KeyError:
+                        # Fallback if behavior ID is somehow missing from meta, though the primary issue is -1
+                        behavior_name = f"Unknown Cluster {behavior}" 
+                srt_entries.append(f"{i + 1}\n{start_time} --> {end_time}\n{behavior_name}\n")
                 
             srt_content = "\n".join(srt_entries)
 

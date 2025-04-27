@@ -113,7 +113,7 @@ class MultiVideos:
                 end_frame = delta_index[i+1]+1
                 start_time = frame_to_timestamp(start_frame, self.fps)
                 end_time = frame_to_timestamp(end_frame, self.fps)
-                behavior = data[start_frame+1]
+                behavior = data[start_frame]
                 if behavior == -1:
                     behavior_name = "Unclustered"
                 else:

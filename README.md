@@ -1,15 +1,27 @@
-# CASTLE
 
 
+![CASTLE 標誌](assets/logo.png)
+[![arXiv](https://img.shields.io/badge/biorxiv-TBD-<COLOR>.svg)](https://arxiv.org/abs/<INDEX>)
 [![PyPI version](https://badge.fury.io/py/castle-ai.svg)](https://badge.fury.io/py/castle-ai)
-[![PyPI Downloads](https://static.pepy.tech/badge/castle-ai)](https://pepy.tech/projects/castle-ai)
+[![CI](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CASTLE-ai/castle-ai/blob/main/notebooks/colab.ipynb)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![PyPI Downloads](https://static.pepy.tech/badge/castle-ai/month)](https://pepy.tech/projects/castle-ai)
+[![PyPI Downloads](https://static.pepy.tech/badge/castle-ai)](https://pepy.tech/projects/castle-ai)
 
-CASTLE integrates the strengths of visual foundation models trained on large datasets possess open-world visual concepts, including Segment Anything (SA), DeAOT, and DINOv2, for one-shot image segmentation and unsupervised visual feature extraction. Furthermore, CASTLE employs unsupervised multi-stage and/or multi-layer UMAP clustering algorithms to distinguish behavioral clusters with unique temporal variability. 
 
-# Install
+![CASTLE Flowchart](assets/Flowchart.png)
 
-**Now we only support colab(with GPU) and Ubuntu 22.04 (with NVIDIA GPU).**
+
+**CASTLE (Combined Approach for Segmentation and Tracking with Latent Extraction)** is a training-free framework that combines segmentation models, tracking algorithms, and visual foundation models to automatically discover animal behaviors from video. Through focused latent extraction and hierarchical clustering, it achieves expert-level accuracy across multiple species without manual labeling, while uncovering previously hidden behavioral patterns that keypoint methods miss.
+
+<p align="center">
+  <img src="assets/Reaching_demo.gif" alt="Reaching Demo">
+</p>
+
+## Latest updates
+- 2024-09: Public release of this tool.
+
 
 
 
@@ -70,13 +82,30 @@ castle-ai
 python app.py
 ```
 
+## About us
 
-# Reference
+CASTLE is a project by the [Wu Lab](https://www.yuweiwu.org/), a research group at the [Academia Sinica](https://www.sinica.edu.tw/en).
 
-We would like to express our gratitude for the assistance received from the following projects during the development of this project.
 
-[Segment Anything](https://github.com/facebookresearch/segment-anything.git)
+## Credits & Licenses
 
-[DeAOT & Segment-and-Track-Anything](https://github.com/z-x-yang/Segment-and-Track-Anything.git)
+This project incorporates code and methodologies from the following sources:
 
-[DINOv2](https://github.com/facebookresearch/dinov2.git)
+- SAM (Segment Anything Model): https://github.com/facebookresearch/segment-anything (Apache License 2.0)
+- DeAOT (Decoupling Features in Hierarchical Propagation): https://github.com/yoxu515/aot-benchmark (BSD 3-Clause License)
+- DINOv2 (Self-Supervised Vision Transformer): https://github.com/facebookresearch/dinov2 (Apache License 2.0)
+
+This work is distributed under the terms of the Apache License 2.0.
+
+
+## Citation
+
+If you find this work useful, please consider citing:
+
+```bibtex
+@article{CASTLE,
+  title={CASTLE: a training‑free foundation‑model pipeline for unsupervised, cross‑species behavioral classification},
+  author={Liu, Yu-Shun and Yeh, Han-Yuan and Hu, Yu-Ting and Wu, Bing-Shiuan and Chen, Yi-Fang and Yang, Jia-Bin and Jasmin, Sureka and Hsu, Ching-Lung and Lin, Suewei and Chen, Chun-Hao and Wu, Yu-Wei},
+  journal={TBD},
+  year={2025}
+}

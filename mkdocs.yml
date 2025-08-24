@@ -1,0 +1,148 @@
+site_name: CASTLE Documentation & Tutorial Platform
+site_description: CASTLE 行為分析工具的整合性線上教學平台
+site_author: CASTLE Team
+site_url: https://castle-docs.github.io
+
+repo_name: castle-project/castle
+repo_url: https://github.com/castle-project/castle
+edit_uri: edit/main/docs/
+
+# 主題配置
+theme:
+  name: material
+  language: zh-TW
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切換為深色模式
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切換為淺色模式
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+  icon:
+    repo: fontawesome/brands/github
+
+# 導航結構
+nav:
+  - 首頁: index.md
+  - 快速開始:
+    - getting-started/index.md
+    - 系統需求: getting-started/requirements.md
+    - 安裝指南: getting-started/installation.md
+    - 快速範例: getting-started/quick-example.md
+    - GUI 介紹: getting-started/gui-introduction.md
+  - 教學課程:
+    - tutorials/index.md
+    - 核心概念:
+      - tutorials/concepts/index.md
+      - CASTLE 架構: tutorials/concepts/architecture.md
+      - Focused Visual Latent: tutorials/concepts/visual-latent.md
+      - 階層式聚類: tutorials/concepts/hierarchical-clustering.md
+    - 物種別教學:
+      - tutorials/species/index.md
+      - 小鼠行為分析: tutorials/species/mouse-behavior.md
+      - 果蠅追蹤: tutorials/species/fly-tracking.md
+      - 線蟲運動分析: tutorials/species/worm-analysis.md
+    - 進階應用:
+      - tutorials/advanced/index.md
+      - 參數優化: tutorials/advanced/parameter-optimization.md
+      - 自訂 Pipeline: tutorials/advanced/custom-pipeline.md
+      - 批次處理: tutorials/advanced/batch-processing.md
+  - API 文件:
+    - api/index.md
+    - Core Functions: api/core.md
+    - GUI Components: api/gui.md
+    - Utils: api/utils.md
+  - 範例資料:
+    - examples/index.md
+    - 下載連結: examples/downloads.md
+    - 資料說明: examples/data-description.md
+  - 社群資源:
+    - community/index.md
+    - FAQ: community/faq.md
+    - Troubleshooting: community/troubleshooting.md
+    - 貢獻指南: community/contributing.md
+
+# 插件配置
+plugins:
+  - search:
+      lang: 
+        - zh
+        - en
+  - git-revision-date-localized:
+      type: datetime
+      timezone: Asia/Taipei
+      locale: zh_TW
+      fallback_to_build_date: true
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+  - mkdocs-video
+
+# Markdown 擴充功能
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.tilde
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - def_list
+
+# 額外 CSS 和 JS
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/extra.js
+
+# 額外配置
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/castle-project/castle
+    - icon: fontawesome/brands/youtube
+      link: https://youtube.com/@castle-tutorials
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+  version:
+    provider: mike

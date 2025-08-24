@@ -1,0 +1,401 @@
+/* CASTLE Documentation Custom Styles */
+
+/* =================== 
+   Hero Section Styles 
+   =================== */
+.hero-section {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 3rem 2rem;
+  border-radius: 1rem;
+  margin: 2rem 0;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="20" cy="20" r="2" fill="rgba(255,255,255,0.1)"/><circle cx="80" cy="40" r="3" fill="rgba(255,255,255,0.1)"/><circle cx="40" cy="80" r="1" fill="rgba(255,255,255,0.1)"/></svg>');
+  animation: float 20s infinite linear;
+}
+
+@keyframes float {
+  0% { transform: translateY(0px) rotate(0deg); }
+  100% { transform: translateY(-10px) rotate(360deg); }
+}
+
+.hero-logo {
+  max-width: 150px;
+  margin-bottom: 1rem;
+  filter: brightness(1.1);
+}
+
+.hero-section h2 {
+  font-size: 2.5rem !important;
+  font-weight: 700;
+  margin-bottom: 0.5rem !important;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.hero-section h3 {
+  font-size: 1.2rem !important;
+  opacity: 0.9;
+  margin-bottom: 1rem !important;
+  font-weight: 300;
+}
+
+.hero-section p {
+  font-size: 1.1rem;
+  line-height: 1.6;
+  margin-bottom: 2rem;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.hero-section .md-button {
+  margin: 0.5rem;
+  padding: 0.8rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.hero-section .md-button--primary {
+  background-color: rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(10px);
+}
+
+.hero-section .md-button--primary:hover {
+  background-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+}
+
+/* ===================== 
+   Feature Cards Styles 
+   ===================== */
+.feature-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.feature-card {
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.8rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.feature-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #667eea, #764ba2);
+}
+
+.feature-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+  border-color: var(--md-primary-fg-color);
+}
+
+.feature-card h3 {
+  color: var(--md-primary-fg-color);
+  margin-bottom: 1rem !important;
+  font-size: 1.3rem !important;
+}
+
+.feature-card p {
+  color: var(--md-default-fg-color--light);
+  line-height: 1.6;
+  margin-bottom: 0;
+}
+
+/* ==================== 
+   Learning Path Styles 
+   ==================== */
+.learning-path {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.8rem;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  background: var(--md-code-bg-color);
+}
+
+.learning-path.beginner {
+  border-left: 4px solid #4caf50;
+}
+
+.learning-path.intermediate {
+  border-left: 4px solid #ff9800;
+}
+
+.learning-path.advanced {
+  border-left: 4px solid #f44336;
+}
+
+.learning-path h4 {
+  color: var(--md-primary-fg-color);
+  margin-top: 1.5rem !important;
+  margin-bottom: 0.5rem !important;
+}
+
+.learning-path h4:first-of-type {
+  margin-top: 0 !important;
+}
+
+.learning-path ul {
+  margin-left: 1rem;
+}
+
+.learning-path li {
+  margin-bottom: 0.3rem;
+}
+
+/* =================== 
+   Statistics Styles 
+   =================== */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  text-align: center;
+  margin: 2rem 0;
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.stats-grid > * {
+  color: var(--md-primary-fg-color);
+  padding: 1rem;
+  background: var(--md-code-bg-color);
+  border-radius: 0.5rem;
+}
+
+/* ===================== 
+   Community Links Styles 
+   ===================== */
+.community-links {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.community-links dt {
+  font-weight: 600 !important;
+  color: var(--md-primary-fg-color);
+  margin-bottom: 0.3rem !important;
+}
+
+.community-links dd {
+  color: var(--md-default-fg-color--light);
+  margin-left: 0 !important;
+  margin-bottom: 1rem !important;
+  padding-left: 1.5rem;
+  border-left: 3px solid var(--md-primary-fg-color);
+}
+
+/* =================== 
+   Video Container 
+   =================== */
+.video-container {
+  position: relative;
+  width: 100%;
+  height: 0;
+  padding-bottom: 56.25%; /* 16:9 aspect ratio */
+  margin: 1.5rem 0;
+  border-radius: 0.8rem;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+}
+
+.video-container iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* ==================== 
+   Video Playlists Styles 
+   ==================== */
+.video-playlists {
+  display: grid;
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.video-playlists h4 {
+  background: linear-gradient(90deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+  color: white !important;
+  padding: 0.8rem 1.2rem;
+  border-radius: 0.5rem;
+  margin-bottom: 0.5rem !important;
+}
+
+.video-playlists p {
+  color: var(--md-default-fg-color--light);
+  font-style: italic;
+  margin-left: 1rem;
+}
+
+/* ================= 
+   Checklist Styles 
+   ================= */
+.checklist {
+  background: var(--md-code-bg-color);
+  border-radius: 0.8rem;
+  padding: 1.5rem;
+  margin: 1rem 0;
+}
+
+.checklist h3, .checklist h4 {
+  color: var(--md-primary-fg-color) !important;
+  margin-top: 1rem !important;
+  margin-bottom: 0.8rem !important;
+}
+
+.checklist h3:first-child, .checklist h4:first-child {
+  margin-top: 0 !important;
+}
+
+.checklist ul {
+  margin-left: 0.5rem;
+}
+
+.checklist li {
+  margin-bottom: 0.5rem;
+  position: relative;
+}
+
+.checklist li::marker {
+  color: var(--md-primary-fg-color);
+}
+
+/* =================== 
+   Code Block Enhancements 
+   =================== */
+.highlight {
+  position: relative;
+}
+
+.highlight:hover .md-clipboard {
+  opacity: 1;
+}
+
+/* ================= 
+   Responsive Design 
+   ================= */
+@media (max-width: 768px) {
+  .hero-section {
+    padding: 2rem 1rem;
+  }
+  
+  .hero-section h2 {
+    font-size: 2rem !important;
+  }
+  
+  .feature-cards {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    font-size: 1rem;
+  }
+  
+  .video-container {
+    margin: 1rem 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-section h2 {
+    font-size: 1.8rem !important;
+  }
+  
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .feature-card {
+    padding: 1.5rem 1rem;
+  }
+}
+
+/* ============= 
+   Dark Mode 
+   ============= */
+[data-md-color-scheme="slate"] .feature-card {
+  background: var(--md-default-bg-color);
+  border-color: var(--md-default-fg-color--lightest);
+}
+
+[data-md-color-scheme="slate"] .hero-section {
+  background: linear-gradient(135deg, #5a6bea 0%, #6a4ba2 100%);
+}
+
+[data-md-color-scheme="slate"] .learning-path,
+[data-md-color-scheme="slate"] .checklist,
+[data-md-color-scheme="slate"] .stats-grid > * {
+  background: var(--md-code-bg-color);
+}
+
+/* ================= 
+   Print Styles 
+   ================= */
+@media print {
+  .hero-section {
+    background: none !important;
+    color: black !important;
+    border: 2px solid #ccc;
+  }
+  
+  .feature-cards {
+    break-inside: avoid;
+  }
+  
+  .video-container {
+    display: none;
+  }
+}
+
+/* ================== 
+   Accessibility 
+   ================== */
+.hero-section .md-button:focus,
+.feature-card:focus,
+.checklist:focus {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 2px;
+}
+
+/* 減少動畫以提高可訪問性 */
+@media (prefers-reduced-motion: reduce) {
+  .hero-section::before,
+  .feature-card,
+  .hero-section .md-button {
+    animation: none !important;
+    transition: none !important;
+  }
+}

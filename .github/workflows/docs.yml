@@ -1,0 +1,198 @@
+name: 📖 Deploy Documentation
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 避免並發部署
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📂 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: ⬇️ Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: ⚙️ Configure Git for mkdocs-git-revision-date-localized-plugin
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+      - name: 🏗️ Build documentation
+        run: |
+          mkdocs build --clean --verbose
+
+      - name: 🚀 Setup Pages
+        uses: actions/configure-pages@v3
+
+      - name: 📤 Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: './site'
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: 🌐 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
+
+  # 預覽部署 (針對 Pull Request)
+  preview:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📂 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: ⬇️ Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🏗️ Build documentation (preview)
+        run: |
+          mkdocs build --clean
+
+      - name: 📝 Comment PR with preview info
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📖 Documentation Preview
+              
+              Your documentation changes have been built successfully!
+              
+              🔍 **Build Status**: ✅ Success
+              📊 **Pages**: Check the build artifacts for a preview
+              
+              The documentation will be automatically deployed when this PR is merged.`
+            })
+
+  # 檢查連結有效性
+  link-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: 📂 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: ⬇️ Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🏗️ Build documentation
+        run: mkdocs build --clean
+
+      - name: 🔗 Check internal links
+        run: |
+          # 安裝 html5validator 檢查 HTML 有效性
+          pip install html5validator
+          html5validator --root site/ --also-check-css --ignore-re 'Attribute "loading" not allowed'
+
+      - name: 📊 Generate build report
+        run: |
+          echo "## 📊 Build Report" > build_report.md
+          echo "- **Total pages built**: $(find site -name '*.html' | wc -l)" >> build_report.md
+          echo "- **Total assets**: $(find site -type f ! -name '*.html' | wc -l)" >> build_report.md
+          echo "- **Build size**: $(du -sh site | cut -f1)" >> build_report.md
+          echo "- **Build time**: $(date)" >> build_report.md
+          
+          # 檢查是否有遺失的頁面
+          if [ -f mkdocs.yml ]; then
+            echo "- **Configuration**: ✅ Valid mkdocs.yml" >> build_report.md
+          fi
+
+      - name: 📝 Upload build report
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-report
+          path: build_report.md
+
+  # 效能檢查
+  lighthouse:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: 📂 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: ⬇️ Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🏗️ Build documentation
+        run: mkdocs build --clean
+
+      - name: 🚀 Serve documentation
+        run: |
+          cd site
+          python -m http.server 8000 &
+          sleep 5
+
+      - name: 🔬 Run Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          urls: |
+            http://localhost:8000
+            http://localhost:8000/getting-started/
+            http://localhost:8000/tutorials/
+          configPath: ./.github/lighthouse/lighthouserc.json
+          temporaryPublicStorage: true

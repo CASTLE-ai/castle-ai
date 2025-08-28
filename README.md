@@ -1,7 +1,7 @@
 
 
 ![CASTLE 標誌](assets/logo.png)
-[![arXiv](https://img.shields.io/badge/biorxiv-TBD-<COLOR>.svg)](https://arxiv.org/abs/<INDEX>)
+[![arXiv](https://img.shields.io/badge/biorxiv-25.08.22.671685v1-<COLOR>.svg)](https://www.biorxiv.org/content/10.1101/2025.08.22.671685v1)
 [![PyPI version](https://badge.fury.io/py/castle-ai.svg)](https://badge.fury.io/py/castle-ai)
 [![CI](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CASTLE-ai/castle-ai/blob/main/notebooks/colab.ipynb)
@@ -106,6 +106,6 @@ If you find this work useful, please consider citing:
 @article{CASTLE,
   title={CASTLE: a training‑free foundation‑model pipeline for unsupervised, cross‑species behavioral classification},
   author={Liu, Yu-Shun and Yeh, Han-Yuan and Hu, Yu-Ting and Wu, Bing-Shiuan and Chen, Yi-Fang and Yang, Jia-Bin and Jasmin, Sureka and Hsu, Ching-Lung and Lin, Suewei and Chen, Chun-Hao and Wu, Yu-Wei},
-  journal={TBD},
+  journal={bioRxiv},
   year={2025}
 }

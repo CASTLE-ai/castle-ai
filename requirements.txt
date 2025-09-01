@@ -1,6 +1,5 @@
 matplotlib
 tqdm
-av
 numpy
 opencv-python
 umap-learn
@@ -9,9 +8,12 @@ gradio
 h5py
 natsort
 pytest
---extra-index-url=https://pypi.nvidia.com
+
+# NVIDIA packages
+--extra-index-url https://pypi.nvidia.com
 cuml-cu12
 
---index-url https://download.pytorch.org/whl/cu126
+# PyTorch packages (使用 --extra-index-url 而不是 --index-url)
+--extra-index-url https://download.pytorch.org/whl/cu126
 torch 
-torchvision 
+torchvision

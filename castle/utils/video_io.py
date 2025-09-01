@@ -812,3 +812,7 @@ class SubtitleGenerator:
             return 0.0
         
         return max(sub['end'] for sub in self.subtitles)
+    
+
+ReadArray = VideoReader
+WriteArray = VideoWriter

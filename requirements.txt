@@ -1,6 +1,6 @@
 matplotlib
 tqdm
-av==12.1.0
+av
 numpy
 opencv-python
 umap-learn
@@ -13,4 +13,5 @@ pytest
 cuml-cu12
 
 --index-url https://download.pytorch.org/whl/cu126
-torch torchvision 
+torch 
+torchvision 

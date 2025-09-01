@@ -164,6 +164,7 @@ class VideoReader:
         if not self.path.exists():
             raise FileNotFoundError(f"影片檔案不存在: {video_path}")
         
+        
         try:
             # 開啟影片容器
             self.container = av.open(str(self.path))
@@ -192,6 +193,11 @@ class VideoReader:
             
         except Exception as e:
             raise VideoIOError(f"初始化影片讀取器失敗: {e}")
+        
+        # for old version
+        self.video_path = self.path
+        self.video_name = os.path.basename(self.video_path)
+        self.total_frames = self.__len__()
     
     def __enter__(self) -> 'VideoReader':
         """Context manager 進入"""
@@ -568,6 +574,11 @@ class VideoWriter:
             
         except Exception as e:
             raise VideoIOError(f"初始化影片寫入器失敗: {e}")
+        
+        # for old version
+        self.video_path = output_path
+        self.video_name = os.path.basename(self.video_path)
+        
     
     def __enter__(self) -> 'VideoWriter':
         """Context manager 進入"""

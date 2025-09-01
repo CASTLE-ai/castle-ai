@@ -133,6 +133,7 @@ class InferenceTracker:
             A status message ("Done" or "Cancel").
         """
         time.sleep(0.5)
+        
         tracker = generate_aot(model_type=self.model_aot)
         mask_list_path = self.track_dir_path / "mask_list.h5"
         mask_seq = H5IO(str(mask_list_path))

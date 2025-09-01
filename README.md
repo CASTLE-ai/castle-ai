@@ -23,45 +23,18 @@
 - 2024-09: Public release of this tool.
 
 
+## Installation
 
-## Step 1 Install CASTLE Core Function
-
-Since this installation step is outdated, you only need to keep these 3 specific versions:
-
-plotly==5.22.0
-gradio==4.44.0
-av==12.1.0
-
-For all other packages, you can use the latest versions.
-
-```
-pip install torch==2.3.0+cu121 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-pip install castle-ai
-```
-
-
-## Step 2 Install xFormer and GPU Version of UMAP (Optional for Speed Up)
-
-For CUDA 12 Users
-```
-pip install -U xformers --index-url https://download.pytorch.org/whl/cu121
-pip install -U cudf-cu12 cuml-cu12 --extra-index-url=https://pypi.nvidia.com 
-```
-
-## Step 3 Download Web UI
+My Python version is 3.10.12. For details version, see [INSTALLATION.md](INSTALLATION.md).
 ```
 git clone https://github.com/CASTLE-ai/castle-ai.git
+cd castle-ai
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Step 4 Download Pretrained Model
-
-```
-cd castle-ai/
-mkdir ckpt
-```
-
-Then, download the models from the web by copying the links to the Chrome browser and downloading them.
+Sometime the ckpt download may be blocked by Google. So you can download the models from the web by copying the links to the Chrome browser and downloading them.
 ```
 https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
 https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_reg4_pretrain.pth

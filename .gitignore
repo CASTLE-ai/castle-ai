@@ -17,7 +17,7 @@ projects/
 
 # metadata from pip-installing repo
 umap_learn.egg-info
-
+.gradio
 # test
 notebooks/temp
 local_tmp*

@@ -1,5 +1,6 @@
 matplotlib
 tqdm
+av
 numpy
 opencv-python
 umap-learn

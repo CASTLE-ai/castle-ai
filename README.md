@@ -23,9 +23,13 @@
 - 2024-09: Public release of this tool.
 
 
+## Quick start
+[![CASTLE Quick start @Colab](https://img.shields.io/badge/YouTube-CASTLE%20Demo-red?logo=youtube)](https://youtu.be/qzZlixEaKvQ)
+
+
 ## Installation
 
-My Python version is 3.10.12. For details version, see [INSTALLATION.md](INSTALLATION.md).
+
 ```
 git clone https://github.com/CASTLE-ai/castle-ai.git
 cd castle-ai
@@ -55,7 +59,7 @@ castle-ai
 
 ```
 
-
+My Python version is 3.10.12. For details version, see [INSTALLATION.md](INSTALLATION.md).
 
 ## Run
 ```

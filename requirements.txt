@@ -1,6 +1,6 @@
 matplotlib
 tqdm
-av
+av==12.1.0
 numpy
 opencv-python
 umap-learn

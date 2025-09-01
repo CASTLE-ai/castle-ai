@@ -23,11 +23,21 @@
 - 2024-09: Public release of this tool.
 
 
+---
+
+Update:
+Since this installation step is outdated, you only need to keep these 3 specific versions:
+
+plotly==5.22.0
+gradio==4.44.0
+av==12.1.0
+
+For all other packages, you can use the latest versions.
 
 
 ## Step 1 Install CASTLE Core Function
 ```
-pip install torch==2.3.0+cu121 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
 
 pip install castle-ai
 ```

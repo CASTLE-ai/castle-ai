@@ -253,7 +253,8 @@ class VideoReader:
             try:
                 self._get_frame_direct(mid)
                 low = mid
-            except:
+            except (RuntimeError, av.error.EOFError, IndexError, Exception):
+                # 任何讀取錯誤都表示該影格不存在
                 high = mid - 1
         
         return low + 1
@@ -280,8 +281,13 @@ class VideoReader:
                 self._current_index = frame_index
                 frame = next(self.container.decode(self.video_stream))
                 return frame.to_rgb().to_ndarray()
-            except StopIteration:
-                # 順序讀取失敗，改用 seek 方式
+            except (StopIteration, av.error.EOFError):
+                # 順序讀取失敗（到達檔案結尾或其他原因），改用 seek 方式
+                logger.debug(f"順序讀取影格 {frame_index} 失敗，改用 seek 方式")
+                pass
+            except Exception as e:
+                # 其他異常也回退到 seek 方式
+                logger.debug(f"順序讀取影格 {frame_index} 時發生異常: {e}，改用 seek 方式")
                 pass
         
         # 非順序讀取、第0幀或順序讀取失敗時，使用 seek 方式
@@ -310,19 +316,24 @@ class VideoReader:
             frames_checked = 0
             max_frames_to_check = 10  # 限制檢查的影格數量，避免無限循環
             
-            for frame in self.container.decode(self.video_stream):
-                frames_checked += 1
-                index = int(frame.pts * self.pts2index)
-                
-                if index == frame_index:
-                    target_frame = frame
-                    break
-                elif index > frame_index:
-                    # 已經超過目標影格，停止搜尋
-                    break
-                elif frames_checked >= max_frames_to_check:
-                    # 避免無限循環
-                    break
+            try:
+                for frame in self.container.decode(self.video_stream):
+                    frames_checked += 1
+                    index = int(frame.pts * self.pts2index)
+                    
+                    if index == frame_index:
+                        target_frame = frame
+                        break
+                    elif index > frame_index:
+                        # 已經超過目標影格，停止搜尋
+                        break
+                    elif frames_checked >= max_frames_to_check:
+                        # 避免無限循環
+                        break
+            except (av.error.EOFError, StopIteration):
+                # 到達檔案結尾，停止搜尋
+                logger.debug(f"在 seek 讀取過程中到達檔案結尾，影格 {frame_index}")
+                pass
             
             if target_frame is not None:
                 self._current_index = frame_index
@@ -357,17 +368,22 @@ class VideoReader:
             frames_checked = 0
             max_frames_to_check = 5
             
-            for frame in self.container.decode(self.video_stream):
-                frames_checked += 1
-                index = int(frame.pts * self.pts2index)
-                distance = abs(index - frame_index)
-                
-                if distance < min_distance:
-                    min_distance = distance
-                    closest_frame = frame
-                
-                if frames_checked >= max_frames_to_check or index > frame_index + 2:
-                    break
+            try:
+                for frame in self.container.decode(self.video_stream):
+                    frames_checked += 1
+                    index = int(frame.pts * self.pts2index)
+                    distance = abs(index - frame_index)
+                    
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_frame = frame
+                    
+                    if frames_checked >= max_frames_to_check or index > frame_index + 2:
+                        break
+            except (av.error.EOFError, StopIteration):
+                # 到達檔案結尾，停止搜尋
+                logger.debug(f"在容錯讀取過程中到達檔案結尾，影格 {frame_index}")
+                pass
             
             if closest_frame is not None:
                 self._current_index = frame_index
@@ -401,7 +417,16 @@ class VideoReader:
             return self._frame_cache[frame_idx]
         
         # 讀取影格
-        frame = self._get_frame_direct(frame_idx)
+        try:
+            frame = self._get_frame_direct(frame_idx)
+        except RuntimeError as e:
+            # 如果讀取失敗且索引接近邊界，可能是 frame_count 計算不準確
+            if frame_idx >= self.frame_count - 10:
+                logger.warning(f"影格 {frame_idx} 讀取失敗，可能超出實際影片範圍: {e}")
+                raise IndexError(f"影格索引 {frame_idx} 可能超出實際影片範圍")
+            else:
+                # 其他錯誤直接拋出
+                raise
         
         # 快取管理（限制快取大小）
         if len(self._frame_cache) >= 100:
@@ -639,6 +664,22 @@ class VideoWriter:
         
         except Exception as e:
             raise VideoIOError(f"寫入影格失敗: {e}")
+    
+    def append(self, frame: np.ndarray) -> None:
+        """
+        追加影格（向後相容性方法）
+        
+        這是為了與舊版本 WriteArray 相容而提供的方法。
+        內部調用 write_frame 方法。
+        
+        Args:
+            frame: 影格陣列，形狀為 (H, W, 3)，RGB 格式
+            
+        Raises:
+            ValueError: 當影格格式無效時
+            VideoIOError: 當寫入失敗時
+        """
+        self.write_frame(frame)
     
     def close(self) -> None:
         """關閉影片寫入器並完成編碼"""

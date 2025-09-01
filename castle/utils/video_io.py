@@ -297,57 +297,7 @@ class VideoReader:
         """
         使用 seek 方式讀取指定影格
         
-        Args:
-            frame_index: 影格索引
-            
-        Returns:
-            影格陣列 (RGB)
-            
-        Raises:
-            RuntimeError: 當讀取失敗時
-        """
-        try:
-            # 計算時間戳並 seek
-            timestamp = frame_index / self.pts2index
-            self.container.seek(int(timestamp), stream=self.video_stream, backward=True)
-            
-            # 尋找匹配的影格
-            target_frame = None
-            frames_checked = 0
-            max_frames_to_check = 10  # 限制檢查的影格數量，避免無限循環
-            
-            try:
-                for frame in self.container.decode(self.video_stream):
-                    frames_checked += 1
-                    index = int(frame.pts * self.pts2index)
-                    
-                    if index == frame_index:
-                        target_frame = frame
-                        break
-                    elif index > frame_index:
-                        # 已經超過目標影格，停止搜尋
-                        break
-                    elif frames_checked >= max_frames_to_check:
-                        # 避免無限循環
-                        break
-            except (av.error.EOFError, StopIteration):
-                # 到達檔案結尾，停止搜尋
-                logger.debug(f"在 seek 讀取過程中到達檔案結尾，影格 {frame_index}")
-                pass
-            
-            if target_frame is not None:
-                self._current_index = frame_index
-                return target_frame.to_rgb().to_ndarray()
-            
-            # 如果精確匹配失敗，嘗試容錯方式：取最接近的影格
-            return self._fallback_frame_read(frame_index)
-            
-        except Exception as e:
-            raise RuntimeError(f"使用 seek 方式讀取影格 {frame_index} 失敗: {e}")
-    
-    def _fallback_frame_read(self, frame_index: int) -> np.ndarray:
-        """
-        容錯影格讀取：當精確匹配失敗時，嘗試讀取最接近的影格
+        使用簡化的邏輯，回到與舊版本相似的實現方式。
         
         Args:
             frame_index: 影格索引
@@ -359,38 +309,89 @@ class VideoReader:
             RuntimeError: 當讀取失敗時
         """
         try:
-            # 重新 seek 並尋找最接近的影格
+            # 計算時間戳並 seek (與舊版本完全相同的邏輯)
             timestamp = frame_index / self.pts2index
             self.container.seek(int(timestamp), stream=self.video_stream, backward=True)
             
-            closest_frame = None
-            min_distance = float('inf')
-            frames_checked = 0
-            max_frames_to_check = 5
+            # 尋找匹配的影格 (簡化邏輯，與舊版本相同)
+            target_frame = None
             
-            try:
-                for frame in self.container.decode(self.video_stream):
-                    frames_checked += 1
+            for frame in self.container.decode(self.video_stream):
+                index = int(frame.pts * self.pts2index)
+                if index == frame_index:
+                    target_frame = frame
+                    self._current_index = frame_index
+                    break
+                # 如果超過目標索引太多，停止搜尋（但給更大的容忍範圍）
+                if index > frame_index + 5:
+                    break
+            
+            if target_frame is not None:
+                return target_frame.to_rgb().to_ndarray()
+            
+            # 如果精確匹配失敗，嘗試更寬鬆的匹配
+            return self._fallback_frame_read(frame_index)
+            
+        except (av.error.EOFError, StopIteration):
+            # EOF 錯誤，嘗試容錯讀取
+            logger.debug(f"seek 讀取影格 {frame_index} 時遇到 EOF，嘗試容錯讀取")
+            return self._fallback_frame_read(frame_index)
+        except Exception as e:
+            raise RuntimeError(f"使用 seek 方式讀取影格 {frame_index} 失敗: {e}")
+    
+    def _fallback_frame_read(self, frame_index: int) -> np.ndarray:
+        """
+        容錯影格讀取：當精確匹配失敗時，嘗試更寬鬆的匹配
+        
+        簡化邏輯，只允許很小的誤差範圍，避免返回錯誤的幀。
+        
+        Args:
+            frame_index: 影格索引
+            
+        Returns:
+            影格陣列 (RGB)
+            
+        Raises:
+            RuntimeError: 當讀取失敗時
+        """
+        try:
+            # 重新 seek 到稍微早一點的位置，確保能找到目標幀
+            timestamp = (frame_index - 2) / self.pts2index  # 往前 seek 2 幀
+            self.container.seek(int(timestamp), stream=self.video_stream, backward=True)
+            
+            best_frame = None
+            best_distance = float('inf')
+            
+            # 寬鬆搜尋，但只接受很小的誤差
+            for frame in self.container.decode(self.video_stream):
+                try:
                     index = int(frame.pts * self.pts2index)
                     distance = abs(index - frame_index)
                     
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_frame = frame
+                    # 只接受距離 <= 1 的幀（允許 ±1 的誤差）
+                    if distance <= 1 and distance < best_distance:
+                        best_distance = distance
+                        best_frame = frame
                     
-                    if frames_checked >= max_frames_to_check or index > frame_index + 2:
+                    # 如果找到精確匹配，立即返回
+                    if distance == 0:
                         break
-            except (av.error.EOFError, StopIteration):
-                # 到達檔案結尾，停止搜尋
-                logger.debug(f"在容錯讀取過程中到達檔案結尾，影格 {frame_index}")
-                pass
+                    
+                    # 如果已經超過目標太多，停止搜尋
+                    if index > frame_index + 5:
+                        break
+                        
+                except (AttributeError, TypeError):
+                    # 某些幀可能沒有有效的 pts，跳過
+                    continue
             
-            if closest_frame is not None:
+            if best_frame is not None:
                 self._current_index = frame_index
-                logger.debug(f"使用容錯模式讀取影格 {frame_index}，實際距離: {min_distance}")
-                return closest_frame.to_rgb().to_ndarray()
+                if best_distance > 0:
+                    logger.debug(f"容錯讀取影格 {frame_index}，實際偏移: {best_distance}")
+                return best_frame.to_rgb().to_ndarray()
             
-            raise RuntimeError(f"無法找到影格 {frame_index} 的任何可用替代")
+            raise RuntimeError(f"無法找到影格 {frame_index} 或其相近幀")
             
         except Exception as e:
             raise RuntimeError(f"容錯讀取影格 {frame_index} 失敗: {e}")

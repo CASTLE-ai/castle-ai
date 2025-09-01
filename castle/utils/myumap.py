@@ -49,4 +49,9 @@ class UMAP:
                                              random_state=self.random_state, 
                                              verbose=self.verbose)
         
-        return embedding.to_host_array()
+        # Handle both cupy arrays and numpy arrays
+        if hasattr(embedding, 'to_host_array'):
+            return embedding.to_host_array()
+        else:
+            # If it's already a numpy array or use cp.asnumpy for safety
+            return cp.asnumpy(embedding)

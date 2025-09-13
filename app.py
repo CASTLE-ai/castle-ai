@@ -27,9 +27,9 @@ if __name__ == '__main__':
           allowed_paths = [
                "/content/drive/MyDrive/castle-projects",  # Google Drive 專案目錄
                "/tmp",  # 臨時目錄
-               "/content"  # Colab 內容目錄
+               "/content",  # Colab 內容目錄
           ]
-     
+     allowed_paths.append(args.root)
      app.launch(
           server_name='0.0.0.0', 
           share=COLAB_GPU or SHARE,

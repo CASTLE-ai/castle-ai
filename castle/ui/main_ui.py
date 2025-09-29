@@ -51,7 +51,7 @@ def create_ui(OS_SYS, root=''):
             )
             pass
 
-        with gr.Tab(label='Latent Explorer') as cluster_page_tab:
+        with gr.Tab(label='Behavior microscope') as cluster_page_tab:
             cluster_ui = create_cluster_page_ui(storage_path, project_name, cluster_page_tab)
             cluster_ui_object_count = gr.State(len(cluster_ui))
             cluster_page_tab.select(

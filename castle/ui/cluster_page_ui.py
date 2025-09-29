@@ -13,6 +13,38 @@ import pandas as pd
 
 umap_config_template = '''[
     {
+        "n_neighbors": 100,
+        "min_dist": 0.0,
+        "n_components": 2
+    }
+]'''
+
+umap_config_low_magnification_template = '''[
+    {
+        "n_neighbors": 30,
+        "min_dist": 0.0,
+        "n_components": 2
+    }
+]'''
+umap_config_intermediate_magnification_template = '''[
+    {
+        "n_neighbors": 30,
+        "min_dist": 0.0,
+        "n_components": 5
+    },
+    {
+        "n_neighbors": 30,
+        "min_dist": 0.0,
+        "n_components": 2
+    }
+]'''
+umap_config_high_magnification_template = '''[
+    {
+        "n_neighbors": 30,
+        "min_dist": 0.0,
+        "n_components": 10
+    },
+    {
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2
@@ -20,11 +52,80 @@ umap_config_template = '''[
 ]'''
 
 
-
-
 dbscan_config_template='''{
     "eps": 1.0
 }'''
+
+
+preset_dropdown_list = ['Low-magnification objective 1000', 'Low-magnification objective 500', 'Low-magnification objective 300', 'Low-magnification objective 100', 'Low-magnification objective 50', 'Low-magnification objective 25']
+preset_dropdown_list += ['Intermediate-magnification objective (1000, 500)', 'Intermediate-magnification objective (500, 300)', 'Intermediate-magnification objective (300, 100)', 'Intermediate-magnification objective (100, 50)', 'Intermediate-magnification objective (50, 25)']
+preset_dropdown_list += ['High-magnification objective (1000, 500)', 'High-magnification objective (500, 300)', 'High-magnification objective (300, 100)', 'High-magnification objective (100, 50)', 'High-magnification objective (50, 25)']
+
+def update_umap_config_text_with_preset(preset_dropdown):
+    """根據使用者選擇的預設來生成對應的 UMAP 配置字串並調整 n_neighbors 數值"""
+    if preset_dropdown is None:
+        return umap_config_template
+    
+    import re
+    import json
+    
+    # 解析預設選項
+    if 'Low-magnification objective' in preset_dropdown:
+        # 提取數字 ex: "Low-magnification objective 1000" -> 1000
+        numbers = re.findall(r'\d+', preset_dropdown)
+        if numbers:
+            n_neighbors = int(numbers[0])
+            config = [
+                {
+                    "n_neighbors": n_neighbors,
+                    "min_dist": 0.0,
+                    "n_components": 2
+                }
+            ]
+            return json.dumps(config, indent=4)
+    
+    elif 'Intermediate-magnification objective' in preset_dropdown:
+        # 提取數字 ex: "Intermediate-magnification objective (1000, 500)" -> [1000, 500]
+        numbers = re.findall(r'\d+', preset_dropdown)
+        if len(numbers) >= 2:
+            n_neighbors_1 = int(numbers[0])
+            n_neighbors_2 = int(numbers[1])
+            config = [
+                {
+                    "n_neighbors": n_neighbors_1,
+                    "min_dist": 0.0,
+                    "n_components": 5
+                },
+                {
+                    "n_neighbors": n_neighbors_2,
+                    "min_dist": 0.0,
+                    "n_components": 2
+                }
+            ]
+            return json.dumps(config, indent=4)
+    
+    elif 'High-magnification objective' in preset_dropdown:
+        # 提取數字 ex: "High-magnification objective (1000, 500)" -> [1000, 500]
+        numbers = re.findall(r'\d+', preset_dropdown)
+        if len(numbers) >= 2:
+            n_neighbors_1 = int(numbers[0])
+            n_neighbors_2 = int(numbers[1])
+            config = [
+                {
+                    "n_neighbors": n_neighbors_1,
+                    "min_dist": 0.0,
+                    "n_components": 10
+                },
+                {
+                    "n_neighbors": n_neighbors_2,
+                    "min_dist": 0.0,
+                    "n_components": 2
+                }
+            ]
+            return json.dumps(config, indent=4)
+    
+    # 如果沒有匹配到任何預設，返回預設模板
+    return umap_config_template
 
 def padding(mi, mx, scale=1.05):
     mid = (mi + mx) / 2
@@ -274,7 +375,6 @@ def update_select_cluster_list(latents):
     return gr.update(choices=li)
 
 
-
 # def select_cluster(latents, cluster_name):
 #     return latents.select(selected_cluster=cluster_name)
 
@@ -298,22 +398,24 @@ def generate_embedding(latents, cluster_name, cfg):
     return local_latents, Z_plt, Z_plt.plot()
 
 
-def generate_local_cluster(local_latents, method, cfg):
+def generate_local_cluster(local_latents, eps):
     try:
-        cfg = json.loads(cfg)
+        cfg = json.loads(dbscan_config_template)
     except:
         gr.Info('Cluster Json format error')
         return None, None
-    local_latents.build_cluster(method=method, configs=cfg)
+
+    cfg['eps'] = eps
+    local_latents.build_cluster(method='dbscan', configs=cfg)
     Z_plt = EmbeddingScatterPlot(local_latents)
     return Z_plt, Z_plt.plot()
 
 
-def change_cluster_method_template(method):
-    if method == 'dbscan':
-        return dbscan_config_template
-    else:
-        gr.Info(f'method error got{method}, expect dbscan')
+# def change_cluster_method_template(method):
+#     if method == 'dbscan':
+#         return dbscan_config_template
+#     else:
+#         gr.Info(f'method error got{method}, expect dbscan')
 
 
 
@@ -397,29 +499,22 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     local_embedding_plot = gr.State(None)
     mulvideo = gr.State(None)
     with gr.Row(visible=True):
-        with gr.Column(scale=5):
+        with gr.Column(scale=8):
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
-            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
-        with gr.Column(scale=5):
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
-            
-
-    with gr.Row(visible=True):
+            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
         with gr.Column(scale=2):
             ui['select_cluster'] = gr.Dropdown(label="Select Cluster",  visible=False,interactive=True)
-            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=5, max_lines=30, interactive=True, visible=False)
+            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset",  visible=False,interactive=True)
+            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=False)
             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=False)
-        with gr.Column(scale=2):
-            ui['cluster_method'] = gr.Dropdown(['dbscan'], label='Cluster method',
-                              value='dbscan',interactive=True)
-            ui['cluster_config_text'] = gr.Textbox(label='Cluster configs', lines=5, max_lines=30, interactive=True, visible=False)
+            ui['eps'] = gr.Number(label='epsilon-neighborhood radius', interactive=True, visible=False, value=1, step=0.1, minimum=0.1, maximum=10)
             ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=False)
-        with gr.Column(scale=2):
             ui['label_cluster_id'] = gr.Number(label='Cluster id', interactive=True, visible=False)
             ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=False)
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
-
+            
 
             
     ui['syllables_plot'] = gr.Plot(label='Syllable', visible=False)
@@ -443,7 +538,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=update_select_cluster_list,
         inputs=latents,
         outputs=ui['select_cluster']
-
     )
     # ui['select_cluster'].select(
     #     fn=select_cluster,
@@ -451,22 +545,27 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     #     outputs=local_latents,
 
     # )
+    ui['preset_dropdown'].select(
+        fn=update_umap_config_text_with_preset,
+        inputs=ui['preset_dropdown'],
+        outputs=ui['umap_config_text']
+    )
     ui['umap_run'].click(
         fn=generate_embedding,
         inputs=[latents, ui['select_cluster'], ui['umap_config_text']],
         outputs=[local_latents, local_embedding_plot, ui['embedding_plot']]
     )
 
-    ui['cluster_method'].select(
-        fn=change_cluster_method_template,
-        inputs=ui['cluster_method'],
-        outputs=ui['cluster_config_text']
-    )
-    ui['reset'].click(
-        fn=change_cluster_method_template,
-        inputs=ui['cluster_method'],
-        outputs=ui['cluster_config_text']
-    )
+    # ui['cluster_method'].select(
+    #     fn=change_cluster_method_template,
+    #     inputs=ui['cluster_method'],
+    #     outputs=ui['eps']
+    # )
+    # ui['reset'].click(
+    #     fn=change_cluster_method_template,
+    #     inputs=ui['cluster_method'],
+    #     outputs=ui['eps']
+    # )
     ui['reset'].click(
         fn=collapse_accordion,
         outputs=ui['cluster_input_accordion']
@@ -479,7 +578,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['cluster_run'].click(
         fn=generate_local_cluster,
-        inputs=[local_latents, ui['cluster_method'], ui['cluster_config_text']],
+        inputs=[local_latents, ui['eps']],
         outputs=[local_embedding_plot, ui['embedding_plot'] ],
     )
     ui['label_cluster_btn'].click(

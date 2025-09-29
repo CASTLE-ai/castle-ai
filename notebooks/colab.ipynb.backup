@@ -1,7 +1,7 @@
 {
  "cells": [
   {
-   "cell_type": "markdown",
+   "cell_type": "code",
    "execution_count": null,
    "metadata": {},
    "outputs": [],
@@ -45,15 +45,6 @@
   }
  ],
  "metadata": {
-  "accelerator": "GPU",
-  "colab": {
-   "provenance": [],
-   "gpuType": "T4"
-  },
-  "kernelspec": {
-   "name": "python3",
-   "display_name": "Python 3"
-  },
   "language_info": {
    "name": "python"
   }

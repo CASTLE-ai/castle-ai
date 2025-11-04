@@ -1,108 +1,177 @@
+"""Source video management UI for Castle AI."""
+
 import os
 import gradio as gr
-import shutil
-import json
+
+from ..utils.video_manager import (
+    add_video_to_project,
+    scan_video_directory,
+    add_videos_batch
+)
 
 
-def upload_local_videos(storage_path, project_name, upload_video_path):
-    project_path = os.path.join(storage_path, project_name)
-    project_config_path = os.path.join(project_path, 'config.json')
-    source_dir_path = os.path.join(project_path, 'sources/')
-    os.makedirs(source_dir_path, exist_ok=True)
-    project_config = json.load(open(project_config_path, 'r'))
-    if not 'source' in project_config:
-            project_config['source'] = []
-
-    for it in upload_video_path:
-        if os.path.basename(it.name) in project_config['source']:
-             gr.Info("Already in this project")
-             continue
-        shutil.copyfile(it.name, os.path.join(source_dir_path, os.path.basename(it.name)))
-        project_config['source'].append(os.path.basename(it.name))
-    json.dump(project_config, open(project_config_path,'w'))
-
-def update_project_video_info(storage_path, project_name):
-    project_path = os.path.join(storage_path, project_name)
-    project_config_path = os.path.join(project_path, 'config.json')
-    project_config = json.load(open(project_config_path, 'r'))
-    if not 'source' in project_config:
+# UI callback functions
+def upload_local_videos_wrapper(storage_path, project_name, upload_video_files):
+    """Wrapper for uploading local videos with UI feedback.
+    
+    Args:
+        storage_path: Path to the storage directory
+        project_name: Name of the project
+        upload_video_files: List of uploaded video files
+    """
+    if not upload_video_files:
         return
-    return
-     
-#          return ""
-#     return str(project_config['source'])
+    
+    for video_file in upload_video_files:
+        video_name = os.path.basename(video_file.name)
+        success, message = add_video_to_project(
+            storage_path, 
+            project_name, 
+            video_file.name, 
+            video_name
+        )
+        
+        if success:
+            gr.Info(message)
+        else:
+            gr.Warning(message)
 
 
-video_extensions = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv']
+def scan_server_videos_wrapper(video_directory):
+    """Wrapper for scanning server video directory.
+    
+    Args:
+        video_directory: Path to the video directory
+        
+    Returns:
+        tuple: (video_list, summary_text, button_interactive)
+    """
+    video_list, summary = scan_video_directory(video_directory)
+    
+    # Enable button only if videos are found
+    button_interactive = len(video_list) > 0
+    
+    return video_list, summary, gr.update(interactive=button_interactive)
 
-# Function to check if a file is a video
-def is_video(file_name):
-    _, ext = os.path.splitext(file_name)
-    return ext.lower() in video_extensions
 
-def list_server_video(storage_path):
-    subdirectories = sorted([d for d in os.listdir(storage_path) if is_video(os.path.join(storage_path, d))])
-    return gr.update(choices=subdirectories)
-
-def upload_server_video(storage_path, project_name, video_storage_path, select_server_video):
-     project_path = os.path.join(storage_path, project_name)
-     project_config_path = os.path.join(project_path, 'config.json')
-     source_dir_path = os.path.join(project_path, 'sources/')
-     os.makedirs(source_dir_path, exist_ok=True)
-     project_config = json.load(open(project_config_path, 'r'))
-     if not 'source' in project_config:
-          project_config['source'] = []
-
-     if os.path.basename(select_server_video) in project_config['source']:
-          gr.Info("Already in this project")
-          return
-     
-     shutil.copyfile(os.path.join(video_storage_path, select_server_video), os.path.join(source_dir_path, select_server_video))
-     project_config['source'].append(os.path.basename(select_server_video))
-     json.dump(project_config, open(project_config_path,'w'))
+def add_server_videos_batch_wrapper(storage_path, project_name, video_directory, video_list):
+    """Wrapper for adding all server videos in batch.
+    
+    Args:
+        storage_path: Path to the storage directory
+        project_name: Name of the project
+        video_directory: Path to the video directory
+        video_list: List of video file names to add
+        
+    Returns:
+        tuple: (empty_video_list, reset_summary, disabled_button)
+    """
+    if not video_list:
+        gr.Warning("No videos to add")
+        return video_list, "", gr.update(interactive=False)
+    
+    success_count, fail_count, messages = add_videos_batch(
+        storage_path,
+        project_name,
+        video_directory,
+        video_list
+    )
+    
+    # Show results
+    if success_count > 0:
+        gr.Info(messages[0])
+    
+    # Show failed messages as warnings
+    for msg in messages[1:]:
+        gr.Warning(msg)
+    
+    # Reset UI after adding
+    return [], "", gr.update(interactive=False)
 
 
 def create_source_ui(storage_path, project_name):
-    ui = dict()
+    """Create the source video management UI.
     
-#     ui['project_video_info'] = gr.Textbox(
-#          label='Project Video Information', 
-#          interactive=False,visible=False)
-#     gr.HTML(value="<br>")
-    ui['upload_local_videos'] = gr.File(label="Add Local Videos", file_types=["video"], interactive=True, file_count="multiple", visible=False)
+    Args:
+        storage_path: Gradio State for storage path
+        project_name: Gradio State for project name
+        
+    Returns:
+        dict: Dictionary containing all UI components
+    """
+    ui = {}
+    
+    # User guidance (collapsible)
+    with gr.Accordion("📹 How to Upload Videos", open=False, visible=False) as ui['guidance_accordion']:
+        gr.Markdown("""
+        Add video files to your project using one of the two methods below:
+        
+        **Method 1: Upload Videos**  
+        Select and upload video files directly from your desktop. Supports multiple file selection.
+        
+        **Method 2: Add Videos from Folder**  
+        Enter a directory path on the server to batch import all videos from that folder. 
+        The system will scan the directory, show you a preview of found videos, and let you add them all at once.
+        
+        💡 **Tip**: All videos added to a project will share the same ROI prompts during tracking.
+        """)
+    
+    # Local video upload
+    ui['upload_local_videos'] = gr.File(
+        label="Upload Videos",
+        file_types=["video"],
+        interactive=True,
+        file_count="multiple",
+        visible=False
+    )
+    
     gr.HTML(value="<br>")
-    # ui['upload_another'] = gr.Button('Upload Another Video', interactive=True, visible=False)
-    ui['storage_path'] = gr.Textbox(
-         label='Add Server Videos: Storage Location',
-         info='The location which storage videos',
-         value='demo/',
-         interactive=True, visible=False)
-    ui['select_server_video'] = gr.Dropdown(
-         label="Add Server Video", 
-         interactive=True, visible=False)
     
+    # Server video batch import
+    ui['video_directory'] = gr.Textbox(
+        label='Add Videos from Folder',
+        info='Enter the directory path containing video files',
+        value='demo/',
+        interactive=True,
+        visible=False
+    )
+    
+    ui['video_scan_info'] = gr.Textbox(
+        label="Scan Results",
+        info='Videos found in the directory',
+        lines=8,
+        interactive=False,
+        visible=False,
+        value=""
+    )
+    
+    ui['add_videos_btn'] = gr.Button(
+        'Add All Videos',
+        interactive=False,
+        visible=False
+    )
+    
+    # Hidden state to store video list
+    video_list_state = gr.State([])
+    
+    # Event handlers - Upload local videos
     ui['upload_local_videos'].upload(
-         fn=upload_local_videos,
-         inputs=[
-              storage_path, project_name, 
-              ui['upload_local_videos']]
+        fn=upload_local_videos_wrapper,
+        inputs=[storage_path, project_name, ui['upload_local_videos']]
     )
-
-    ui['upload_local_videos'].upload(
-         fn=update_project_video_info,
-         inputs=[storage_path, project_name],
-     #     outputs=ui['project_video_info']
+    
+    # Event handlers - Scan server video directory
+    ui['video_directory'].change(
+        fn=scan_server_videos_wrapper,
+        inputs=ui['video_directory'],
+        outputs=[video_list_state, ui['video_scan_info'], ui['add_videos_btn']]
     )
-
-    ui['select_server_video'].focus(
-         fn=list_server_video,
-         inputs=ui['storage_path'],
-         outputs=ui['select_server_video']
+    
+    # Event handlers - Add all server videos
+    ui['add_videos_btn'].click(
+        fn=add_server_videos_batch_wrapper,
+        inputs=[storage_path, project_name, ui['video_directory'], video_list_state],
+        outputs=[video_list_state, ui['video_scan_info'], ui['add_videos_btn']]
     )
-    ui['select_server_video'].select(
-        fn=upload_server_video,
-        inputs=[storage_path, project_name, 
-              ui['storage_path'], ui['select_server_video']]
-    )
-
+    
     return ui

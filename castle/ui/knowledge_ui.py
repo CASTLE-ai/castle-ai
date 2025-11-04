@@ -12,7 +12,7 @@ from castle.utils.plot import generate_mix_image
 
 
 def read_label(
-    storage_path: str, project_name: str, source_video: Optional[Any]
+    storage_path: str, project_name: str
 ) -> List[Dict[str, Any]]:
     """
     Read all label files for the given project and return a list of labels.
@@ -25,13 +25,12 @@ def read_label(
     Args:
         storage_path: Base storage directory.
         project_name: Name of the project.
-        source_video: Video source object; if None, an empty list is returned.
+        
 
     Returns:
         A list of dictionaries containing label information.
     """
-    if source_video is None:
-        return []
+    
 
     project_path = Path(storage_path) / project_name
     label_dir = project_path / "label"
@@ -60,7 +59,7 @@ def read_label(
 
 
 def read_label_to_gallery(
-    storage_path: str, project_name: str, source_video: Optional[Any]
+    storage_path: str, project_name: str
 ) -> Tuple[List[Dict[str, Any]], List[Tuple[Any, str]]]:
     """
     Generate a gallery list based on the label data.
@@ -75,7 +74,7 @@ def read_label_to_gallery(
     Returns:
         A tuple containing the original label list and a gallery list.
     """
-    label_list = read_label(storage_path, project_name, source_video)
+    label_list = read_label(storage_path, project_name)
     gallery_list = [
         (generate_mix_image(label["frame"], label["mask"]), label["index"])
         for label in label_list
@@ -107,7 +106,7 @@ def get_select_index(evt: gr.SelectData):
         return evt.index
 
 def create_knowledge_ui(
-    storage_path: str, project_name: str, source_video: Any, knowledge_tab: gr.Tab
+    storage_path: str, project_name: str, knowledge_tab: gr.Tab
 ) -> Dict[str, Any]:
     """
     Create and return the Gradio UI components for tracking.
@@ -148,7 +147,7 @@ def create_knowledge_ui(
     # Set up the gallery from the label data.
     knowledge_tab.select(
         fn=read_label_to_gallery,
-        inputs=[storage_path, project_name, source_video],
+        inputs=[storage_path, project_name],
         outputs=[label_list_state, gallery],
     )
     
@@ -157,7 +156,7 @@ def create_knowledge_ui(
 
     delete_selected_btn.click(
         fn=delete_selected,
-        inputs=[storage_path, project_name, source_video, gallery, selected_image],
+        inputs=[storage_path, project_name, gallery, selected_image],
         outputs=gallery,
     )
 

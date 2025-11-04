@@ -1,82 +1,135 @@
+"""View UI for displaying video frames and ROI masks."""
+
 import gradio as gr
-import os
-import numpy as np
 
-from castle.utils.plot import generate_mask_image, generate_mix_image
-from castle.utils.h5_io import H5IO
+from ..utils.roi_manager import get_frame_display, save_frame_to_knowledge
 
-def index_slide_apply(storage_path, project_name, source_video, index, mode):
-    if mode == 'Image':
-        return source_video[index]
+
+# UI callback functions
+def update_frame_display(storage_path, project_name, source_video, frame_index, display_mode):
+    """Update frame display based on selected mode.
     
-    project_path = os.path.join(storage_path, project_name)
-    video_name = source_video.video_name
-    track_dir_path = os.path.join(project_path, 'track', video_name)
-    mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
+    Args:
+        storage_path: Path to the storage directory
+        project_name: Name of the project
+        source_video: Video array object
+        frame_index: Index of the frame to display
+        display_mode: Display mode ('Image', 'Image & Mask', 'Mask')
+        
+    Returns:
+        numpy.ndarray: Frame image to display
+    """
+    return get_frame_display(storage_path, project_name, source_video, frame_index, display_mode)
 
-    tracker = H5IO(mask_list_path)
 
-    if mode == 'Image & Mask':
-        frame = source_video[index]
-        mix = generate_mix_image(frame, tracker.read_mask(index))
-        return mix
-    if mode == 'Mask':
-        return generate_mask_image(tracker.read_mask(index))
+def add_frame_to_knowledge_wrapper(storage_path, project_name, source_video, frame_index):
+    """Wrapper for adding frame to knowledge base with UI feedback.
     
-    del tracker
+    Args:
+        storage_path: Path to the storage directory
+        project_name: Name of the project
+        source_video: Video array object
+        frame_index: Index of the frame to save
+    """
+    success, message = save_frame_to_knowledge(storage_path, project_name, source_video, frame_index)
+    
+    if success:
+        gr.Info(message)
+    else:
+        gr.Warning(message)
 
 
-def adding_to_knowledge(storage_path, project_name, source_video, index):
-    project_path = os.path.join(storage_path, project_name)
-    video_name = source_video.video_name
-    label_dir_path = os.path.join(project_path, 'label', video_name)
-    os.makedirs(label_dir_path, exist_ok=True)
-
-    track_dir_path = os.path.join(project_path, 'track', video_name)
-    mask_list_path = os.path.join(track_dir_path, f'mask_list.h5')
-
-    tracker = H5IO(mask_list_path)
-    frame = source_video[index]
-    mask = tracker.read_mask(index)
-    label_path = os.path.join(label_dir_path, f'{index}')
-    np.savez_compressed(label_path, frame=frame, mask=mask)
-    gr.Info(f"Save ROI at frame {index}.")
+def update_frame_step(step_value):
+    """Update frame slider step size.
+    
+    Args:
+        step_value: Step size for the frame slider
+        
+    Returns:
+        Gradio update object
+    """
+    return gr.update(step=int(step_value))
 
 
 def create_view_ui(storage_path, project_name, source_video):
-    ui = dict()
+    """Create the view UI for displaying video frames.
+    
+    Args:
+        storage_path: Gradio State for storage path
+        project_name: Gradio State for project name
+        source_video: Gradio State for video source
+        
+    Returns:
+        dict: Dictionary containing all UI components
+    """
+    ui = {}
+    
     with gr.Row(visible=True):
+        # Controls column
         with gr.Column(scale=2):
             ui['display_mode_drop'] = gr.Dropdown(
-                    choices=["Image", "Image & Mask", "Mask"],
-                    label="Display Mode", value="Image",
-                    interactive=True, visible=False)
-
-            ui['step_frame'] = gr.Dropdown(
-                    choices=["1", "5", "10", "100", "1000", "10000"],
-                    label="Frame step number", value="1",
-                    interactive=True, visible=False)
-            ui['adding_to_knowledge_btn'] = gr.Button('Adding to Knowledge', interactive=True, visible=False)
+                choices=["Image", "Image & Mask", "Mask"],
+                label="Display Mode",
+                value="Image",
+                interactive=True,
+                visible=False
+            )
             
+            ui['step_frame'] = gr.Dropdown(
+                choices=["1", "5", "10", "100", "1000", "10000"],
+                label="Frame Step Size",
+                value="1",
+                interactive=True,
+                visible=False
+            )
+            
+            ui['adding_to_knowledge_btn'] = gr.Button(
+                'Add to ROI Prompts',
+                interactive=True,
+                visible=False
+            )
+        
+        # Display column
         with gr.Column(scale=8):
-            ui['display_view'] = gr.Image(label='Display', interactive=False, visible=False)
-            ui['index_slide'] = gr.Slider(label="Frame", minimum=0, step=1, maximum=1, value=0, interactive=True, visible=False)
-          
+            ui['display_view'] = gr.Image(
+                label='Display',
+                interactive=False,
+                visible=False
+            )
+            ui['index_slide'] = gr.Slider(
+                label="Frame",
+                minimum=0,
+                step=1,
+                maximum=1,
+                value=0,
+                interactive=True,
+                visible=False
+            )
+    
+    # Event handlers - Update display when frame index or mode changes
     ui['index_slide'].change(
-        fn=index_slide_apply,
+        fn=update_frame_display,
         inputs=[storage_path, project_name, source_video, ui['index_slide'], ui['display_mode_drop']],
         outputs=ui['display_view']
     )
-    step_frame_apply = lambda step_frame: gr.update(step=step_frame)
+    
+    ui['display_mode_drop'].change(
+        fn=update_frame_display,
+        inputs=[storage_path, project_name, source_video, ui['index_slide'], ui['display_mode_drop']],
+        outputs=ui['display_view']
+    )
+    
+    # Event handlers - Update slider step size
     ui['step_frame'].change(
-        fn=step_frame_apply,
+        fn=update_frame_step,
         inputs=ui['step_frame'],
         outputs=ui['index_slide']
     )
-    ui['adding_to_knowledge_btn'].click(
-        fn=adding_to_knowledge,
-        inputs=[storage_path, project_name, source_video, ui['index_slide']]
-        # outputs=ui['click_mode']
-    )
-    return ui
     
+    # Event handlers - Add frame to knowledge base
+    ui['adding_to_knowledge_btn'].click(
+        fn=add_frame_to_knowledge_wrapper,
+        inputs=[storage_path, project_name, source_video, ui['index_slide']]
+    )
+    
+    return ui

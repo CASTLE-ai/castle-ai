@@ -2,7 +2,7 @@ matplotlib
 tqdm
 av
 numpy
-opencv-python
+opencv-python-headless
 umap-learn
 plotly
 gradio

@@ -6,10 +6,15 @@ import numpy as np
 from castle.utils.latent_explorer import Latent
 from PIL import Image
 import matplotlib.pyplot as plt
+import matplotlib
 from scipy.spatial import KDTree
 import io
 from castle.utils.video_io import ReadArray
 import pandas as pd
+
+# Configure matplotlib to reduce warnings about open figures
+# Increase the warning threshold to 50 (default is 20)
+matplotlib.rcParams['figure.max_open_warning'] = 50
 
 umap_config_template = '''[
     {
@@ -264,7 +269,7 @@ class EmbeddingScatterPlot:
         return ex, ey
 
     def plot(self):
-        plt.figure()
+        fig = plt.figure()
         self.local_latents.plot_embedding()
         # plt.scatter(self.data[:,0], self.data[:,1], color='blue')
         plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
@@ -274,7 +279,7 @@ class EmbeddingScatterPlot:
 
         buf = io.BytesIO()
         plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
-        plt.close()
+        plt.close(fig)
         buf.seek(0)
         img = Image.open(buf)
 
@@ -283,7 +288,7 @@ class EmbeddingScatterPlot:
         return img
     
     def plot_named_embedding(self):
-        plt.figure()
+        fig = plt.figure()
         self.local_latents.plot_name_embedding()
         plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
         plt.axis('off')
@@ -292,7 +297,7 @@ class EmbeddingScatterPlot:
 
         buf = io.BytesIO()
         plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
-        plt.close()
+        plt.close(fig)
         buf.seek(0)
         img = Image.open(buf)
 
@@ -437,6 +442,8 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
     fig = plt.figure(figsize=(12, 2))
     latents.plot_syllables()
     plt.tight_layout()
+    # Note: fig is returned and will be displayed by Gradio, so we don't close it here
+    # Gradio will handle the figure lifecycle
 
     df1 = {
         'Id': [k for k, v in latents.cluster_meta.items()],

@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv
+.pytest_cache
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation
+*.md
+docs/
+
+# Projects and notebooks (optional, uncomment if needed)
+projects/
+notebooks/
+
+# Gradio temporary files
+.gradio
+
+# Large files
+*.pth
+*.pt
+*.ckpt
+
+# Logs
+logs/
+*.log

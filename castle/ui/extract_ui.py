@@ -304,7 +304,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                 label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=False
             )
             ui['batch_size'] = gr.Textbox(
-                label="Batch size", value="8", info="ex: 1, 16, 64 ...", visible=False
+                label="Batch size", value="32", info="ex: 8, 16, 32, 64 ... Higher = faster (if GPU has enough memory)", visible=False
             )
             ui['select_video'] = gr.Dropdown(
                 label="Select Target Video", value='All', visible=False

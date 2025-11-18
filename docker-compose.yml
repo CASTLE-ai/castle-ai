@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  castle-ai:
+    build: .
+    image: castle-ai:latest
+    container_name: castle-ai-app
+    ports:
+      - "7860:7860"
+    volumes:
+      # Mount checkpoint directory for persistence
+      - ./ckpt:/app/ckpt
+      # Mount projects directory for persistence
+      - ./projects:/app/projects
+      # Mount demo directory
+      - ./demo:/app/demo
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GRADIO_SHARE=false
+    # Uncomment to enable GPU support (requires nvidia-docker)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Keep container running
+    stdin_open: true
+    tty: true

@@ -7,8 +7,8 @@ import numpy as np
 import gc
 
 import torch
-import torchvision.transforms as tt
-from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
+import contextlib
 
 import platform
 OS_SYS = platform.uname().system
@@ -24,27 +24,25 @@ else:
 
 resolution = 518
 patch_len = resolution // 14
-img2tensor = tt.Compose([
-    tt.ToTensor(), # range [0, 255] -> [0.0,1.0]
-    tt.Resize((resolution, resolution), antialias=True),
-    tt.Normalize(mean=0.5, std=0.2), # range [0.0,1.0] -> [-2.5, 2.5]
-
-])
-
-img2mask = tt.Compose([
-    tt.ToTensor(), # range [0, 255] -> [0.0,1.0]
-    tt.Resize((resolution, resolution), antialias=True),
-])
 
 class DinoV2latentGen:
     def __init__(self, model_cfg):
-        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14_reg')
         self.device = model_cfg['device']
+        print("Loading DinoV2 model...")
+        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14_reg')
+        self.model.eval().to(self.device)
+        
+        # Enable performance optimizations
+        if self.device == 'cuda':
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        
+        self.use_amp = (self.device == 'cuda')
         self.n_feature = self.model.embed_dim
-        print("Device: ", self.device)
+        print(f"Device: {self.device}, AMP: {self.use_amp}, TF32: {self.device == 'cuda'}")
         
     def batch_run(self, X):
-        if type(X) == list:
+        if isinstance(X, list):
             X = torch.stack(X)
         return self.run(X)
     
@@ -53,13 +51,15 @@ class DinoV2latentGen:
         return self.run(X)
         
     def run(self, X):
-        self.model.eval()
-        self.model.to(self.device)
+        # Model already on device and in eval mode from __init__
         with torch.no_grad():
-            X = X.to(self.device)
-            result = self.model.forward_features(X)
-        
-        return result['x_norm_patchtokens'].detach().cpu().numpy()
+            if X.device.type != self.device:
+                X = X.to(self.device, non_blocking=(self.device == 'cuda'))
+            autocast_ctx = torch.cuda.amp.autocast(enabled=self.use_amp)
+            with autocast_ctx:
+                result = self.model.forward_features(X)
+        # Return features tensor on device to allow downstream GPU ops
+        return result['x_norm_patchtokens'].detach()
     
     def __del__(self):
         del self.model
@@ -83,21 +83,45 @@ class ObserverDINOv2:
         return self.extract_batch_latent([frame], [mask], select_roi)[0]
 
     def extract_batch_latent(self, frame_list, mask_list, select_roi):
-        batch_latent = []
-        mask_roi_list = [img2mask(get_mask(it, select_roi)) for it in mask_list]
-        frame_list = [img2tensor(it) for it in frame_list]
+        # Stack frames: (B, H, W, 3) -> tensor (B, 3, H, W) in [0,1]
+        frames_np = np.stack(frame_list, axis=0)
+        if frames_np.dtype != np.float32:
+            frames_np = frames_np.astype(np.float32) / 255.0
+        frames_t = torch.from_numpy(frames_np).permute(0, 3, 1, 2).contiguous()
 
-        patch_feature = self.model.batch_run(frame_list)
+        # Prepare ROI masks and downsample to patch grid weights on GPU
+        roi_masks_np = np.stack([get_mask(m, select_roi) for m in mask_list], axis=0)
+        masks_t = torch.from_numpy(roi_masks_np)
 
-        for img, mask in zip(patch_feature, mask_roi_list):
-            latent = img.reshape((patch_len, patch_len, self.n_feature))
-            small_mask = mask.reshape(resolution//14, 14, resolution//14, 14).sum(axis=(1, 3))
-            sum_mask = small_mask.sum()
-            result = small_mask[:, :, np.newaxis] * latent
-            latent_mask_ave = result.sum(axis=0).sum(axis=0) / sum_mask
-            batch_latent.append(latent_mask_ave)
+        use_cuda = (self.model.device == 'cuda')
+        if use_cuda:
+            frames_t = frames_t.pin_memory()
+            masks_t = masks_t.pin_memory()
 
-        return batch_latent
+        frames_t = frames_t.to(self.model.device, non_blocking=use_cuda)
+        masks_t = masks_t.to(self.model.device, non_blocking=use_cuda, dtype=torch.float32)
+
+        # Resize frames and masks to model resolution
+        x = F.interpolate(frames_t, size=(resolution, resolution), mode='bilinear', align_corners=False, antialias=True)
+        x.sub_(0.5).div_(0.2)
+
+        masks_resized = F.interpolate(masks_t[:, None, ...], size=(resolution, resolution), mode='nearest')[:, 0]
+        # Downsample 518x518 -> 37x37 by summing over 14x14 windows
+        w = masks_resized.view(masks_resized.size(0), patch_len, 14, patch_len, 14).sum(dim=(2, 4))
+        # avoid zero division if ROI mask is empty
+        sum_w = w.sum(dim=(1, 2), keepdim=True).clamp_min(1e-6)  # (B, 1, 1)
+
+        # Forward pass to get patch tokens: (B, 37*37, C)
+        feats = self.model.run(x)
+        B = feats.size(0)
+        C = feats.size(-1)
+        feats = feats.view(B, patch_len, patch_len, C).float()
+        w = w.float()
+
+        # Weighted average on GPU, then move to CPU numpy
+        weighted_sum = (feats * w[..., None]).sum(dim=(1, 2))  # (B, C)
+        latents = weighted_sum / sum_w.view(B, 1)  # Reshape sum_w from (B,1,1) to (B,1)
+        return latents.detach().cpu().numpy()
 
     def extract_video_latent(self, video_path, mask_video_path, roi_rgb, batch_size=16):
         # TODO

@@ -118,10 +118,12 @@ class Latent:
         old_cluster = self.cluster[index_mask]
 
         # Check Name used?
-        for _, it in local_latent.export.items():
-            assert not it['name'] in self.behavior_name2cluster_id, 'new name be used'
+        # for _, it in local_latent.export.items():
+            # assert not it['name'] in self.behavior_name2cluster_id, 'new name be used'
 
         for cluster_local_id, it in local_latent.export.items():
+            if it['name'] in self.behavior_name2cluster_id:
+                continue
             cluster_id = self.num_cluster
             self.num_cluster += 1
 

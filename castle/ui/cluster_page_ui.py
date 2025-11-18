@@ -411,15 +411,7 @@ def generate_local_cluster(local_latents, eps):
     return Z_plt, Z_plt.plot()
 
 
-# def change_cluster_method_template(method):
-#     if method == 'dbscan':
-#         return dbscan_config_template
-#     else:
-#         gr.Info(f'method error got{method}, expect dbscan')
 
-
-
-# x.label_cluster(0, 'behavior_bb')
 def label_local_cluster(local_latents, cluster_id, cluster_name):
     if len(cluster_name) == 0:
         gr.Info('Name is empty')
@@ -499,10 +491,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     local_embedding_plot = gr.State(None)
     mulvideo = gr.State(None)
     with gr.Row(visible=True):
-        with gr.Column(scale=8):
-            ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
-            ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
-            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
         with gr.Column(scale=2):
             ui['select_cluster'] = gr.Dropdown(label="Select Cluster",  visible=False,interactive=True)
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset",  visible=False,interactive=True)
@@ -514,6 +502,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=False)
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
+        with gr.Column(scale=8):
+            ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
+            ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
+            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
             
 
             

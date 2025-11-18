@@ -2,7 +2,7 @@ matplotlib
 tqdm
 av
 numpy
-opencv-python
+opencv-python-headless
 umap-learn
 plotly
 gradio
@@ -10,6 +10,7 @@ h5py
 natsort
 pytest
 castle-ai
+gdown
 
 # NVIDIA packages
 --extra-index-url https://pypi.nvidia.com

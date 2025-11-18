@@ -12,6 +12,7 @@ pytest
 castle-ai
 gdown
 
+
 # NVIDIA packages
 --extra-index-url https://pypi.nvidia.com
 cuml-cu12
@@ -20,3 +21,4 @@ cuml-cu12
 --extra-index-url https://download.pytorch.org/whl/cu126
 torch 
 torchvision
+torchmetrics

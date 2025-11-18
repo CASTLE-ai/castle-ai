@@ -25,5 +25,13 @@
     "dinov2_args": {
         "name": "dinov2_vitb14_reg",
         "path": "ckpt/dinov2_vitb14_reg4_pretrain.pth",
+    },
+    "dinov3_args": {
+        "name": "dinov3_vitl16",
+        "path": "ckpt/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+    },
+    "dinov3_vitb16_args": {
+        "name": "dinov3_vitb16",
+        "path": "ckpt/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth"
     }
 }

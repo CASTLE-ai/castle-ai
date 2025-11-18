@@ -73,7 +73,8 @@ def roi_connected_components(frame, select_roi, tolerance=30):
     
     output = cv2.connectedComponentsWithStats(mask, 8, cv2.CV_32S)
     num_labels = output[0]
-    assert num_labels > 1, 'roi_connected_components error'
+    if num_labels <= 1:
+        raise ValueError('roi_connected_components error: num_labels must be > 1')
     return output
 
 
@@ -88,7 +89,8 @@ def get_contour(frame, roi):
     _, binary_mask = cv2.threshold(selected_label, 0, 255, cv2.THRESH_BINARY)
     contour = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0][0]
     contour = contour.squeeze()
-    assert contour.ndim > 1, 'get_contour error'
+    if contour.ndim <= 1:
+        raise ValueError('get_contour error: contour.ndim must be > 1')
     return contour
     
 
@@ -105,7 +107,8 @@ def get_mask(frame, select_roi):
 def find_closest_point(ref, contour):
     mini = int(1e6)
     point_close = None
-    assert len(contour) >= 2, 'find_closest_point error'
+    if len(contour) < 2:
+        raise ValueError('find_closest_point error: contour length must be >= 2')
     for i in range(len(contour)):
         distance = cv2.norm(ref - contour[i])
         if distance < mini:

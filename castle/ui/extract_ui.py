@@ -42,7 +42,7 @@ import os
 import json
 import numpy as np
 import gradio as gr
-from castle import generate_dinov2
+from castle import generate_dinov2, generate_dinov3
 from castle.utils.video_io import ReadArray, WriteArray
 from castle.utils.h5_io import H5IO
 from castle.utils.video_align import (
@@ -50,6 +50,20 @@ from castle.utils.video_align import (
     crop, blank_page, rotate_based_on_deg
 )
 from castle.utils.plot import generate_mix_image
+
+# ---------------------------
+# 輔助函數：處理 AssertionError 並顯示 Gradio Warning
+# ---------------------------
+def handle_assertion_error(func):
+    """裝飾器：捕獲 AssertionError 和 ValueError 並顯示 Gradio Warning"""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (AssertionError, ValueError) as e:
+            error_msg = str(e) if e.args else "發生了一個錯誤"
+            gr.Warning(f"錯誤: {error_msg}")
+            raise
+    return wrapper
 
 # ---------------------------
 # 輔助函數：載入專案設定
@@ -98,10 +112,25 @@ def _extract_roi_crop_video(out_path, observer, source_video, tracker, select_ro
     writer.close()
     return True
 
+@handle_assertion_error
 def extract_roi_crop_video(storage_path, project_name, select_model, select_roi, select_video, batch_size, preprocess, progress=gr.Progress()):
     select_roi = int(select_roi)
     project_path, config, _, latent_dir_path = load_project_config(storage_path, project_name)
-    observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    
+    # 根據選擇的模型生成對應的 observer
+    if select_model == "dinov2_vitb14_reg4_pretrain":
+        observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    elif select_model.startswith("dinov3_"):
+        # DINOv3 模型名稱直接作為 model_type
+        try:
+            observer = generate_dinov3(model_type=select_model)
+        except (ValueError, FileNotFoundError) as e:
+            gr.Warning(f"無法加載 DINOv3 模型 '{select_model}': {str(e)}")
+            raise
+    else:
+        # 默認使用 DINOv2
+        observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    
     config['observer_dim'] = observer.n_feature
 
     # 決定要處理的影片
@@ -156,10 +185,25 @@ def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, s
     print('Extracted latent shape:', latent_array.shape)
     return latent_array
 
+@handle_assertion_error
 def extract_roi_latent(storage_path, project_name, select_model, select_roi, select_video, batch_size, preprocess, progress=gr.Progress()):
     select_roi = int(select_roi)
     project_path, config, config_path, latent_dir_path = load_project_config(storage_path, project_name)
-    observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    
+    # 根據選擇的模型生成對應的 observer
+    if select_model == "dinov2_vitb14_reg4_pretrain":
+        observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    elif select_model.startswith("dinov3_"):
+        # DINOv3 模型名稱直接作為 model_type
+        try:
+            observer = generate_dinov3(model_type=select_model)
+        except (ValueError, FileNotFoundError) as e:
+            gr.Warning(f"無法加載 DINOv3 模型 '{select_model}': {str(e)}")
+            raise
+    else:
+        # 默認使用 DINOv2
+        observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    
     config['observer_dim'] = observer.n_feature
 
     video_list = sorted(config['source']) if select_video == "All" else [select_video]
@@ -187,6 +231,8 @@ def extract_roi_rotation_latent_from_video(observer, source_video, tracker, batc
     latent_list = []
     batch_size = int(batch_size)
     total_frames = len(source_video)
+    embed_dim = observer.n_feature  # 使用 observer 的實際 embedding 維度
+    num_rotations = 24  # 360 / 15 = 24 個旋轉角度
     for i in progress.tqdm(range(0, total_frames, batch_size)):
         frames, masks = [], []
         for j in range(batch_size):
@@ -203,16 +249,32 @@ def extract_roi_rotation_latent_from_video(observer, source_video, tracker, batc
                 masks.append(pm)
         latent_batch = observer.extract_batch_latent(frames, masks, select_roi)
         latent_batch = np.array(latent_batch)
-        latent_batch = latent_batch.reshape(len(latent_batch) // 24, 24, 768).mean(axis=1)
+        # 使用實際的 embedding 維度，而不是硬編碼的 768
+        latent_batch = latent_batch.reshape(len(latent_batch) // num_rotations, num_rotations, embed_dim).mean(axis=1)
         latent_list.extend(latent_batch)
     latent_array = np.array(latent_list)
     print('Extracted rotation latent shape:', latent_array.shape)
     return latent_array
 
+@handle_assertion_error
 def extract_rotation_latent(storage_path, project_name, select_model, select_roi, select_video, batch_size, preprocess, progress=gr.Progress()):
     select_roi = int(select_roi)
     project_path, config, config_path, latent_dir_path = load_project_config(storage_path, project_name)
-    observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    
+    # 根據選擇的模型生成對應的 observer
+    if select_model == "dinov2_vitb14_reg4_pretrain":
+        observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    elif select_model.startswith("dinov3_"):
+        # DINOv3 模型名稱直接作為 model_type
+        try:
+            observer = generate_dinov3(model_type=select_model)
+        except (ValueError, FileNotFoundError) as e:
+            gr.Warning(f"無法加載 DINOv3 模型 '{select_model}': {str(e)}")
+            raise
+    else:
+        # 默認使用 DINOv2
+        observer = generate_dinov2(model_type='dinov2_vitb14_reg')
+    
     config['observer_dim'] = observer.n_feature
 
     video_list = sorted(config['source']) if select_video == "All" else [select_video]
@@ -269,6 +331,7 @@ class Preprocess:
             m = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
         return f, m
 
+@handle_assertion_error
 def setting_preprocess(storage_path, project_name, select_video, center_roi_switch, center_roi_id,
                        center_roi_crop_width, center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id, remove_background_switch):
     preprocess = Preprocess(center_roi_switch, center_roi_id, center_roi_crop_width,
@@ -296,7 +359,11 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         with gr.Column(scale=2):
             ui['select_model'] = gr.Dropdown(
                 label="Select Visual Model",
-                choices=["dinov2_vitb14_reg4_pretrain"],
+                choices=[
+                    "dinov2_vitb14_reg4_pretrain",
+                    "dinov3_vitb16",
+                    "dinov3_vitl16",
+                ],
                 value="dinov2_vitb14_reg4_pretrain",
                 visible=False
             )

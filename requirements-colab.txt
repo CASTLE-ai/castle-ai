@@ -10,4 +10,4 @@ h5py
 natsort
 pytest
 castle-ai
-
+torchmetrics

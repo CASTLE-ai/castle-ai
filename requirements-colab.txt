@@ -1,0 +1,13 @@
+matplotlib
+tqdm
+av
+numpy
+opencv-python-headless
+umap-learn
+plotly
+gradio
+h5py
+natsort
+pytest
+castle-ai
+

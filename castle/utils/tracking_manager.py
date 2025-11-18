@@ -8,7 +8,7 @@ import numpy as np
 import gradio as gr
 from natsort import natsorted
 
-from castle import generate_aot
+from .video_object_segment import generate_aot
 from .h5_io import H5IO
 
 

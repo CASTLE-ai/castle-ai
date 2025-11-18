@@ -10,6 +10,7 @@ h5py
 natsort
 pytest
 castle-ai
+gdown
 
 # NVIDIA packages
 --extra-index-url https://pypi.nvidia.com

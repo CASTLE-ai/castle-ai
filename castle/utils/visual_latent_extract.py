@@ -1,5 +1,5 @@
 
-from .download import download_file
+from .download import download_file, download_with_gdown
 from .video_io import ReadArray
 from .video_align import get_mask
 from tqdm import tqdm
@@ -147,6 +147,41 @@ def download_dinov2_ckpt(model_type):
         raise ValueError(f"model_type mismatch {model_type}, expect dinov2_vitb14_reg4_pretrain.")
 
 
+def download_dinov3_ckpt(model_type, notify_func=None):
+    """
+    Download DINOv3 model checkpoint
+    
+    Args:
+        model_type: Model type, options: 'dinov3_vitb16' or 'dinov3_vitl16'
+        notify_func: Optional notification function for displaying messages in Gradio (e.g., gr.Info)
+    
+    Returns:
+        ckpt_path: Checkpoint file path
+    """
+    if model_type not in DINOV3_MODEL_TO_CKPT:
+        available_models = ", ".join(DINOV3_MODEL_TO_CKPT.keys())
+        raise ValueError(
+            f"model_type mismatch {model_type}, expect one of: {available_models}"
+        )
+    
+    ckpt_filename = DINOV3_MODEL_TO_CKPT[model_type]
+    ckpt_path = f'ckpt/{ckpt_filename}'
+    
+    # Google Drive 文件 ID 映射
+    gdrive_file_ids = {
+        "dinov3_vitb16": "18doehnHWWnz9zBtOdgYZ3XMTpgPYbYZ6",
+        "dinov3_vitl16": "195H5UHKJ0r4qRDY7Ly6WJrXGnpdlHMSu",
+    }
+    
+    file_id = gdrive_file_ids.get(model_type)
+    if file_id:
+        download_with_gdown(file_id, ckpt_path, notify_func=notify_func)
+    else:
+        raise ValueError(f"No Google Drive file ID configured for {model_type}")
+    
+    return ckpt_path
+
+
 
 def generate_dinov2(model_type='dinov2_vitb14_reg', device='', batch_size=16):
     if len(device) == 0:
@@ -237,22 +272,13 @@ class DinoV3latentGen:
         self.device = model_cfg['device']
         model_name = model_cfg.get('model_type', 'dinov3_vitl16')
         ckpt_path = model_cfg.get('ckpt_path', None)
+        notify_func = model_cfg.get('notify_func', None)  # 獲取通知函數
         self.model_name = model_name
         
         print(f"Loading DINOv3 model: {model_name}")
         print(f"Device: {self.device}")
         
-        # 先從 torch.hub 獲取模型架構
-        # 注意：DINOv3 的 torch.hub.load 可能會下載權重，但我們會立即用本地權重替換
-        print("Loading model architecture from torch.hub...")
-        source = "local" if DINOV3_LOCATION != DINOV3_GITHUB_LOCATION else "github"
-        self.model = torch.hub.load(
-            repo_or_dir=DINOV3_LOCATION,
-            model=model_name,
-            source=source,
-        )
-        
-        # 從本地 checkpoint 加載權重
+        # 先確定 checkpoint 路徑並確保文件存在（如果不存在則下載）
         if ckpt_path is None:
             # 嘗試從配置中獲取路徑
             BASE_DIR = Path(__file__).parent.parent.parent
@@ -261,13 +287,13 @@ class DinoV3latentGen:
                 ckpt_filename = DINOV3_MODEL_TO_CKPT[model_name]
                 ckpt_path = BASE_DIR / "ckpt" / ckpt_filename
             else:
-                # 如果沒有映射，提示用戶需要配置 checkpoint 路徑
+                # If no mapping exists, prompt user to configure checkpoint path
                 available_models = ", ".join(DINOV3_MODEL_TO_CKPT.keys())
                 raise ValueError(
-                    f"DINOv3 model '{model_name}' 沒有配置 checkpoint 映射。\n"
-                    f"請在 ckpt 目錄中放置對應的 checkpoint 文件，或使用以下已支持的模型：\n"
+                    f"DINOv3 model '{model_name}' does not have a checkpoint mapping configured.\n"
+                    f"Please place the corresponding checkpoint file in the ckpt directory, or use one of the following supported models:\n"
                     f"{available_models}\n"
-                    f"或者通過 ckpt_path 參數手動指定 checkpoint 路徑。"
+                    f"Or manually specify the checkpoint path via the ckpt_path parameter."
                 )
         
         if isinstance(ckpt_path, str):
@@ -276,14 +302,111 @@ class DinoV3latentGen:
                 BASE_DIR = Path(__file__).parent.parent.parent
                 ckpt_path = BASE_DIR / ckpt_path
         
+        # If checkpoint doesn't exist, try automatic download (before loading model architecture)
         if not ckpt_path.exists():
-            raise FileNotFoundError(
-                f"DINOv3 checkpoint not found at: {ckpt_path}\n"
-                f"Please download the checkpoint file and place it in the ckpt directory."
-            )
+            message = f"Checkpoint file not found at: {ckpt_path}"
+            print(message)
+            if notify_func:
+                try:
+                    notify_func(message)
+                except:
+                    pass
+            
+            # Check if model type supports automatic download
+            if model_name in DINOV3_MODEL_TO_CKPT:
+                message = f"Automatically downloading {model_name} model checkpoint..."
+                print(message)
+                if notify_func:
+                    try:
+                        notify_func(message)
+                    except:
+                        pass
+                
+                try:
+                    # Automatically download checkpoint, passing notification function
+                    downloaded_path = download_dinov3_ckpt(model_name, notify_func=notify_func)
+                    # Update ckpt_path to the downloaded path
+                    BASE_DIR = Path(__file__).parent.parent.parent
+                    ckpt_path = BASE_DIR / downloaded_path
+                    message = f"Successfully downloaded checkpoint to: {ckpt_path}"
+                    print(message)
+                    if notify_func:
+                        try:
+                            notify_func(message)
+                        except:
+                            pass
+                except Exception as e:
+                    error_msg = f"DINOv3 checkpoint not found at: {ckpt_path}\nFailed to automatically download checkpoint: {e}\nPlease download the checkpoint file manually and place it in the ckpt directory."
+                    if notify_func:
+                        try:
+                            notify_func(f"Download failed: {str(e)}")
+                        except:
+                            pass
+                    raise FileNotFoundError(error_msg)
+            else:
+                error_msg = f"DINOv3 checkpoint not found at: {ckpt_path}\nModel '{model_name}' does not support automatic download.\nPlease download the checkpoint file manually and place it in the ckpt directory."
+                if notify_func:
+                    try:
+                        notify_func(f"Model '{model_name}' does not support automatic download")
+                    except:
+                        pass
+                raise FileNotFoundError(error_msg)
         
+        # Now checkpoint exists, get model architecture from torch.hub
+        # Note: torch.hub.load may try to download weights, but we will manually load local weights
+        print("Loading model architecture from torch.hub...")
+        source = "local" if DINOV3_LOCATION != DINOV3_GITHUB_LOCATION else "github"
+        
+        # Try to load model architecture using torch.hub (may try to download, but we'll handle errors)
+        try:
+            # Try to load model architecture, using pretrained=False if supported
+            try:
+                self.model = torch.hub.load(
+                    repo_or_dir=DINOV3_LOCATION,
+                    model=model_name,
+                    source=source,
+                    force_reload=False,
+                    pretrained=False,  # Try not to auto-download weights
+                )
+            except TypeError:
+                # If pretrained parameter is not supported, try without it
+                # This may trigger download, but we'll catch the error
+                self.model = torch.hub.load(
+                    repo_or_dir=DINOV3_LOCATION,
+                    model=model_name,
+                    source=source,
+                    force_reload=False,
+                )
+        except Exception as hub_error:
+            # If torch.hub download fails (e.g., 403), try loading from local cache
+            error_msg = str(hub_error)
+            if "403" in error_msg or "Forbidden" in error_msg:
+                print(f"Warning: torch.hub download blocked (403), attempting to load model architecture from local cache...")
+            else:
+                print(f"Warning: torch.hub.load failed: {hub_error}")
+            
+            # Try to use locally cached model architecture
+            cache_dir = os.path.expanduser('~/.cache/torch/hub')
+            local_repo = os.path.join(cache_dir, 'facebookresearch_dinov3_main')
+            if os.path.exists(local_repo):
+                print(f"Using local cached model from: {local_repo}")
+                self.model = torch.hub.load(
+                    repo_or_dir=local_repo,
+                    model=model_name,
+                    source='local',
+                    force_reload=False,
+                )
+            else:
+                raise RuntimeError(
+                    f"Unable to load DINOv3 model architecture. torch.hub download failed (possibly blocked) and local cache does not exist.\n"
+                    f"Please ensure you can access torch.hub or have dinov3 installed.\n"
+                    f"Error: {hub_error}\n"
+                    f"Tip: You can manually clone the dinov3 repository locally and set the DINOV3_LOCATION environment variable."
+                )
+        
+        # 從本地 checkpoint 加載權重
         print(f"Loading checkpoint from: {ckpt_path}")
-        checkpoint = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
         
         # 處理不同的 checkpoint 格式
         if isinstance(checkpoint, dict):
@@ -467,7 +590,7 @@ class ObserverDINOv3:
         torch.cuda.empty_cache()
 
 
-def generate_dinov3(model_type='dinov3_vitl16', device='', batch_size=16, ckpt_path=None):
+def generate_dinov3(model_type='dinov3_vitl16', device='', batch_size=16, ckpt_path=None, notify_func=None):
     """
     生成 DINOv3 observer
     
@@ -476,6 +599,7 @@ def generate_dinov3(model_type='dinov3_vitl16', device='', batch_size=16, ckpt_p
         device: 設備，如果為空則自動選擇
         batch_size: 批次大小
         ckpt_path: checkpoint 文件路徑，如果為 None 則從配置文件或默認路徑加載
+        notify_func: 可選的通知函數，用於在 Gradio 中顯示消息（例如 gr.Info）
     
     Returns:
         ObserverDINOv3 實例
@@ -505,5 +629,6 @@ def generate_dinov3(model_type='dinov3_vitl16', device='', batch_size=16, ckpt_p
         "device": device,
         "batch_size": batch_size,
         "ckpt_path": str(ckpt_path) if ckpt_path else None,
+        "notify_func": notify_func,  # 傳遞通知函數
     }
     return ObserverDINOv3(dinov3_args)

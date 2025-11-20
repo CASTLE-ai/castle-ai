@@ -123,7 +123,7 @@ def extract_roi_crop_video(storage_path, project_name, select_model, select_roi,
     elif select_model.startswith("dinov3_"):
         # DINOv3 模型名稱直接作為 model_type
         try:
-            observer = generate_dinov3(model_type=select_model)
+            observer = generate_dinov3(model_type=select_model, notify_func=gr.Info)
         except (ValueError, FileNotFoundError) as e:
             gr.Warning(f"無法加載 DINOv3 模型 '{select_model}': {str(e)}")
             raise
@@ -196,7 +196,7 @@ def extract_roi_latent(storage_path, project_name, select_model, select_roi, sel
     elif select_model.startswith("dinov3_"):
         # DINOv3 模型名稱直接作為 model_type
         try:
-            observer = generate_dinov3(model_type=select_model)
+            observer = generate_dinov3(model_type=select_model, notify_func=gr.Info)
         except (ValueError, FileNotFoundError) as e:
             gr.Warning(f"無法加載 DINOv3 模型 '{select_model}': {str(e)}")
             raise
@@ -267,7 +267,7 @@ def extract_rotation_latent(storage_path, project_name, select_model, select_roi
     elif select_model.startswith("dinov3_"):
         # DINOv3 模型名稱直接作為 model_type
         try:
-            observer = generate_dinov3(model_type=select_model)
+            observer = generate_dinov3(model_type=select_model, notify_func=gr.Info)
         except (ValueError, FileNotFoundError) as e:
             gr.Warning(f"無法加載 DINOv3 模型 '{select_model}': {str(e)}")
             raise

@@ -27,4 +27,18 @@ else
     echo "dinov2_vitb14_reg4_pretrain.pth already downloaded."
 fi
 
+# Check and download dinov3-ckpt
+if [ ! -f ./ckpt/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth ]; then
+    gdown '18doehnHWWnz9zBtOdgYZ3XMTpgPYbYZ6' --output ./ckpt/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
+else
+    echo "dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth already downloaded."
+fi
+
+# Check and download dinov3-ckpt
+if [ ! -f ./ckpt/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth ]; then
+    gdown '195H5UHKJ0r4qRDY7Ly6WJrXGnpdlHMSu' --output ./ckpt/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth
+else
+    echo "dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth already downloaded."
+fi
+
 

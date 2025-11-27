@@ -409,7 +409,7 @@ def generate_pca_cumulative_curve(data):
     # We prepend 0 to cumulative_variance for the area calculation
     cumulative_with_zero = np.concatenate([[0], cumulative_variance])
     x_values = np.arange(n_components + 1)  # 0 to n_components
-    auc = np.trapz(cumulative_with_zero, x_values)
+    auc = np.trapezoid(cumulative_with_zero, x_values)
     total_area = n_components * 1.0  # Rectangle: width=n_components, height=1.0
     complexity_metric = 1 - (auc / total_area)
     
@@ -510,6 +510,77 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulv
     return mulvideo.generate_subtitle(latents.cluster, latents.cluster_meta)
 
 
+def plot_syllables_per_video(latents, mulvideo):
+    """Plot syllables with one video per row, x-axis in seconds"""
+    from matplotlib.patches import Patch
+    
+    cluster = latents.cluster
+    cluster_meta = latents.cluster_meta
+    time_window = latents.time_window
+    videos_meta = mulvideo.videos_meta
+    fps = mulvideo.fps
+    bin_size = mulvideo.bin_size
+    
+    n_videos = len(videos_meta)
+    
+    # Create figure with subplots (one row per video) - shorter height
+    fig, axes = plt.subplots(n_videos, 1, figsize=(14, 0.8 * n_videos), squeeze=False)
+    axes = axes.flatten()
+    
+    # Helper function to get color for a cluster
+    def palette(c):
+        if c in cluster_meta:
+            return cluster_meta[c]['color']
+        else:
+            return 'grey'
+    
+    cum = 0
+    for video_idx, (vn, video_name) in enumerate(videos_meta):
+        ax = axes[video_idx]
+        
+        # Get cluster data for this video
+        video_cluster = cluster[cum:cum + vn]
+        
+        # Find key frames (where cluster changes)
+        n = len(video_cluster)
+        key_frames = [0] + [i + 1 for i in range(n - 1) if video_cluster[i] != video_cluster[i + 1]] + [n]
+        
+        # Calculate widths, colors, and positions
+        widths = [(key_frames[j+1] - key_frames[j]) * bin_size / fps for j in range(len(key_frames)-1)]
+        colors = [palette(video_cluster[key_frames[j]]) for j in range(len(key_frames)-1)]
+        lefts = [key_frames[j] * bin_size / fps for j in range(len(key_frames)-1)]
+        
+        # Total duration in seconds
+        total_seconds = n * bin_size / fps
+        
+        # Plot bars
+        ax.bar(lefts, height=[1]*len(widths), width=widths, color=colors, align='edge', edgecolor='none')
+        ax.set_xlim(0, total_seconds)
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
+        
+        # Set video name as title
+        video_basename = os.path.basename(video_name).split('.')[0]
+        ax.set_title(video_basename, fontsize=9, loc='left')
+        
+        cum += vn
+    
+    # Create legend from unique clusters (excluding -1)
+    unique_clusters = sorted(set(cluster))
+    if -1 in unique_clusters:
+        unique_clusters.remove(-1)
+    
+    legend_handles = [Patch(color=palette(cat), label=cluster_meta[cat]['name']) for cat in unique_clusters if cat in cluster_meta]
+    
+    # Add legend to the last subplot
+    if legend_handles:
+        axes[-1].legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.3), 
+                       ncol=min(len(legend_handles), 6), fontsize=8)
+    
+    plt.tight_layout()
+    return fig
+
+
 def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo):
     try:
         start_cluster_id = latents.num_cluster
@@ -519,9 +590,8 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
         return None, update_select_cluster_list(latents), None, None, None
 
 
-    fig = plt.figure(figsize=(12, 2))
-    latents.plot_syllables()
-    plt.tight_layout()
+    # Plot syllables with one video per row, x-axis in seconds
+    fig = plot_syllables_per_video(latents, mulvideo)
     # Note: fig is returned and will be displayed by Gradio, so we don't close it here
     # Gradio will handle the figure lifecycle
 

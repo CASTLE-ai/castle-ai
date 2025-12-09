@@ -660,7 +660,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
         with gr.Column(scale=8):
-            ui['pca_curve'] = gr.Image(label='PCA Cumulative Explained Variance', interactive=False, visible=False)
+            pca_curve = gr.Image(label='PCA Cumulative Explained Variance', interactive=False, visible=False)
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
             ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
@@ -703,7 +703,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['umap_run'].click(
         fn=generate_embedding,
         inputs=[latents, ui['select_cluster'], ui['umap_config_text']],
-        outputs=[local_latents, local_embedding_plot, ui['embedding_plot'], ui['pca_curve']]
+        outputs=[local_latents, local_embedding_plot, ui['embedding_plot'], pca_curve]
     )
 
     # ui['cluster_method'].select(

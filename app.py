@@ -1,4 +1,5 @@
 import os
+os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 import platform
 from argparse import ArgumentParser
 

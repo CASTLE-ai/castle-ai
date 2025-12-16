@@ -13,12 +13,14 @@ class H5IO:
 
     def write_mask(self, index, mask):
         self.check()
-        if str(index) in self.f:
-            dset = self.f[str(index)] # for Overwrite previous results
+        key = str(index)
+        try:
+            # Assume the dataset exists and try to overwrite
+            dset = self.f[key]
             dset[:] = mask
-        else:
-            dset = self.f.create_dataset(str(index), mask.shape, dtype='uint8', compression="gzip", compression_opts=3)
-            dset[:] = mask
+        except KeyError:
+            # If it doesn't exist, create it
+            self.f.create_dataset(key, data=mask, dtype='uint8', compression="gzip", compression_opts=3)
 
     def __getitem__(self, index):
         return self.read_mask(index)
@@ -31,20 +33,20 @@ class H5IO:
             raise ValueError(f"Without mask at frame {index}")
         return self.f[str(index)][:]
 
-
     def read_config(self, key):
         value = self.f[key][()]
         print('read_config', key, value)
         return value
 
-
     def write_config(self, key, value):
         print('write_config', key, value)
-        if key in self.f:
-            del self.f[key]
-
-        self.f.create_dataset(key, data=value)
-
+        try:
+            # Assume the dataset exists and try to overwrite
+            dset = self.f[key]
+            dset[...] = value
+        except KeyError:
+            # If it doesn't exist, create it
+            self.f.create_dataset(key, data=value)
 
     def check(self):
         self.reset_count += 1
@@ -54,7 +56,10 @@ class H5IO:
     def reset(self):
         self.reset_count = 0
         if hasattr(self, 'f'):
-            self.f.close()
+            try:
+                self.f.close()
+            except Exception as e:
+                print(f"Warning: Failed to close HDF5 file: {e}")
 
         mode = 'a' if os.path.isfile(self.file_path) else 'w'
         self.f = h5py.File(self.file_path, mode)
@@ -65,11 +70,12 @@ class H5IO:
     def __len__(self):
         return int(self.f['total_frames'][()])
     
-
-
     def __del__(self):
         if hasattr(self, 'f') and self.f.id.valid:
-            self.f.close()
+            try:
+                self.f.close()
+            except Exception as e:
+                print(f"Warning: Failed to close HDF5 file on __del__: {e}")
             del self.f
 
 

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import gradio as gr
 from natsort import natsorted
+from tqdm import tqdm # Import tqdm
 
 from castle import generate_aot
 from ..utils.h5_io import H5IO
@@ -62,7 +63,6 @@ def read_all_labels_without_video_filter(storage_path: str, project_name: str) -
                     "index": f"{index}, {video_basename}",  # Same format as track_ui
                     "frame": frame,
                     "mask": mask,
-                    # Additional info for batch tracking
                     "video_name": video_basename,
                     "frame_index": index,
                     "file_path": str(npz_file)
@@ -272,24 +272,41 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
     if not project_name:
         return "Error: No project selected"
     
-    videos = get_project_videos(storage_path, project_name)
-    if not videos:
+    all_videos = get_project_videos(storage_path, project_name) # Rename to avoid conflict
+    if not all_videos:
         return "Error: No videos found in project"
     
-    total_videos = len(videos)
-    messages.append(f"Found {total_videos} videos to process")
-    progress(0, desc="Starting batch tracking...")
+    # --- First Pass: Pre-flight Check (Identify videos to process) ---
+    videos_to_process = []
+    messages.append(f"Starting pre-flight check for {len(all_videos)} videos...")
     
+    total_all_videos = len(all_videos)
+    for i, video_name in enumerate(all_videos):
+        progress((i + 1) / total_all_videos, desc=f"Pre-flight Check: {i+1}/{total_all_videos}")
+        project_path = Path(storage_path) / project_name
+        track_dir_path = project_path / "track" / video_name
+        rois_results_path = track_dir_path / "mask_list.h5"
+        
+        if not rois_results_path.exists():
+            videos_to_process.append(video_name)
+        else:
+            messages.append(f"  Skipping existing video: {video_name}")
+
+    if not videos_to_process:
+        messages.append("All videos already processed. Nothing to track.")
+        progress(1.0, desc="Batch tracking completed (no new videos to track)")
+        return "\n".join(messages)
+
+    total_videos_to_process = len(videos_to_process)
+    messages.append(f"Found {total_videos_to_process} new videos to process")
+    
+    # --- Second Pass: Execution (Process identified videos) ---
     success_count = 0
     failed_videos = []
     
-    for i, video_name in enumerate(videos):
+    for i, video_name in enumerate(tqdm(videos_to_process, desc="Processing videos", unit="video")): # Use tqdm for console progress
+        progress((i + 1) / total_videos_to_process, desc=f"Overall Progress: {i+1}/{total_videos_to_process}") # Gradio progress bar
         try:
-            msg = f"Processing video {i+1}/{total_videos}: {video_name}"
-            messages.append(msg)
-            print(msg)  # Console output for debugging
-            progress((i) / total_videos, desc=f"Processing video: {video_name}")
-            
             # Load video file
             project_path = Path(storage_path) / project_name
             video_path = project_path / "sources" / video_name
@@ -376,7 +393,7 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
     
     progress(1.0, desc="Batch tracking completed")
     
-    result_msg = f"\n🎉 Batch tracking completed! Successfully processed {success_count}/{total_videos} videos"
+    result_msg = f"\n🎉 Batch tracking completed! Successfully processed {success_count}/{total_videos_to_process} videos"
     result_msg += f"\n📊 CSV analysis files and 🎬 mix videos generated for successful tracks"
     if failed_videos:
         result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"

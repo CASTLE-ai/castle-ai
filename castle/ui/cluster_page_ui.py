@@ -11,7 +11,6 @@ from scipy.spatial import KDTree
 import io
 from castle.utils.video_io import ReadArray
 import pandas as pd
-from sklearn.decomposition import PCA
 
 # Configure matplotlib to reduce warnings about open figures
 # Increase the warning threshold to 50 (default is 20)
@@ -385,82 +384,6 @@ def update_select_cluster_list(latents):
 #     return latents.select(selected_cluster=cluster_name)
 
 
-def generate_pca_cumulative_curve(data):
-    """Generate PCA cumulative explained variance curve"""
-    # Handle NaN values by removing rows with NaN
-    valid_mask = ~np.isnan(data).any(axis=1)
-    clean_data = data[valid_mask]
-    
-    if len(clean_data) == 0:
-        return None
-    
-    # Determine number of components (min of samples and features)
-    n_components = min(clean_data.shape[0], clean_data.shape[1], 50)  # Cap at 50 for visualization
-    
-    # Fit PCA
-    pca = PCA(n_components=n_components)
-    pca.fit(clean_data)
-    
-    # Calculate cumulative explained variance
-    cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-    
-    # Calculate "1 - (AUC / Total Area)" metric
-    # AUC using trapezoidal rule (cumulative variance starts from 0 at x=0)
-    # We prepend 0 to cumulative_variance for the area calculation
-    cumulative_with_zero = np.concatenate([[0], cumulative_variance])
-    x_values = np.arange(n_components + 1)  # 0 to n_components
-    auc = np.trapezoid(cumulative_with_zero, x_values)
-    total_area = n_components * 1.0  # Rectangle: width=n_components, height=1.0
-    complexity_metric = 1 - (auc / total_area)
-    
-    # Create the plot
-    fig, ax = plt.subplots(figsize=(8, 5))
-    
-    # Plot individual explained variance as bars
-    ax.bar(range(1, n_components + 1), pca.explained_variance_ratio_, 
-           alpha=0.6, color='#6EE368', label='Individual')
-    
-    # Plot cumulative explained variance as line
-    ax.plot(range(1, n_components + 1), cumulative_variance, 
-            'o-', color='#636EFA', linewidth=2, markersize=4, label='Cumulative')
-    
-    # Add horizontal lines at key thresholds
-    for threshold in [0.8, 0.9, 0.95]:
-        ax.axhline(y=threshold, color='#FF6692', linestyle='--', alpha=0.5, linewidth=1)
-        # Find the component that reaches this threshold
-        idx = np.argmax(cumulative_variance >= threshold)
-        if cumulative_variance[idx] >= threshold:
-            ax.annotate(f'{threshold*100:.0f}% @ PC{idx+1}', 
-                       xy=(idx + 1, threshold), 
-                       xytext=(idx + 3, threshold + 0.02),
-                       fontsize=9, color='#FF6692')
-    
-    ax.set_xlabel('Principal Component', fontsize=11)
-    ax.set_ylabel('Explained Variance Ratio', fontsize=11)
-    ax.set_title('PCA Cumulative Explained Variance', fontsize=13, fontweight='bold')
-    ax.legend(loc='center right')
-    ax.set_ylim(0, 1.05)
-    ax.set_xlim(0.5, n_components + 0.5)
-    ax.grid(True, alpha=0.3)
-    
-    # Add the complexity metric text box
-    textstr = f'Complexity Index: {complexity_metric:.4f}\n(1 - AUC/TotalArea)'
-    props = dict(boxstyle='round', facecolor='#FFFACD', alpha=0.8, edgecolor='#DAA520')
-    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10,
-            verticalalignment='top', horizontalalignment='left', bbox=props)
-    
-    plt.tight_layout()
-    
-    # Convert to image
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-    plt.close(fig)
-    buf.seek(0)
-    img = Image.open(buf)
-    
-    return img
-
-
 def generate_embedding(latents, cluster_name, cfg):
     
     try:
@@ -468,19 +391,16 @@ def generate_embedding(latents, cluster_name, cfg):
     except:
         cfg = dict()
         gr.Info('UMAP config Json format error')
-        return None, None, None, None
+        return None, None
     
     local_latents = latents.select(selected_cluster=cluster_name)
     if len(local_latents.data) == 0:
         gr.Info('This Cluster is empty.')
-        return None, None, None, None
-    
-    # Generate PCA cumulative curve before UMAP
-    pca_curve_img = generate_pca_cumulative_curve(local_latents.data.copy())
+        return None, None, None
     
     local_latents.build_embedding(cfg)
     Z_plt = EmbeddingScatterPlot(local_latents)
-    return local_latents, Z_plt, Z_plt.plot(), pca_curve_img
+    return local_latents, Z_plt, Z_plt.plot()
 
 
 def generate_local_cluster(local_latents, eps):
@@ -510,77 +430,6 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulv
     return mulvideo.generate_subtitle(latents.cluster, latents.cluster_meta)
 
 
-def plot_syllables_per_video(latents, mulvideo):
-    """Plot syllables with one video per row, x-axis in seconds"""
-    from matplotlib.patches import Patch
-    
-    cluster = latents.cluster
-    cluster_meta = latents.cluster_meta
-    time_window = latents.time_window
-    videos_meta = mulvideo.videos_meta
-    fps = mulvideo.fps
-    bin_size = mulvideo.bin_size
-    
-    n_videos = len(videos_meta)
-    
-    # Create figure with subplots (one row per video) - shorter height
-    fig, axes = plt.subplots(n_videos, 1, figsize=(14, 0.8 * n_videos), squeeze=False)
-    axes = axes.flatten()
-    
-    # Helper function to get color for a cluster
-    def palette(c):
-        if c in cluster_meta:
-            return cluster_meta[c]['color']
-        else:
-            return 'grey'
-    
-    cum = 0
-    for video_idx, (vn, video_name) in enumerate(videos_meta):
-        ax = axes[video_idx]
-        
-        # Get cluster data for this video
-        video_cluster = cluster[cum:cum + vn]
-        
-        # Find key frames (where cluster changes)
-        n = len(video_cluster)
-        key_frames = [0] + [i + 1 for i in range(n - 1) if video_cluster[i] != video_cluster[i + 1]] + [n]
-        
-        # Calculate widths, colors, and positions
-        widths = [(key_frames[j+1] - key_frames[j]) * bin_size / fps for j in range(len(key_frames)-1)]
-        colors = [palette(video_cluster[key_frames[j]]) for j in range(len(key_frames)-1)]
-        lefts = [key_frames[j] * bin_size / fps for j in range(len(key_frames)-1)]
-        
-        # Total duration in seconds
-        total_seconds = n * bin_size / fps
-        
-        # Plot bars
-        ax.bar(lefts, height=[1]*len(widths), width=widths, color=colors, align='edge', edgecolor='none')
-        ax.set_xlim(0, total_seconds)
-        ax.set_ylim(0, 1)
-        ax.set_yticks([])
-        
-        # Set video name as title
-        video_basename = os.path.basename(video_name).split('.')[0]
-        ax.set_title(video_basename, fontsize=9, loc='left')
-        
-        cum += vn
-    
-    # Create legend from unique clusters (excluding -1)
-    unique_clusters = sorted(set(cluster))
-    if -1 in unique_clusters:
-        unique_clusters.remove(-1)
-    
-    legend_handles = [Patch(color=palette(cat), label=cluster_meta[cat]['name']) for cat in unique_clusters if cat in cluster_meta]
-    
-    # Add legend to the last subplot
-    if legend_handles:
-        axes[-1].legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.3), 
-                       ncol=min(len(legend_handles), 6), fontsize=8)
-    
-    plt.tight_layout()
-    return fig
-
-
 def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo):
     try:
         start_cluster_id = latents.num_cluster
@@ -590,8 +439,9 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
         return None, update_select_cluster_list(latents), None, None, None
 
 
-    # Plot syllables with one video per row, x-axis in seconds
-    fig = plot_syllables_per_video(latents, mulvideo)
+    fig = plt.figure(figsize=(12, 2))
+    latents.plot_syllables()
+    plt.tight_layout()
     # Note: fig is returned and will be displayed by Gradio, so we don't close it here
     # Gradio will handle the figure lifecycle
 
@@ -660,7 +510,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
         with gr.Column(scale=8):
-            pca_curve = gr.Image(label='PCA Cumulative Explained Variance', interactive=False, visible=False)
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
             ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
@@ -703,7 +552,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['umap_run'].click(
         fn=generate_embedding,
         inputs=[latents, ui['select_cluster'], ui['umap_config_text']],
-        outputs=[local_latents, local_embedding_plot, ui['embedding_plot'], pca_curve]
+        outputs=[local_latents, local_embedding_plot, ui['embedding_plot']]
     )
 
     # ui['cluster_method'].select(

@@ -386,7 +386,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['select_model'] = gr.Dropdown(
                 label="Select Visual Model",
                 choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
-                value="dinov3_vitl16",
+                value="dinov3_vitb16",
                 interactive=True,
                 visible=True # Initially visible (controlled by parent accordion)
             )

@@ -4,6 +4,9 @@ import os
 import json
 import shutil
 import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def list_projects(storage_path):
@@ -69,10 +72,10 @@ def delete_project(storage_path, project_name):
     
     if os.path.exists(project_path):
         shutil.rmtree(project_path)
-        print(f"Deleted project: {project_path}")
+        logger.info(f"Deleted project: {project_path}")
         return True
     else:
-        print(f"Project not found: {project_path}")
+        logger.warning(f"Project not found: {project_path}")
         return False
 
 

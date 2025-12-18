@@ -3,6 +3,9 @@
 import os
 import json
 import shutil
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Supported video file extensions
@@ -118,7 +121,7 @@ def list_videos_in_directory(directory_path):
         ]
         return sorted(videos)
     except Exception as e:
-        print(f"Error listing videos: {str(e)}")
+        logger.error(f"Error listing videos: {e}")
         return []
 
 
@@ -137,7 +140,8 @@ def get_project_videos(storage_path, project_name):
         videos = config.get('source', [])
         return sorted(videos) if videos else []
     except Exception as e:
-        print(f"Error getting project videos: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error getting project videos: {e}")
         return []
 
 
@@ -158,7 +162,7 @@ def load_video_metadata(storage_path, project_name, video_name):
         video_path = os.path.join(storage_path, project_name, 'sources', video_name)
         
         if not os.path.exists(video_path):
-            print(f"Video file not found: {video_path}")
+            logger.warning(f"Video file not found: {video_path}")
             return None, 0
         
         # Load video to get frame count
@@ -168,7 +172,7 @@ def load_video_metadata(storage_path, project_name, video_name):
         return video_path, frame_count
     
     except Exception as e:
-        print(f"Error loading video metadata: {str(e)}")
+        logger.error(f"Error loading video metadata: {e}")
         return None, 0
 
 

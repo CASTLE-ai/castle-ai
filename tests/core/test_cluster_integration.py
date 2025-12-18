@@ -26,7 +26,7 @@ def test_latent_aggregator_clustering(mock_get_project_config, device):
     
     mock_get_project_config.return_value = ("/tmp/test_project", {})
     # Init Aggregator
-    aggregator = LatentAggregator(storage_path="/tmp", project_name="test_project", select_roi_id=1, bin_size=10)
+    aggregator = LatentAggregator(storage_path="/tmp", project_name="test_project", select_roi_id=1, bin_size=10, model_name="dinov2_vitb14_reg4_pretrain")
     # Manually set latents (usually done via __init__ loop over files, but we test logic)
     aggregator.latents = latents
     # Also mock videos_meta to allow generate_subtitles to run

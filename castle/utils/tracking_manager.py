@@ -8,6 +8,7 @@ import os
 import numpy as np
 import gradio as gr
 from natsort import natsorted
+import cv2  # Added for smart filtering
 import torch
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm # 新增：匯入 tqdm
@@ -161,8 +162,58 @@ class ROITracker:
         # Current frame and mask for display
         self.current_frame = None
         self.current_mask = None
+
+        # --- Smart Filtering Initialization ---
+        self.smart_thresholds = {}
+        for (_, mask) in self.reference_frames:
+            obj_ids = np.unique(mask)
+            for obj_id in obj_ids:
+                if obj_id == 0: continue
+                area = np.sum(mask == obj_id)
+                # If multiple references, we take the one that gives us a reasonable baseline.
+                # Here we just blindly set/overwrite, assuming references are consistent.
+                # A safer bet is 10% of the reference area.
+                self.smart_thresholds[obj_id] = area * 0.1
+        print(f"Smart Filtering Thresholds: {self.smart_thresholds}")
+
+    def _smart_filter(self, mask: np.ndarray) -> np.ndarray:
+        """Apply automated smart filtering: Keep Largest Component (> threshold)."""
+        if mask.max() == 0: return mask
+        
+        new_mask = np.zeros_like(mask)
+        obj_ids = np.unique(mask)
+        
+        for obj_id in obj_ids:
+            if obj_id == 0: continue
+            
+            # Binary mask for this object
+            binary_mask = (mask == obj_id).astype(np.uint8)
+            
+            # Connectivity Analysis
+            # num_labels includes background (0)
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
+            
+            if num_labels <= 1: continue 
+            
+            threshold = self.smart_thresholds.get(obj_id, 50) # Default 50 pixels if untracked
+            
+            # Find largest component that meets threshold
+            largest_area = -1
+            largest_label = -1
+            
+            for i in range(1, num_labels):
+                area = stats[i, cv2.CC_STAT_AREA]
+                if area > threshold and area > largest_area:
+                    largest_area = area
+                    largest_label = i
+            
+            # If we found a valid component, keep it
+            if largest_label != -1:
+                new_mask[labels == largest_label] = obj_id
+                
+        return new_mask
     
-    def track(self, progress: Optional[gr.Progress] = None) -> str:
+    def track(self, progress: Optional[gr.Progress] = None, skip_existing: bool = False) -> str:
         """Execute ROI tracking over specified frames using a parallelized DataLoader and batch inference."""
         time.sleep(0.5)
 
@@ -172,6 +223,10 @@ class ROITracker:
         
         # --- Start of new logic: Ensure a clean HDF5 file ---
         if os.path.exists(mask_list_path):
+            if skip_existing:
+                print(f"Skipping existing tracked file: {mask_list_path}")
+                return "Skip"
+                
             try:
                 os.remove(mask_list_path)
                 print(f"Removed existing HDF5 file: {mask_list_path}")
@@ -196,9 +251,9 @@ class ROITracker:
         delta = 1 if self.start_frame < self.stop_frame else -1
         frame_range = list(range(self.start_frame, self.stop_frame + delta, delta))
 
-        # --- Refactored to use DataLoader with Batching ---
+        # Initialize DataLoader for batch processing
         num_workers = max(1, os.cpu_count() // 2)
-        batch_size = 16  # Process frames in batches to improve GPU utilization
+        batch_size = 32  # Process frames in batches to improve GPU utilization
 
         dataset = TrackingDataset(self.video_source, frame_range, tracker.transform)
         
@@ -211,7 +266,7 @@ class ROITracker:
         )
 
         
-        # 迭代器，根據 progress 是否存在來決定使用哪個 tqdm
+        # Iterator with progress bar, handling custom notification callback if present
         if progress is not None:
             iterator = progress.tqdm(loader, desc="Tracking frames")
         else:
@@ -237,6 +292,9 @@ class ROITracker:
             for i in range(len(processed_masks)):
                 frame_idx = frame_indices[i].item()
                 mask_to_save = processed_masks[i]
+                
+                # Apply Smart Filtering (Keep Largest Component per class)
+                mask_to_save = self._smart_filter(mask_to_save)
                 
                 # Update current state for display (with the last frame of the batch)
                 self.current_frame = original_frames[i].numpy()

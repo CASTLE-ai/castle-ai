@@ -56,7 +56,9 @@ class Preprocess:
             if self.remove_background_switch:
                 f[m == 0] = 255
         except Exception as e:
-            print(f"ERROR: Preprocessing transform failed for ROI ID {self.center_roi_id} (Center) and {self.rotate_roi_tail_id} (Tail). Error: {e}")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Preprocessing transform failed for ROI ID {self.center_roi_id} (Center) and {self.rotate_roi_tail_id} (Tail). Error: {e}")
             f = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
             m = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
         return f, m

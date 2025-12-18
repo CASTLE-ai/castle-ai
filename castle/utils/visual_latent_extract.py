@@ -33,7 +33,9 @@ def download_dinov3_ckpt(model_name: str) -> str:
     # Check if file exists
     # Assuming filenames based on previous context or standard naming
     # Defaulting to a safe return or error
-    print(f"Request to download {model_name}. Logic pending restoration.")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Request to download {model_name}. Logic pending restoration.")
     # Return a dummy path or expected path to prevent immediate crashing if file happens to be there
     expected_path = os.path.join(DEFAULT_CKPT_DIR, f"{model_name}.pth")
     if os.path.exists(expected_path):

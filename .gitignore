@@ -1,33 +1,53 @@
-.venv
+# Python Standard
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environments
+.venv/
+venvs/
+.env
+
+# IDE & OS
 .vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Build & Distribution
 build/
 dist/
-__pycache__
 *.egg-info/
-**/__pycache__/
-**/.ipynb_checkpoints
-**/.ipynb_checkpoints/**
-*.swp
-*.pth
-ckpt/*
-projects/
-!projects/project file will save here
-# Python 2.x & 3.x bytecode cache
-*.pyc
-*__pycache__
+.eggs/
 
-# metadata from pip-installing repo
-umap_learn.egg-info
-.gradio
-# test
-notebooks/temp
+# Jupyter Notebooks
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Testing & Reports
+.pytest_cache/
+.coverage
+htmlcov/
+reports/
+
+# Gradio & Logs
+.gradio/
+*.log
+
+# Project Specific - Large Files
+ckpt/*
+!ckpt/.gitkeep
+*.pth
 local_tmp*
 
-ckpt/*.pth
-
-# public_script
+# Test & Temp
+notebooks/temp
 public_script.sh
-
-
 toolbox/*.mp4
 toolbox/*.h5
+
+# Project Specific - User Data
+# Ignore everything in projects/ but keep the folder
+projects/*
+!projects/.gitkeep

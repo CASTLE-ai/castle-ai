@@ -138,8 +138,15 @@ def ui_extract_roi_latent(
     messages.append(f"Starting pre-flight check for {len(video_list)} videos...")
     for video_name in video_list:
         # Construct the expected output path
-        latent_dir = os.path.join(storage_path, project_name, 'latent', video_name)
-        latent_filename = f'ROI_{select_roi}_latent.npz' # This might need adjustment based on core logic naming
+        # Replicate valid tag logic from extractor.py
+        tags = []
+        if preprocess_args.center_roi_switch: tags.append("ctr")
+        if preprocess_args.remove_background_switch: tags.append("rmbg")
+        
+        suffix = "_".join([select_model] + tags)
+        
+        latent_dir = os.path.join(storage_path, project_name, 'latent', select_model)
+        latent_filename = f'{os.path.splitext(video_name)[0]}_ROI_{select_roi}_{suffix}.npz'
         output_path = os.path.join(latent_dir, latent_filename)
         
         # A more robust check might be needed if the filename is more complex
@@ -395,6 +402,16 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
 # ---------------------------
 # UI Construction
 # ---------------------------
+from ..utils.video_manager import get_project_videos
+
+def list_project_video_dropdown(storage_path, project_name):
+    """List all videos in the project for dropdown selection."""
+    videos = get_project_videos(storage_path, project_name)
+    return gr.update(choices=videos)
+
+# ---------------------------
+# UI Construction
+# ---------------------------
 def create_extract_ui(storage_path, project_name, extract_tab):
     ui = {}
     preprocess_state = gr.State(None)
@@ -490,6 +507,13 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         inputs=[storage_path, project_name, ui['select_model'], ui['select_roi_id'],
                 ui['select_video'], ui['batch_size'], preprocess_state, ui['skip_existing']],
         outputs=ui['latent_file_list']
+    )
+
+    # Auto-load video list when tab is selected
+    extract_tab.select(
+        fn=list_project_video_dropdown,
+        inputs=[storage_path, project_name],
+        outputs=ui['select_video']
     )
 
     return ui

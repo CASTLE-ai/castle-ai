@@ -11,6 +11,7 @@ import gradio as gr
 import numpy as np
 import pandas as pd
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from PIL import Image
 from scipy.spatial import KDTree
@@ -345,9 +346,9 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
     Z_plt.save_named_embedding(save_path=local_embedding_path)
 
     return (fig, update_select_cluster_list(latents), df1_path, df2_path, subtitle_paths, 
-            local_embedding_plot, Z_plt.plot_named_embedding(), local_embedding_path)
+            Z_plt, Z_plt.plot_named_embedding(), local_embedding_path)
 
-def init_mulvideo(storage_path, project_name, select_roi_id, bin_size):
+def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model):
     """
     Initializes LatentAggregator (formerly MultiVideos)
     """
@@ -364,6 +365,7 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size):
     try:
         aggregator = LatentAggregator(
             storage_path, project_name, select_roi_id, bin_size,
+            model_name=select_model,
             notify=notify_callback
         )
         return aggregator, aggregator.get_latent_object()
@@ -377,47 +379,58 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size):
 
 def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui = dict()
-    with gr.Accordion('Input setting', visible=False) as ui['cluster_input_accordion']:
-        ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=False)
-        ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=False)
-        ui['reset'] = gr.Button("Initialize", interactive=True, visible=False)
+    # Create a main container to control visibility of the entire page
+    # Create a main container to control visibility of the entire page
     
+    with gr.Accordion('Input setting', visible=False) as ui['cluster_input_accordion']:
+            ui['select_model'] = gr.Dropdown(
+                label="Select Visual Model",
+                choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
+                value="dinov3_vitl16",
+                interactive=True,
+                visible=True # Initially visible (controlled by parent accordion)
+            )
+            ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=True)
+            ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=True)
+            ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
+        
     # State Holders
     latents = gr.State(None)
     local_latents = gr.State(None)
     local_embedding_plot = gr.State(None) # Holds EmbeddingScatterPlot instance
     mulvideo = gr.State(None) # Holds LatentAggregator instance
 
-    with gr.Row(visible=True):
+    # Manually track the visibility of this entire row
+    with gr.Row(visible=True) as ui['cluster_row_main']:
         with gr.Column(scale=2):
-            ui['select_cluster'] = gr.Dropdown(label="Select Cluster", visible=False, interactive=True)
-            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=False, interactive=True)
-            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=False)
-            ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=False)
-            ui['eps'] = gr.Number(label='epsilon-neighborhood radius', interactive=True, visible=False, value=1, step=0.1, minimum=0.1, maximum=10)
-            ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=False)
-            ui['label_cluster_id'] = gr.Number(label='Cluster id', interactive=True, visible=False)
-            ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=False)
-            ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
-            ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
+            ui['select_cluster'] = gr.Dropdown(label="Select Cluster", visible=True, interactive=True)
+            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
+            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
+            ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
+            ui['eps'] = gr.Number(label='epsilon-neighborhood radius', interactive=True, visible=True, value=1, step=0.1, minimum=0.1, maximum=10)
+            ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
+            ui['label_cluster_id'] = gr.Number(label='Cluster id', interactive=True, visible=True)
+            ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=True)
+            ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=True)
+            ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=True)
         with gr.Column(scale=8):
-            ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
-            ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
-            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
+            ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
+            ui['display'] = gr.Image(label='Display', interactive=False, visible=True)  
+            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
             
-    ui['syllables_plot'] = gr.Plot(label='Syllable', visible=False)
-    with gr.Row(visible=True):
+    ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)
+    with gr.Row(visible=True) as ui['cluster_row_files']:
         with gr.Column(scale=2):
-            ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=False)
+            ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=True)
         with gr.Column(scale=2):
-            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=False)
+            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=True)
         with gr.Column(scale=2):
-            ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=False)
+            ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=True)
 
     # Event Bindings
     ui['reset'].click(
         fn=init_mulvideo,
-        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size']],
+        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
         outputs=[mulvideo, latents]
     )
 
@@ -463,4 +476,18 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
     )
 
-    return ui
+    # Auto-update cluster list when tab is selected
+    cluster_page_tab.select(
+        fn=update_select_cluster_list,
+        inputs=latents,
+        outputs=ui['select_cluster']
+    )
+
+    # Return only the top-level containers for visibility toggling
+    # This avoids updating gr.Column directly and avoids recursive updates on children
+    return {
+        'cluster_input_accordion': ui['cluster_input_accordion'],
+        'cluster_row_main': ui['cluster_row_main'],
+        'syllables_plot': ui['syllables_plot'],
+        'cluster_row_files': ui['cluster_row_files']
+    }

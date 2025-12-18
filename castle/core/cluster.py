@@ -67,7 +67,7 @@ class LatentAggregator:
         bin_size: Number of frames per bin
     """
     def __init__(self, storage_path: str, project_name: str, select_roi_id: int, bin_size: int, 
-                 notify: Optional[NotificationCallback] = None) -> None:
+                 model_name: str, notify: Optional[NotificationCallback] = None) -> None:
         """
         Initialize the LatentAggregator.
         
@@ -76,6 +76,7 @@ class LatentAggregator:
             project_name: Name of the project
             select_roi_id: ROI ID to filter latent files
             bin_size: Number of frames per temporal bin
+            model_name: Name of the model to load latents for
             notify: Optional callback for progress/status notifications
         """
         self.storage_path = storage_path
@@ -83,22 +84,36 @@ class LatentAggregator:
         self.source_path = os.path.join(storage_path, project_name, 'sources')
         self.project_path = os.path.join(storage_path, project_name)
         self.bin_size = bin_size
+        self.model_name = model_name
         self.notify = notify or print  # Fallback to print
         
-        # H-02 Fix: Use get_project_config instead of direct JSON reading
+        # Load project configuration
         project_path, project_config = get_project_config(storage_path, project_name)
         self.project_path = project_path
 
         # Filter latents for the selected ROI
         roi_key = f'ROI_{select_roi_id}'
-        latent_files = [(k, v) for k, v in project_config.get('latent', {}).items() if roi_key in k]
         
-        latent_dir_path = os.path.join(storage_path, project_name, 'latent')
-
+        # Latent files are stored in model-specific subdirectories
+        latent_dir_path = os.path.join(storage_path, project_name, 'latent', model_name)
+        
         self.latents: Optional[np.ndarray] = None
         self.videos_meta: List[Tuple[int, str]] = []
         self.fps: float = 30.0 # Default fallback
-
+        
+        latent_files = []
+        if 'latent' in project_config:
+            for filename, video_source_name in project_config['latent'].items():
+                # Check 1: Must match ROI ID
+                if roi_key not in filename: continue
+                
+                # Check 2: Must match Model Name (since new filenames contain it)
+                # OR we just rely on file existence in the folder.
+                # Let's rely on finding it in the folder + being in config.
+                if model_name not in filename: continue 
+                
+                latent_files.append((filename, video_source_name))
+        
         total_frames_loaded = 0
         latents_buffer = [] # Buffer for concatenating later
         

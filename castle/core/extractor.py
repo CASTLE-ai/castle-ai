@@ -63,11 +63,21 @@ def extract_roi_latent_from_video(
     
     # 1. Setup paths
     project_path, config = get_project_config(storage_path, project_name)
-    latent_dir_path = os.path.join(project_path, 'latent')
+    
+    # New Structure: latent/{model_name}/
+    latent_dir_path = os.path.join(project_path, 'latent', model_name)
     os.makedirs(latent_dir_path, exist_ok=True)
     
     base_name = os.path.splitext(video_name)[0]
-    latent_filename = f'{base_name}_ROI_{roi_id}_latent.npz'
+    
+    # Tags logic
+    tags = []
+    if preprocess_config.center_roi_switch: tags.append("ctr")
+    if preprocess_config.remove_background_switch: tags.append("rmbg")
+    
+    suffix = "_".join([model_name] + tags)
+    latent_filename = f'{base_name}_ROI_{roi_id}_{suffix}.npz'
+    
     latent_path = os.path.join(latent_dir_path, latent_filename)
 
     if skip_existing and os.path.exists(latent_path):

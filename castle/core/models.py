@@ -156,17 +156,26 @@ class DINOv2Encoder(VisualEncoder):
 
     def preprocess_batch(self, frame_batch, mask_batch, roi_id):
         # Implementation adapted from ObserverDINOv2.extract_batch_latent
-        # 1. Stack & Convert
-        frames_np = np.stack(frame_batch, axis=0) # B, H, W, 3
-        if frames_np.dtype != np.float32:
-             frames_np = frames_np.astype(np.float32) / 255.0
-        frames_t = torch.from_numpy(frames_np).permute(0, 3, 1, 2).contiguous()
+        # Optimized to handle Tensor input directly (from DataLoader)
+        if isinstance(frame_batch, torch.Tensor):
+             # (B, H, W, 3) -> (B, 3, H, W)
+             frames_t = frame_batch.permute(0, 3, 1, 2).contiguous().float()
+             frames_t.div_(255.0)
+        else:
+             # 1. Stack & Convert (Legacy list input)
+             frames_np = np.stack(frame_batch, axis=0) # B, H, W, 3
+             if frames_np.dtype != np.float32:
+                  frames_np = frames_np.astype(np.float32) / 255.0
+             frames_t = torch.from_numpy(frames_np).permute(0, 3, 1, 2).contiguous()
         
         # 2. Resize
         frames_t = F.interpolate(frames_t, size=(self.resolution, self.resolution), mode='bilinear', align_corners=False, antialias=True)
         
         # 3. Norm
-        frames_t.sub_(0.5).div_(0.2) # DINOv2 specific norm? Source code used this.
+        # Updated to standard ImageNet normalization (Mean=[0.485...], Std=[0.229...])
+        # per user request (Step Id: 1143)
+        frames_t = self.normalize(frames_t)
+        
         return frames_t.to(self.device)
 
     def extract_features(self, x):
@@ -260,20 +269,50 @@ class DINOv3Encoder(VisualEncoder):
 
     def preprocess_batch(self, frame_list, mask_list, roi_id):
         # DINOv3 Specific Preprocessing
-        processed = []
-        for frame in frame_list:
-            if isinstance(frame, np.ndarray):
-                 if frame.dtype != np.uint8 and frame.max() <= 1.0: frame = (frame * 255).astype(np.uint8)
-                 elif frame.dtype != np.uint8: frame = frame.astype(np.uint8)
-                 img_pil = Image.fromarray(frame)
-            else:
-                 img_pil = frame
-                 
-            img_t = self._resize_transform(img_pil) # C, H, W (0-1)
-            img_t = TF.normalize(img_t, mean=self.mean, std=self.std)
-            processed.append(img_t)
-            
-        return torch.stack(processed).to(self.device)
+        # Optimized for Tensor batch
+        if isinstance(frame_list, torch.Tensor):
+             # (B, H, W, 3)
+             img_t = frame_list.permute(0, 3, 1, 2).float().div(255.0) # B, C, H, W (0-1)
+             # Resize transform logic is slightly complex: Resize -> CenterCrop -> Resize
+             # Implementing this on batch tensor is faster than PIL loop
+             
+             # batch resize 1
+             B, C, H, W = img_t.shape
+             target_size = self.image_size
+             scale = target_size / max(H, W)
+             new_h, new_w = int(H * scale), int(W * scale)
+             
+             img_t = F.interpolate(img_t, size=(new_h, new_w), mode='bicubic', align_corners=False)
+             
+             # Center crop
+             min_s = min(new_h, new_w)
+             start_h = (new_h - min_s) // 2
+             start_w = (new_w - min_s) // 2
+             img_t = img_t[:, :, start_h:start_h+min_s, start_w:start_w+min_s]
+             
+             # Resize 2
+             img_t = F.interpolate(img_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
+             
+             # Normalize
+             img_t = TF.normalize(img_t, mean=self.mean, std=self.std)
+             
+             return img_t.to(self.device)
+             
+        else:
+            processed = []
+            for frame in frame_list:
+                if isinstance(frame, np.ndarray):
+                     if frame.dtype != np.uint8 and frame.max() <= 1.0: frame = (frame * 255).astype(np.uint8)
+                     elif frame.dtype != np.uint8: frame = frame.astype(np.uint8)
+                     img_pil = Image.fromarray(frame)
+                else:
+                     img_pil = frame
+                     
+                img_t = self._resize_transform(img_pil) # C, H, W (0-1)
+                img_t = TF.normalize(img_t, mean=self.mean, std=self.std)
+                processed.append(img_t)
+                
+            return torch.stack(processed).to(self.device)
 
     def extract_features(self, x):
         # DINOv3 forward behavior: get_intermediate_layers

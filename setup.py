@@ -18,7 +18,7 @@ def readme():
 
 configuration = {
     "name": "castle-ai",
-    "version": "0.0.17",
+    "version": "0.0.18",
     "description": "Distinguish behavioral clusters Toolbox",
     "long_description": readme(),
     "long_description_content_type": "text/markdown",
@@ -34,7 +34,7 @@ configuration = {
         "Programming Language :: Python :: 3",
     ],
     # "keywords": "dimension reduction t-sne manifold",
-    "maintainer": "Raiso Liu",
+    "maintainer": "Raiso Liu", "IsonaEi",
     "maintainer_email": "rainsoon717@gmail.com",
     "license": "AGPL-3.0 license",
     "packages": find_packages(),

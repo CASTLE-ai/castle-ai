@@ -19,60 +19,56 @@
   <img src="assets/Reaching_demo.gif" alt="Reaching Demo">
 </p>
 
-## Latest updates
-- 2024-09: Public release of this tool.
+## Latest Updates
+- **2025-12: Performance & Stability Update**
+  - **High-Performance Pipeline**: Optimized CPU/GPU batch processing for both Tracking and Extraction.
+
+- **2024-09: Public Release**
+  - Initial public release of the CASTLE tool.
 
 
-## Quick start
+## Quick Start
 
-# Option 1 (Open In Colab (free accounts are vary slow))
+### Option 1 (Colab)
 [![Open In Colab (free accounts are vary slow)](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CASTLE-ai/castle-ai/blob/main/notebooks/colab.ipynb)
 [![CASTLE Quick start @Colab](https://img.shields.io/badge/YouTube-CASTLE%20Demo-red?logo=youtube)](https://youtu.be/qzZlixEaKvQ)
 
-# Option 2 (Docker)
+### Option 2 (Local Installation)
 
+1.  **Clone & Environment**:
+    ```bash
+    git clone https://github.com/CASTLE-ai/castle-ai.git
+    cd castle-ai
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    ```
 
+2.  **Download Checkpoints**:
+    Sometime the ckpt download may be blocked by Google. So you can download the models from the web by copying the links to the Chrome browser and downloading them.
+    ```text
+    https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
+    https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_reg4_pretrain.pth
+    https://drive.google.com/file/d/1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq/edit
+    https://drive.google.com/file/d/1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ/edit
+    ```
+    Alternatively, you can use the download_ckpt.sh script:
+    ```bash
+    ./download_ckpt.sh
+    ```
+    Format:
+    ```text
+    castle-ai
+    ├── castle
+    └── ckpt
+        ├── dinov2_vitb14_reg4_pretrain.pth
+        ├── R50_DeAOTL_PRE_YTB_DAV.pth
+        ├── sam_vit_b_01ec64.pth
+        └── SwinB_DeAOTL_PRE_YTB_DAV.pth
+    ```
 
-
-# Option 3 (Directly Install Dependency)
-
-
-## Installation
-
-
-```
-git clone https://github.com/CASTLE-ai/castle-ai.git
-cd castle-ai
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Sometime the ckpt download may be blocked by Google. So you can download the models from the web by copying the links to the Chrome browser and downloading them.
-```
-https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
-https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_reg4_pretrain.pth
-https://drive.google.com/file/d/1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq/edit
-https://drive.google.com/file/d/1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ/edit
-```
-
-Afterward, place them into the ckpt folder.
-
-```
-castle-ai
-├── castle
-└── ckpt
-    ├── dinov2_vitb14_reg4_pretrain.pth
-    ├── R50_DeAOTL_PRE_YTB_DAV.pth
-    ├── sam_vit_b_01ec64.pth
-    └── SwinB_DeAOTL_PRE_YTB_DAV.pth
-
-```
-
-My Python version is 3.10.12. For details version, see [INSTALLATION.md](INSTALLATION.md).
-
-## Run
-```
+## Run App
+```bash
 python app.py
 ```
 
@@ -88,6 +84,7 @@ This project incorporates code and methodologies from the following sources:
 - SAM (Segment Anything Model): https://github.com/facebookresearch/segment-anything (Apache License 2.0)
 - DeAOT (Decoupling Features in Hierarchical Propagation): https://github.com/yoxu515/aot-benchmark (BSD 3-Clause License)
 - DINOv2 (Self-Supervised Vision Transformer): https://github.com/facebookresearch/dinov2 (Apache License 2.0)
+- DINOv3 (Vision Transformer): https://github.com/facebookresearch/dinov3 (Creative Commons Attribution-NonCommercial 4.0 International)
 
 This work is distributed under the terms of the Apache License 2.0.
 
@@ -103,3 +100,4 @@ If you find this work useful, please consider citing:
   journal={bioRxiv},
   year={2025}
 }
+```

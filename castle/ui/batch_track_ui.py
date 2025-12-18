@@ -439,19 +439,7 @@ def delete_selected_label(storage_path: str, project_name: str, label_list: List
     return read_all_labels_to_gallery(storage_path, project_name)
 
 
-def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """
-    Create batch tracking UI interface.
-    
-    Args:
-        storage_path: Storage path
-        project_name: Project name
-        
-    Returns:
-        A tuple containing:
-        - A dictionary of UI components.
-        - A dictionary of UI states.
-    """
+def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_tab: gr.Tab) -> Tuple[Dict[str, Any], Dict[str, Any]]: # 修改簽名，新增 batch_tracking_tab 參數
     ui: Dict[str, Any] = {}
     states: Dict[str, Any] = {}
     
@@ -471,13 +459,13 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
                     object_fit="contain",
                     interactive=False,
                     columns=3,
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["delete_selected_btn"] = gr.Button(
                     "Delete Selected Label",
                     variant="secondary",
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
         
         with gr.Column(scale=1):
@@ -485,7 +473,7 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
                 ui["video_count_display"] = gr.Textbox(
                     label="Project Video Count",
                     interactive=False,
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["model_dropdown"] = gr.Dropdown(
@@ -494,37 +482,37 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
                     info="ResNet-50 or Swin-transformer",
                     value="r50_deaotl",
                     interactive=True,
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["track_all_btn"] = gr.Button(
                     "Start Tracking All Videos",
                     variant="primary",
                     size="lg",
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["progress_text"] = gr.Textbox(
                     label="Progress & Results",
                     interactive=False,
-                    visible=False,
+                    visible=False, # 設置為預設不可見
                     lines=15,
                     max_lines=15
                 )
     
     # Event bindings
-    # Update UI when project changes
-    project_name.change(
-        fn=update_video_count,
-        inputs=[storage_path, project_name],
-        outputs=ui["video_count_display"]
-    )
+    # 移除原有的 project_name.change 事件，這些將由 batch_tracking_tab.select 處理
+    # project_name.change(
+    #     fn=update_video_count,
+    #     inputs=[storage_path, project_name],
+    #     outputs=ui["video_count_display"]
+    # )
     
-    project_name.change(
-        fn=refresh_gallery,
-        inputs=[storage_path, project_name],
-        outputs=[states["label_list_state"], ui["gallery"]]
-    )
+    # project_name.change(
+    #     fn=refresh_gallery,
+    #     inputs=[storage_path, project_name],
+    #     outputs=[states["label_list_state"], ui["gallery"]]
+    # )
     
     # Gallery selection event
     ui["gallery"].select(
@@ -547,4 +535,36 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
         show_progress=True
     )
     
-    return ui
+    # 新增 batch_tracking_tab.select 事件綁定
+    all_batch_ui_elements = [
+        ui["gallery"],
+        ui["delete_selected_btn"],
+        ui["video_count_display"],
+        ui["model_dropdown"],
+        ui["track_all_btn"],
+        ui["progress_text"]
+    ]
+
+    def show_batch_track_ui(project_name_val):
+        is_visible = project_name_val is not None
+        return [gr.update(visible=is_visible)] * len(all_batch_ui_elements)
+    
+    (
+        batch_tracking_tab.select(
+            fn=show_batch_track_ui,
+            inputs=[project_name],
+            outputs=all_batch_ui_elements
+        )
+        .then( # 顯示 UI 後，再載入內容
+            fn=update_video_count,
+            inputs=[storage_path, project_name],
+            outputs=ui["video_count_display"]
+        )
+        .then(
+            fn=refresh_gallery,
+            inputs=[storage_path, project_name],
+            outputs=[states["label_list_state"], ui["gallery"]]
+        )
+    )
+    
+    return ui, states

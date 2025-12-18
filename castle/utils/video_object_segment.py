@@ -229,14 +229,16 @@ class DeAOTTrackerInferEngine(DeAOTInferEngine):
 
 
 def download_aot_ckpt(model_type):
+    from castle.core.config import DEFAULT_CKPT_DIR
+    
     if model_type == 'r50_deaotl':
-        ckpt_path = 'ckpt/R50_DeAOTL_PRE_YTB_DAV.pth'
-        download_with_gdown('1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ', ckpt_path)
-        return ckpt_path
+        ckpt_path = DEFAULT_CKPT_DIR / 'R50_DeAOTL_PRE_YTB_DAV.pth'
+        download_with_gdown('1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ', str(ckpt_path))
+        return str(ckpt_path)
     elif model_type == 'swinb_deaotl':
-        ckpt_path = 'ckpt/SwinB_DeAOTL_PRE_YTB_DAV.pth'
-        download_with_gdown('1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq', ckpt_path)
-        return ckpt_path
+        ckpt_path = DEFAULT_CKPT_DIR / 'SwinB_DeAOTL_PRE_YTB_DAV.pth'
+        download_with_gdown('1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq', str(ckpt_path))
+        return str(ckpt_path)
     else:
         raise ValueError(f"model_type mismatch {model_type}, expect r50_deaotl or swinb_deaotl")
 

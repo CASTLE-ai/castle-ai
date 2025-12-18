@@ -2,7 +2,7 @@ import os
 os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 import platform
 from argparse import ArgumentParser
-
+import gradio as gr
 from castle.ui import create_ui
 
 # System configuration
@@ -38,5 +38,6 @@ if __name__ == '__main__':
     app.launch(
         server_name='0.0.0.0',
         share=COLAB_GPU or args.share,
-        allowed_paths=allowed_paths if allowed_paths else None
+        allowed_paths=allowed_paths if allowed_paths else None,
+        theme=gr.themes.Soft()
     )

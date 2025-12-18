@@ -25,12 +25,19 @@ def toggle_tab_visibility(project_name, object_count):
 
 def create_ui(OS_SYS, root=''):
     """Create the main Gradio UI with multiple tabs."""
-    with gr.Blocks(theme=gr.themes.Soft()) as app:      
+    with gr.Blocks() as app:      
         # Project configuration tab
         with gr.Tab(label='0. Project'):
             project_ui = create_project_ui(OS_SYS, root)
             project_name = project_ui['project_name']
             storage_path = project_ui['storage_path']
+
+        # Application load event to populate the project dropdown automatically
+        app.load(
+            fn=project_ui['list_project_dropdown'],
+            inputs=storage_path,
+            outputs=project_ui['project_drop']
+        )
 
         # Upload videos tab
         with gr.Tab(label='1. Upload Videos') as source_tab:
@@ -44,23 +51,13 @@ def create_ui(OS_SYS, root=''):
 
         # Tracking ROIs tab
         with gr.Tab(label='2. Tracking ROIs') as edit_tab:
-            edit_ui = create_edit_ui(storage_path, project_name)
-            edit_ui_object_count = gr.State(len(edit_ui))
-            edit_tab.select(
-                fn=toggle_tab_visibility,
-                inputs=[project_ui['project_name'], edit_ui_object_count],
-                outputs=[v for k, v in edit_ui.items()]
-            )
+            # The UI update logic is now handled within create_edit_ui
+            edit_ui = create_edit_ui(storage_path, project_name, edit_tab)
 
         # Extract latent features tab
         with gr.Tab(label='3. Extract Latent') as extract_tab:
+            # The UI update logic is handled within create_extract_ui
             extract_ui = create_extract_ui(storage_path, project_name, extract_tab)
-            extract_ui_object_count = gr.State(len(extract_ui))
-            extract_tab.select(
-                fn=toggle_tab_visibility,
-                inputs=[project_ui['project_name'], extract_ui_object_count],
-                outputs=[v for k, v in extract_ui.items()]
-            )
 
         # Behavior analysis tab
         with gr.Tab(label='4. Behavior Microscope') as cluster_page_tab:

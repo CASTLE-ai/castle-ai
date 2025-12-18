@@ -163,13 +163,6 @@ def create_project_ui(OS_SYS, root=''):
         outputs=[v for k, v in ui.items()]
     )
     
-    # Load project list when dropdown is focused
-    ui['project_drop'].focus(
-        fn=list_project_dropdown,
-        inputs=ui['storage_path'],
-        outputs=ui['project_drop']
-    )
-    
     # Enable buttons when project is selected
     ui['project_drop'].select(
         fn=unlock_project_btn,
@@ -207,5 +200,8 @@ def create_project_ui(OS_SYS, root=''):
         fn=delete_project_wrapper,
         inputs=[ui['storage_path'], ui['project_drop']]
     )
+    
+    # Add list_project_dropdown to the returned ui dict
+    ui['list_project_dropdown'] = list_project_dropdown
     
     return ui

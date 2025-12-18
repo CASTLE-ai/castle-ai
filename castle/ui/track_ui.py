@@ -140,7 +140,7 @@ def create_track_ui(
                     visible=False
                 )
                 model_dropdown = gr.Dropdown(
-                    choices=["r50_deaotl", "sam2"],
+                    choices=["r50_deaotl", "swinb_deaotl"],
                     label="Tracking Model",
                     info="ResNet-50",
                     value="r50_deaotl",

@@ -10,6 +10,7 @@ import gradio as gr
 from natsort import natsorted
 import torch
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm # 新增：匯入 tqdm
 
 from .video_object_segment import generate_aot
 from .h5_io import H5IO
@@ -148,7 +149,7 @@ class ROITracker:
         
         # Load reference knowledge from labels
         self.reference_frames = []
-        label_list = read_roi_labels(storage_path, project_name, video_source.video_name)
+        label_list = read_roi_labels(storage_path, project_name) # 移除 video_source.video_name 參數
         self.n_rois = 0
         
         for label in label_list:
@@ -209,7 +210,14 @@ class ROITracker:
             pin_memory=True
         )
 
-        for frame_tensors, frame_indices, original_frames in progress.tqdm(loader, desc="Tracking frames"):
+        
+        # 迭代器，根據 progress 是否存在來決定使用哪個 tqdm
+        if progress is not None:
+            iterator = progress.tqdm(loader, desc="Tracking frames")
+        else:
+            iterator = tqdm(loader, desc="Tracking frames")
+
+        for frame_tensors, frame_indices, original_frames in iterator:
             # Check for cancellation flag
             if self.cancel:
                 self.show_middle_result = False

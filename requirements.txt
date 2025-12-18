@@ -11,6 +11,8 @@ natsort
 pytest
 castle-ai
 gdown
+termcolor
+xFormers
 
 
 # NVIDIA packages

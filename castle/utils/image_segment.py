@@ -129,11 +129,12 @@ class MultiObjectSegmentor():
 
 
 def download_sa_ckpt(model_type):
+    from castle.core.config import DEFAULT_CKPT_DIR
+    
     if model_type == 'vit_b':
-        ckpt_path = 'ckpt/sam_vit_b_01ec64.pth'
-        download_file('https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth', ckpt_path)
-
-        return ckpt_path
+        ckpt_path = DEFAULT_CKPT_DIR / 'sam_vit_b_01ec64.pth'
+        download_file('https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth', str(ckpt_path))
+        return str(ckpt_path)
     else:
         assert False, f"model_type mismatch {model_type}, expect vit_b."
 

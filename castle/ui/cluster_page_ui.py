@@ -22,7 +22,7 @@ umap_config_template = '''[
         "n_neighbors": 100,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 5000
+        "n_epochs": 10000
     }
 ]'''
 
@@ -31,7 +31,7 @@ umap_config_low_magnification_template = '''[
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 5000   
+        "n_epochs": 10000   
     }
 ]'''
 umap_config_intermediate_magnification_template = '''[
@@ -39,13 +39,13 @@ umap_config_intermediate_magnification_template = '''[
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 5,
-        "n_epochs": 5000
+        "n_epochs": 10000
     },
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 5000
+        "n_epochs": 10000
     }
 ]'''
 umap_config_high_magnification_template = '''[
@@ -53,13 +53,13 @@ umap_config_high_magnification_template = '''[
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 10,
-        "n_epochs": 5000
+        "n_epochs": 10000
     },
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 5000
+        "n_epochs": 10000
     }
 ]'''
 
@@ -92,7 +92,7 @@ def update_umap_config_text_with_preset(preset_dropdown):
                     "n_neighbors": n_neighbors,
                     "min_dist": 0.0,
                     "n_components": 2,
-                    "n_epochs": 5000
+                    "n_epochs": 10000
                 }
             ]
             return json.dumps(config, indent=4)
@@ -108,13 +108,13 @@ def update_umap_config_text_with_preset(preset_dropdown):
                     "n_neighbors": n_neighbors_1,
                     "min_dist": 0.0,
                     "n_components": 5,
-                    "n_epochs": 5000
+                    "n_epochs": 10000
                 },
                 {
                     "n_neighbors": n_neighbors_2,
                     "min_dist": 0.0,
                     "n_components": 2,
-                    "n_epochs": 5000
+                    "n_epochs": 10000
                 }
             ]
             return json.dumps(config, indent=4)
@@ -130,13 +130,13 @@ def update_umap_config_text_with_preset(preset_dropdown):
                     "n_neighbors": n_neighbors_1,
                     "min_dist": 0.0,
                     "n_components": 10,
-                    "n_epochs": 5000
+                    "n_epochs": 10000
                 },
                 {
                     "n_neighbors": n_neighbors_2,
                     "min_dist": 0.0,
                     "n_components": 2,
-                    "n_epochs": 5000
+                    "n_epochs": 10000
                 }
             ]
             return json.dumps(config, indent=4)

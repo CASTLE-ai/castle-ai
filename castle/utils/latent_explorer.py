@@ -46,10 +46,10 @@ class Latent:
         self.behavior_name2cluster_id = dict()
         
         self.cluster_meta[0] = {
-            'name': 'init',
+            'name': 'root',
             'color': 'grey'
         }
-        self.behavior_name2cluster_id['init'] = 0
+        self.behavior_name2cluster_id['root'] = 0
         self.num_cluster = 1
         self.need_maintain_key_frames = True
         self.device=device

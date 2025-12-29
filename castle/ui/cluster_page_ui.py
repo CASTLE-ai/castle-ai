@@ -11,7 +11,7 @@ from scipy.spatial import KDTree
 import io
 from castle.utils.video_io import ReadArray
 import pandas as pd
-from sklearn.decomposition import PCA
+
 
 # Configure matplotlib to reduce warnings about open figures
 # Increase the warning threshold to 50 (default is 20)
@@ -385,80 +385,7 @@ def update_select_cluster_list(latents):
 #     return latents.select(selected_cluster=cluster_name)
 
 
-def generate_pca_cumulative_curve(data):
-    """Generate PCA cumulative explained variance curve"""
-    # Handle NaN values by removing rows with NaN
-    valid_mask = ~np.isnan(data).any(axis=1)
-    clean_data = data[valid_mask]
-    
-    if len(clean_data) == 0:
-        return None
-    
-    # Determine number of components (min of samples and features)
-    n_components = min(clean_data.shape[0], clean_data.shape[1], 50)  # Cap at 50 for visualization
-    
-    # Fit PCA
-    pca = PCA(n_components=n_components)
-    pca.fit(clean_data)
-    
-    # Calculate cumulative explained variance
-    cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-    
-    # Calculate "1 - (AUC / Total Area)" metric
-    # AUC using trapezoidal rule (cumulative variance starts from 0 at x=0)
-    # We prepend 0 to cumulative_variance for the area calculation
-    cumulative_with_zero = np.concatenate([[0], cumulative_variance])
-    x_values = np.arange(n_components + 1)  # 0 to n_components
-    auc = np.trapezoid(cumulative_with_zero, x_values)
-    total_area = n_components * 1.0  # Rectangle: width=n_components, height=1.0
-    complexity_metric = 1 - (auc / total_area)
-    
-    # Create the plot
-    fig, ax = plt.subplots(figsize=(8, 5))
-    
-    # Plot individual explained variance as bars
-    ax.bar(range(1, n_components + 1), pca.explained_variance_ratio_, 
-           alpha=0.6, color='#6EE368', label='Individual')
-    
-    # Plot cumulative explained variance as line
-    ax.plot(range(1, n_components + 1), cumulative_variance, 
-            'o-', color='#636EFA', linewidth=2, markersize=4, label='Cumulative')
-    
-    # Add horizontal lines at key thresholds
-    for threshold in [0.8, 0.9, 0.95]:
-        ax.axhline(y=threshold, color='#FF6692', linestyle='--', alpha=0.5, linewidth=1)
-        # Find the component that reaches this threshold
-        idx = np.argmax(cumulative_variance >= threshold)
-        if cumulative_variance[idx] >= threshold:
-            ax.annotate(f'{threshold*100:.0f}% @ PC{idx+1}', 
-                       xy=(idx + 1, threshold), 
-                       xytext=(idx + 3, threshold + 0.02),
-                       fontsize=9, color='#FF6692')
-    
-    ax.set_xlabel('Principal Component', fontsize=11)
-    ax.set_ylabel('Explained Variance Ratio', fontsize=11)
-    ax.set_title('PCA Cumulative Explained Variance', fontsize=13, fontweight='bold')
-    ax.legend(loc='center right')
-    ax.set_ylim(0, 1.05)
-    ax.set_xlim(0.5, n_components + 0.5)
-    ax.grid(True, alpha=0.3)
-    
-    # Add the complexity metric text box
-    textstr = f'Complexity Index: {complexity_metric:.4f}\n(1 - AUC/TotalArea)'
-    props = dict(boxstyle='round', facecolor='#FFFACD', alpha=0.8, edgecolor='#DAA520')
-    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10,
-            verticalalignment='top', horizontalalignment='left', bbox=props)
-    
-    plt.tight_layout()
-    
-    # Convert to image
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-    plt.close(fig)
-    buf.seek(0)
-    img = Image.open(buf)
-    
-    return img
+
 
 
 def generate_embedding(latents, cluster_name, cfg):
@@ -468,19 +395,17 @@ def generate_embedding(latents, cluster_name, cfg):
     except:
         cfg = dict()
         gr.Info('UMAP config Json format error')
-        return None, None, None, None
+        return None, None, None
     
     local_latents = latents.select(selected_cluster=cluster_name)
     if len(local_latents.data) == 0:
         gr.Info('This Cluster is empty.')
-        return None, None, None, None
+        return None, None, None
     
-    # Generate PCA cumulative curve before UMAP
-    pca_curve_img = generate_pca_cumulative_curve(local_latents.data.copy())
     
     local_latents.build_embedding(cfg)
     Z_plt = EmbeddingScatterPlot(local_latents)
-    return local_latents, Z_plt, Z_plt.plot(), pca_curve_img
+    return local_latents, Z_plt, Z_plt.plot()
 
 
 def generate_local_cluster(local_latents, eps):
@@ -504,6 +429,43 @@ def label_local_cluster(local_latents, cluster_id, cluster_name):
         
     local_latents.label_cluster(cluster_id, cluster_name)  
     gr.Info(f'Name {cluster_id} as {cluster_name}')
+
+def auto_generate_cluster_name(parent_name, cluster_id):
+    if parent_name is None:
+        parent_name = "root"
+    
+    import re
+    # Try to find the last level designator (single letter surrounded by underscores, followed by digits)
+    # e.g. ..._a123, ..._b4
+    match = re.search(r'_([a-z])(\d+)$', parent_name)
+    if match:
+        last_char = match.group(1)
+        next_char = chr(ord(last_char) + 1)
+    else:
+        next_char = 'a'
+        
+    return f"{parent_name}_{next_char}{cluster_id}"
+
+
+def label_all_and_submit(storage_path, project_name, latents, local_latents, mulvideo, parent_name):
+    # Iterate over all unique cluster IDs in the local_latents data
+    # Skip -1 as it usually denotes noise
+    unique_clusters = np.unique(local_latents.cluster)
+    
+    count = 0
+    for cluster_id in unique_clusters:
+        if cluster_id == -1:
+            continue
+        
+        cluster_name = auto_generate_cluster_name(parent_name, cluster_id)
+        local_latents.label_cluster(cluster_id, cluster_name)
+        count += 1
+        
+    gr.Info(f'Auto-labeled {count} clusters.')
+    
+    # After labeling, call import_info_from_local_latent to submit
+    return import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo)
+
 
 def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo):
     
@@ -598,6 +560,7 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
     df1 = {
         'Id': [k for k, v in latents.cluster_meta.items()],
         'Name': [v['name'] for k, v in latents.cluster_meta.items()],
+        'Color': [v['color'] for k, v in latents.cluster_meta.items()],
     }
     df1 = pd.DataFrame(df1)
     df2 = {
@@ -659,8 +622,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=False)
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
+            ui['enter_submit_all_btn'] = gr.Button("Enter & Submit all", interactive=True, visible=False)
         with gr.Column(scale=8):
-            pca_curve = gr.Image(label='PCA Cumulative Explained Variance', interactive=False, visible=False)
+
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
             ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
@@ -703,7 +667,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['umap_run'].click(
         fn=generate_embedding,
         inputs=[latents, ui['select_cluster'], ui['umap_config_text']],
-        outputs=[local_latents, local_embedding_plot, ui['embedding_plot'], pca_curve]
+        outputs=[local_latents, local_embedding_plot, ui['embedding_plot']]
     )
 
     # ui['cluster_method'].select(
@@ -735,9 +699,23 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=label_local_cluster,
         inputs=[local_latents, ui['label_cluster_id'], ui['label_cluster_name']],
     )
+    
+    # Auto-generate cluster name when ID changes
+    ui['label_cluster_id'].change(
+        fn=auto_generate_cluster_name,
+        inputs=[ui['select_cluster'], ui['label_cluster_id']],
+        outputs=ui['label_cluster_name']
+    )
+
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo],
+        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
+    )
+
+    ui['enter_submit_all_btn'].click(
+        fn=label_all_and_submit,
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster']],
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
     )
 

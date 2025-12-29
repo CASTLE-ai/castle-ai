@@ -290,7 +290,7 @@ class EmbeddingScatterPlot:
         plt.ylim(self.ylim[1], self.ylim[0])
 
         buf = io.BytesIO()
-        plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0, loc='upper right')
+        plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
         plt.close(fig)
         buf.seek(0)
         img = Image.open(buf)
@@ -308,7 +308,7 @@ class EmbeddingScatterPlot:
         plt.ylim(self.ylim[1], self.ylim[0])
 
         buf = io.BytesIO()
-        plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0, loc='upper right')
+        plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
         plt.close(fig)
         buf.seek(0)
         img = Image.open(buf)

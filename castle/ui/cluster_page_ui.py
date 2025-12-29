@@ -464,7 +464,7 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, mul
     gr.Info(f'Auto-labeled {count} clusters.')
     
     # After labeling, call import_info_from_local_latent to submit
-    return import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo)
+    return import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo, parent_name)
 
 
 def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo):
@@ -543,7 +543,7 @@ def plot_syllables_per_video(latents, mulvideo):
     return fig
 
 
-def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo):
+def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo, parent_name=None):
     try:
         start_cluster_id = latents.num_cluster
         latents.import_local_latent(local_latents)
@@ -580,11 +580,9 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
     subtitle_path = convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo)
     
     Z_plt = EmbeddingScatterPlot(local_latents)
-    cluster_name = ""
-    for _, it in local_latents.export.items():
-        cluster_name += it['name'] + '_'
-
-    local_embedding_path = os.path.join(cluster_path, f'cluster_{cluster_name}.npz')
+    if not parent_name:
+        parent_name = "root"
+    local_embedding_path = os.path.join(cluster_path, f'cluster_{parent_name}_split.npz')
     Z_plt.save_named_embedding(save_path = local_embedding_path)
     return fig, update_select_cluster_list(latents), df1_path, df2_path, subtitle_path, Z_plt, Z_plt.plot_named_embedding(), local_embedding_path
 
@@ -709,7 +707,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
-        inputs=[storage_path, project_name, latents, local_latents, mulvideo],
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster']],
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
     )
 

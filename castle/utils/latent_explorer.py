@@ -165,16 +165,16 @@ class LocalLatent:
         if self.device == 'cpu' or self.device == 'mps':
             from umap import UMAP
         elif 'cuda' in self.device:
-            # try:
-                # from cuml.manifold import UMAP
-                # print("Using cuml.manifold.UMAP")
-            # except:
             try:
-                from castle.utils.myumap import UMAP
-                print("Using castle.utils.myumap.UMAP")
+                from cuml.manifold import UMAP
+                print("Using cuml.manifold.UMAP")
             except:
-                from umap import UMAP
-                print("Using umap.UMAP")
+                try:
+                    from castle.utils.myumap import UMAP
+                    print("Using castle.utils.myumap.UMAP")
+                except:
+                    from umap import UMAP
+                    print("Using umap.UMAP")
         else:
             assert False, f'device error, expect cpu, mps, or cuda, got {self.device}'
         Z = self.data

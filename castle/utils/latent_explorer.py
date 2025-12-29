@@ -223,21 +223,31 @@ class LocalLatent:
     def plot_embedding(self, dims=[0, 1]):
         assert hasattr(self, 'embedding')
         assert len(dims) == 2, 'dims should'
-        if hasattr(self, 'cluster'):
-            for it in range(0, self.cluster.max()+1):
-                plt.scatter(x=self.embedding[self.cluster == it, dims[0]], 
-                            y=self.embedding[self.cluster == it, dims[1]], 
+
+        embedding_data = self.embedding
+        cluster_data = self.cluster if hasattr(self, 'cluster') else None
+
+        if len(embedding_data) > 50000:
+            idx = np.random.choice(len(embedding_data), 20000, replace=False)
+            embedding_data = embedding_data[idx]
+            if cluster_data is not None:
+                cluster_data = cluster_data[idx]
+        
+        if cluster_data is not None:
+            for it in range(0, cluster_data.max()+1):
+                plt.scatter(x=embedding_data[cluster_data == it, dims[0]], 
+                            y=embedding_data[cluster_data == it, dims[1]], 
                             c=self.palette(it), 
                             label=f'{it}')
-            if -1 in self.cluster:
-                plt.scatter(x=self.embedding[self.cluster == -1, dims[0]], 
-                            y=self.embedding[self.cluster == -1, dims[1]], 
+            if -1 in cluster_data:
+                plt.scatter(x=embedding_data[cluster_data == -1, dims[0]], 
+                            y=embedding_data[cluster_data == -1, dims[1]], 
                             c='grey',
                             label=f'-1')
             plt.legend()
         else:
-            plt.scatter(x=self.embedding[:, dims[0]], 
-                        y=self.embedding[:, dims[1]], 
+            plt.scatter(x=embedding_data[:, dims[0]], 
+                        y=embedding_data[:, dims[1]], 
                         c='grey')
     
     def plot_name_embedding(self, dims=[0, 1]):

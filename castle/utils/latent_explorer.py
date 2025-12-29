@@ -16,18 +16,16 @@ else:
 
 _palette = [
     '#1f77b4', '#aec7e8', '#ff7f0e', '#ffbb78', '#2ca02c', '#98df8a', '#d62728', '#ff9896', '#9467bd', '#c5b0d5',
-    '#8c564b', '#c49c94', '#e377c2', '#f7b6d2', '#7f7f7f', '#c7c7c7', '#bcbd22', '#dbdb8d', '#17becf', '#9edae5',
-    '#393b79', '#5254a3', '#6b6ecf', '#9c9ede', '#637939', '#8ca252', '#b5cf6b', '#cedb9c', '#8c6d31', '#bd9e39',
-    '#e7ba52', '#e7cb94', '#843c39', '#ad494a', '#d6616b', '#e7969c', '#7b4173', '#a55194', '#ce6dbd', '#de9ed6',
-    '#3182bd', '#6baed6', '#9ecae1', '#c6dbef', '#e6550d', '#fd8d3c', '#fdae6b', '#fdd0a2', '#31a354', '#74c476',
-    '#a1d99b', '#c7e9c0', '#756bb1', '#9e9ac8', '#bcbddc', '#dadaeb', '#636363', '#969696', '#bdbdbd', '#d9d9d9',
-    '#8dd3c7', '#ffffb3', '#bebada', '#fb8072', '#80b1d3', '#fdb462', '#b3de69', '#fccde5', '#bc80bd', '#ccebc5',
-    '#ffed6f', '#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f', '#ff7f00', '#cab2d6',
-    '#6a3d9a', '#ffff99', '#b15928', '#1b9e77', '#d95f02', '#7570b3', '#e7298a', '#66a61e', '#e6ab02', '#a6761d',
-    '#666666', '#7fc97f', '#beaed4', '#fdc086', '#386cb0', '#f0027f', '#bf5b17', '#fbb4ae', '#b3cde3', '#decbe4',
-    '#fed9a6', '#ffffcc', '#e5d8bd', '#fddaec', '#f2f2f2', '#b3e2cd', '#fdcdac', '#cbd5e8', '#f4cae4', '#e6f5c9',
-    '#fff2ae', '#f1e2cc', '#cccccc', '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ffff33', '#a65628', '#f781bf',
-    '#999999', '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854', '#ffd92f', '#e5c494', '#b3b3b3'
+    '#e377c2', '#f7b6d2', '#17becf', '#9edae5', '#393b79', '#5254a3', '#6b6ecf', '#9c9ede', '#b5cf6b', 
+    '#e7969c', '#7b4173', '#a55194', '#ce6dbd', '#de9ed6', '#3182bd', '#6baed6', '#9ecae1', '#c6dbef', '#e6550d', 
+    '#fd8d3c', '#fdae6b', '#fdd0a2', '#31a354', '#74c476', '#a1d99b', '#c7e9c0', '#756bb1', '#9e9ac8', '#bcbddc', 
+    '#dadaeb', '#8dd3c7', '#ffffb3', '#bebada', '#fb8072', '#80b1d3', '#fdb462', '#b3de69', '#fccde5', '#bc80bd', 
+    '#ccebc5', '#ffed6f', '#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f', '#ff7f00', 
+    '#cab2d6', '#6a3d9a', '#1b9e77', '#d95f02', '#7570b3', '#e7298a', '#66a61e', '#e6ab02', 
+    '#7fc97f', '#beaed4', '#fdc086', '#386cb0', '#f0027f', '#bf5b17', '#fbb4ae', '#b3cde3', '#decbe4', 
+    '#fed9a6', '#b3e2cd', '#fdcdac', '#cbd5e8', '#f4cae4', '#e6f5c9', '#fff2ae', '#f1e2cc', '#e41a1c', 
+    '#377eb8', '#4daf4a', '#984ea3', '#ffff33', '#f781bf', '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854', 
+    '#ffd92f'
 ]
 
 
@@ -169,12 +167,12 @@ class LocalLatent:
             #     from cuml.manifold import UMAP
             #     print("Using cuml.manifold.UMAP")
             # except:
-            try:
-                from castle.utils.myumap import UMAP
-                print("Using castle.utils.myumap.UMAP")
-            except:
-                from umap import UMAP
-                print("Using umap.UMAP")
+                try:
+                    from castle.utils.myumap import UMAP
+                    print("Using castle.utils.myumap.UMAP")
+                except:
+                    from umap import UMAP
+                    print("Using umap.UMAP")
         else:
             assert False, f'device error, expect cpu, mps, or cuda, got {self.device}'
         Z = self.data

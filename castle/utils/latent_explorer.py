@@ -15,17 +15,16 @@ else:
     DEFAULT_DEVICE = 'cpu'
 
 _palette = [
-    '#1f77b4', '#aec7e8', '#ff7f0e', '#ffbb78', '#2ca02c', '#98df8a', '#d62728', '#ff9896', '#9467bd', '#c5b0d5',
-    '#e377c2', '#f7b6d2', '#17becf', '#9edae5', '#393b79', '#5254a3', '#6b6ecf', '#9c9ede', '#b5cf6b', 
-    '#e7969c', '#7b4173', '#a55194', '#ce6dbd', '#de9ed6', '#3182bd', '#6baed6', '#9ecae1', '#c6dbef', '#e6550d', 
-    '#fd8d3c', '#fdae6b', '#fdd0a2', '#31a354', '#74c476', '#a1d99b', '#c7e9c0', '#756bb1', '#9e9ac8', '#bcbddc', 
-    '#dadaeb', '#8dd3c7', '#ffffb3', '#bebada', '#fb8072', '#80b1d3', '#fdb462', '#b3de69', '#fccde5', '#bc80bd', 
-    '#ccebc5', '#ffed6f', '#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f', '#ff7f00', 
-    '#cab2d6', '#6a3d9a', '#1b9e77', '#d95f02', '#7570b3', '#e7298a', '#66a61e', '#e6ab02', 
-    '#7fc97f', '#beaed4', '#fdc086', '#386cb0', '#f0027f', '#bf5b17', '#fbb4ae', '#b3cde3', '#decbe4', 
-    '#fed9a6', '#b3e2cd', '#fdcdac', '#cbd5e8', '#f4cae4', '#e6f5c9', '#fff2ae', '#f1e2cc', '#e41a1c', 
-    '#377eb8', '#4daf4a', '#984ea3', '#ffff33', '#f781bf', '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854', 
-    '#ffd92f'
+    '#1f77b4', '#ffff33', '#1f78b4', '#ff7f00', '#17becf', '#e41a1c', '#c6dbef', '#e31a1c', '#9edae5', '#d62728', 
+    '#dadaeb', '#2ca02c', '#fccde5', '#33a02c', '#f4cae4', '#393b79', '#ffffb3', '#f0027f', '#1b9e77', '#ff7f0e', 
+    '#3182bd', '#ffd92f', '#386cb0', '#e6ab02', '#377eb8', '#e6550d', '#cbd5e8', '#d95f02', '#aec7e8', '#bf5b17', 
+    '#e6f5c9', '#31a354', '#fff2ae', '#6a3d9a', '#ffed6f', '#5254a3', '#fed9a6', '#66a61e', '#decbe4', '#4daf4a', 
+    '#f7b6d2', '#7b4173', '#f1e2cc', '#e7298a', '#ccebc5', '#fd8d3c', '#6baed6', '#fc8d62', '#6b6ecf', '#fdb462', 
+    '#756bb1', '#fdbf6f', '#7570b3', '#ffbb78', '#66c2a5', '#fb8072', '#80b1d3', '#fdae6b', '#9ecae1', '#a55194', 
+    '#c7e9c0', '#984ea3', '#fdd0a2', '#9467bd', '#a6d854', '#f781bf', '#74c476', '#e377c2', '#7fc97f', '#e78ac3', 
+    '#b3de69', '#ce6dbd', '#98df8a', '#ff9896', '#8dd3c7', '#fb9a99', '#a6cee3', '#fdc086', '#8da0cb', '#fdcdac', 
+    '#9c9ede', '#b5cf6b', '#de9ed6', '#b2df8a', '#bc80bd', '#b3e2cd', '#e7969c', '#b3cde3', '#fbb4ae', '#9e9ac8', 
+    '#a1d99b', '#cab2d6', '#bcbddc', '#c5b0d5', '#bebada', '#beaed4'
 ]
 
 

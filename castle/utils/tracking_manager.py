@@ -252,8 +252,11 @@ class ROITracker:
         frame_range = list(range(self.start_frame, self.stop_frame + delta, delta))
 
         # Initialize DataLoader for batch processing
-        num_workers = max(1, os.cpu_count() // 2)
-        batch_size = 32  # Process frames in batches to improve GPU utilization
+        # Initialize DataLoader for batch processing
+        # Limit num_workers to prevent OOM (20% of CPU cores)
+        num_workers = max(1, int(os.cpu_count() * 0.2))
+        batch_size = 16  # Process frames in batches
+        print(f"DEBUG: Tracking with {num_workers} workers and batch size {batch_size}")
 
         dataset = TrackingDataset(self.video_source, frame_range, tracker.transform)
         

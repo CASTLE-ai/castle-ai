@@ -16,6 +16,25 @@ def readme():
 
 
 
+
+def read_requirements():
+    """Parse requirements.txt, ignoring comments and flags."""
+    try:
+        with open("requirements.txt", encoding="UTF-8") as req_file:
+            requirements = []
+            for line in req_file:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Skip pip flags like --extra-index-url
+                if line.startswith("-"):
+                    continue
+                requirements.append(line)
+            return requirements
+    except IOError:
+        return []
+
+
 configuration = {
     "name": "castle-ai",
     "version": "0.0.18",
@@ -34,11 +53,11 @@ configuration = {
         "Programming Language :: Python :: 3",
     ],
     # "keywords": "dimension reduction t-sne manifold",
-    "maintainer": "Raiso Liu", "IsonaEi",
+    "maintainer": "Raiso Liu, IsonaEi",
     "maintainer_email": "rainsoon717@gmail.com",
     "license": "AGPL-3.0 license",
     "packages": find_packages(),
-    # "install_requires": read_requirements(),
+    "install_requires": read_requirements(),
 
     "ext_modules": [],
     "cmdclass": {},

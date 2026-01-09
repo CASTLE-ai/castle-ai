@@ -72,6 +72,21 @@
 python app.py
 ```
 
+## Performance Benchmarks
+
+The following benchmarks were measured on a workstation with **Intel i7-12700 + RTX 3060 (12GB)**. Time consumption is expressed as a multiple of the video's actual duration (assuming 30 FPS).
+
+| Task / Model | Video Res | Model Res | **Ratio** | Notes |
+| :--- | :--- | :--- | :--- |
+| **GMFlow** | 720x720 | 720x720 | **4.50x** | Essential for fine movement (Residual Motion). |
+| **DINOv2b** (ViT-B/14) | 720x720 | 518x518 | **2.20x** | Standard vision foundation model. |
+| **DeAOT** (Tracking) | 720x720 | 720x720 | **2.11x** | ROI segmentation and tracking. |
+| **DINOv3b** (ViT-B/16) | 720x720 | 592x592 | **0.91x** | **Faster than real-time**. Highly optimized. |
+
+> [!TIP]
+> **Hardware Scaling**: Higher-end GPUs like the **RTX 4090** are estimated to provide approximately **3.5x - 5x** speedup compared to the RTX 3060, enabling real-time processing for most modules.
+
+
 ## About us
 
 CASTLE is a project by the [Wu Lab](https://www.yuweiwu.org/), a research group at the [Academia Sinica](https://www.sinica.edu.tw/en).

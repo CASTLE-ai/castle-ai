@@ -20,30 +20,39 @@ def generate_dinov3(model_type: str = 'dinov3_vitb16', notify_func=None, **kwarg
     # notify_func was used for Gradio info, can be ignored or logged
     return get_visual_encoder(model_type)
 
+
 def download_dinov3_ckpt(model_name: str) -> str:
     """
-    Placeholder for DINOv3 download logic.
-    Originally this was in this file, but the file was reported missing.
-    Please restore the download logic or update castle/core/config.py with IDs.
+    Downloads DINOv3 checkpoint if not exists.
     """
-    import os
-    from castle.core.config import DEFAULT_CKPT_DIR
+    from castle.core.config import DEFAULT_CKPT_DIR, CKPT_DINO_IDS, DINOV3_CONSTANTS
+    from castle.utils.download import download_with_gdown
+    import logging
+    
+    logger = logging.getLogger(__name__)
     
     os.makedirs(DEFAULT_CKPT_DIR, exist_ok=True)
-    # Check if file exists
-    # Assuming filenames based on previous context or standard naming
-    # Defaulting to a safe return or error
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.warning(f"Request to download {model_name}. Logic pending restoration.")
-    # Return a dummy path or expected path to prevent immediate crashing if file happens to be there
-    expected_path = os.path.join(DEFAULT_CKPT_DIR, f"{model_name}.pth")
-    if os.path.exists(expected_path):
-        return expected_path
     
-    # If we knew the IDs, we would use gdown here.
-    # raise NotImplementedError("DINOv3 Download logic missing. Please restore or add IDs to config.")
-    return expected_path
+    # Get filename from constants
+    filename = DINOV3_CONSTANTS['MODEL_TO_CKPT_FILENAME'].get(model_name, f"{model_name}.pth")
+    ckpt_path = DEFAULT_CKPT_DIR / filename
+    
+    if ckpt_path.exists():
+        return str(ckpt_path)
+        
+    logger.info(f"Downloading {model_name} to {ckpt_path}...")
+    
+    file_id = CKPT_DINO_IDS.get(model_name)
+    if not file_id:
+         # Fallback search if model_name mismatch
+         pass
+         
+    if file_id:
+        download_with_gdown(file_id, str(ckpt_path))
+    else:
+        logger.warning(f"No Google ID found for {model_name}, skipping download.")
+        
+    return str(ckpt_path)
 
 # Helper alias if the original code used these classes directly (imports typically masked by generate functions)
 # But strictly speaking, extract_ui.py imported generate_dinov2, generate_dinov3.

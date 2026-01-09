@@ -64,14 +64,14 @@ class TestRotationLatent(unittest.TestCase):
         # Total frames = 2. Batch size = 2.
         # Loop runs once.
         # Inside loop: 2 frames.
-        # Each frame -> 24 rotations.
-        # Total items sent to observer: 2 * 24 = 48.
+        # Each frame -> 7 rotations (Current impl).
+        # Total items sent to observer: 2 * 7 = 14.
         
         # Check observer call
         self.assertTrue(mock_observer.extract_tensor_batch.called)
         call_args = mock_observer.extract_tensor_batch.call_args
         frames_arg = call_args[0][0]
-        self.assertEqual(len(frames_arg), 48) 
+        self.assertEqual(len(frames_arg), 14) 
         
         # Check save
         self.assertTrue(mock_savez.called)

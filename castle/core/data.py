@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import Dataset
 from castle.utils.video_io import ReadArray
 from castle.utils.h5_io import H5IO
+import cv2  # Added for interpolation flags
 from castle.utils.video_align import (
     center_roi, rotate_based_on_roi_closest_center_point,
     crop, blank_page, rotate_based_on_deg
@@ -42,17 +43,21 @@ class Preprocess:
         try:
             if self.center_roi_switch:
                 f = center_roi(frame, mask, self.center_roi_id)
-                m = center_roi(mask, mask, self.center_roi_id)
+                m = center_roi(mask, mask, self.center_roi_id, flags=cv2.INTER_NEAREST)
                 if self.rotate_roi_tail_switch:
                     f = rotate_based_on_roi_closest_center_point(f, m, self.rotate_roi_tail_id)
-                    m = rotate_based_on_roi_closest_center_point(m, m, self.rotate_roi_tail_id)
-                if deg > 0:
-                    f = rotate_based_on_deg(f, deg)
-                    m = rotate_based_on_deg(m, deg)
-                f = crop(f, self.center_roi_crop_height, self.center_roi_crop_width)
-                m = crop(m, self.center_roi_crop_height, self.center_roi_crop_width)
+                    m = rotate_based_on_roi_closest_center_point(m, m, self.rotate_roi_tail_id, flags=cv2.INTER_NEAREST)
             else:
                 f, m = frame, mask
+
+            if deg > 0:
+                f = rotate_based_on_deg(f, deg)
+                m = rotate_based_on_deg(m, deg, flags=cv2.INTER_NEAREST)
+
+            if self.center_roi_switch:
+                f = crop(f, self.center_roi_crop_height, self.center_roi_crop_width)
+                m = crop(m, self.center_roi_crop_height, self.center_roi_crop_width)
+
             if self.remove_background_switch:
                 f[m == 0] = 255
         except Exception as e:

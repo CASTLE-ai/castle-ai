@@ -13,30 +13,30 @@ def get_centroids(frame, roi):
     return x, y
 
 
-def center_roi(frame, mask, roi_color):
+def center_roi(frame, mask, roi_color, flags=cv2.INTER_LINEAR):
     h, w = frame.shape[:2]
     center = (w // 2, h // 2)
     roi_x, roi_y = get_centroids(mask, roi_color)
     matrix = np.float32([[1, 0, center[0] - roi_x], [0, 1, center[1] - roi_y]])
-    return cv2.warpAffine(frame, matrix, (w, h))
+    return cv2.warpAffine(frame, matrix, (w, h), flags=flags)
 
 
 
 
-def rotate_based_on_roi_closest_center_point(frame, mask, roi_color):
+def rotate_based_on_roi_closest_center_point(frame, mask, roi_color, flags=cv2.INTER_LINEAR):
     roi_contour = get_contour(mask, roi_color)
     h, w = frame.shape[:2]
     center_x, conter_y = (w // 2, h // 2)
     (closest_point_x, closest_point_y), _ = find_closest_point((center_x, conter_y), roi_contour)
     theta = np.arctan2(closest_point_y - conter_y, closest_point_x - center_x) * 180. / np.pi
     matrix = cv2.getRotationMatrix2D((center_x, conter_y), theta-90, 1.0)
-    return cv2.warpAffine(frame, matrix, (w, h))
+    return cv2.warpAffine(frame, matrix, (w, h), flags=flags)
 
-def rotate_based_on_deg(frame, deg):
+def rotate_based_on_deg(frame, deg, flags=cv2.INTER_LINEAR):
     h, w = frame.shape[:2]
     center_x, conter_y = (w // 2, h // 2)
     matrix = cv2.getRotationMatrix2D((center_x, conter_y), deg, 1.0)
-    return cv2.warpAffine(frame, matrix, (w, h))
+    return cv2.warpAffine(frame, matrix, (w, h), flags=flags)
 
 
 

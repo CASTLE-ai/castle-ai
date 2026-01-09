@@ -146,6 +146,8 @@ class LocalLatent:
         self.device = device
         self.color_avoid = color_avoid
         self._palette = generate_palette(color_avoid)
+        if len(self._palette) == 0:
+            self._palette = _palette # Fallback to full palette if all used
 
         self.export = dict()
         

@@ -234,7 +234,8 @@ def create_track_ui(
     display_middle_result_btn.click(
         fn=toggle_intermediate_display,
         inputs=tracker_state,
-        outputs=[display, display_mode_text]
+        outputs=[display, display_mode_text],
+        show_progress=False
     )
     
     # Event handlers - Cancel tracking

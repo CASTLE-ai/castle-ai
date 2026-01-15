@@ -197,7 +197,7 @@ def download_aot_ckpt(model_type):
         download_with_gdown('1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq', ckpt_path)
         return ckpt_path
     else:
-        assert False, f"model_type mismatch {model_type}, expect r50_deaotl or swinb_deaotl"
+        raise ValueError(f"model_type mismatch {model_type}, expect r50_deaotl or swinb_deaotl")
 
 def generate_aot(ckpt_path='', model_type='r50_deaotl', device=''):
     

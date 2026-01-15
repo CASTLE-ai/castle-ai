@@ -62,6 +62,9 @@ def run_tracking(tracker: ROITracker, progress=gr.Progress(track_tqdm=True)) -> 
     Returns:
         Status message with frame range
     """
+    if tracker is None:
+        raise gr.Error("Please click 'Apply parameters' to initialize the tracker first.")
+
     status = tracker.track(progress)
     return f"{status}. Tracked from frame {tracker.start_frame} to {tracker.stop_frame}"
 

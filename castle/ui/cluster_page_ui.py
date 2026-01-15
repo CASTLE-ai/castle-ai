@@ -6,16 +6,23 @@ import numpy as np
 from castle.utils.latent_explorer import Latent
 from PIL import Image
 import matplotlib.pyplot as plt
+import matplotlib
 from scipy.spatial import KDTree
 import io
 from castle.utils.video_io import ReadArray
 import pandas as pd
 
+
+# Configure matplotlib to reduce warnings about open figures
+# Increase the warning threshold to 50 (default is 20)
+matplotlib.rcParams['figure.max_open_warning'] = 50
+
 umap_config_template = '''[
     {
         "n_neighbors": 100,
         "min_dist": 0.0,
-        "n_components": 2
+        "n_components": 2,
+        "n_epochs": 5000
     }
 ]'''
 
@@ -23,31 +30,36 @@ umap_config_low_magnification_template = '''[
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
-        "n_components": 2
+        "n_components": 2,
+        "n_epochs": 5000   
     }
 ]'''
 umap_config_intermediate_magnification_template = '''[
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
-        "n_components": 5
+        "n_components": 5,
+        "n_epochs": 5000
     },
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
-        "n_components": 2
+        "n_components": 2,
+        "n_epochs": 5000
     }
 ]'''
 umap_config_high_magnification_template = '''[
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
-        "n_components": 10
+        "n_components": 10,
+        "n_epochs": 5000
     },
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
-        "n_components": 2
+        "n_components": 2,
+        "n_epochs": 5000
     }
 ]'''
 
@@ -60,6 +72,7 @@ dbscan_config_template='''{
 preset_dropdown_list = ['Low-magnification objective 1000', 'Low-magnification objective 500', 'Low-magnification objective 300', 'Low-magnification objective 100', 'Low-magnification objective 50', 'Low-magnification objective 25']
 preset_dropdown_list += ['Intermediate-magnification objective (1000, 500)', 'Intermediate-magnification objective (500, 300)', 'Intermediate-magnification objective (300, 100)', 'Intermediate-magnification objective (100, 50)', 'Intermediate-magnification objective (50, 25)']
 preset_dropdown_list += ['High-magnification objective (1000, 500)', 'High-magnification objective (500, 300)', 'High-magnification objective (300, 100)', 'High-magnification objective (100, 50)', 'High-magnification objective (50, 25)']
+preset_dropdown_list += ['Super-high-magnification objective (500, 300, 100)', 'Super-high-magnification objective (300, 100, 50)', 'Super-high-magnification objective (100, 50, 25)']
 
 def update_umap_config_text_with_preset(preset_dropdown):
     """根據使用者選擇的預設來生成對應的 UMAP 配置字串並調整 n_neighbors 數值"""
@@ -79,7 +92,8 @@ def update_umap_config_text_with_preset(preset_dropdown):
                 {
                     "n_neighbors": n_neighbors,
                     "min_dist": 0.0,
-                    "n_components": 2
+                    "n_components": 2,
+                    "n_epochs": 5000
                 }
             ]
             return json.dumps(config, indent=4)
@@ -94,12 +108,14 @@ def update_umap_config_text_with_preset(preset_dropdown):
                 {
                     "n_neighbors": n_neighbors_1,
                     "min_dist": 0.0,
-                    "n_components": 5
+                    "n_components": 5,
+                    "n_epochs": 5000
                 },
                 {
                     "n_neighbors": n_neighbors_2,
                     "min_dist": 0.0,
-                    "n_components": 2
+                    "n_components": 2,
+                    "n_epochs": 5000   
                 }
             ]
             return json.dumps(config, indent=4)
@@ -114,12 +130,43 @@ def update_umap_config_text_with_preset(preset_dropdown):
                 {
                     "n_neighbors": n_neighbors_1,
                     "min_dist": 0.0,
-                    "n_components": 10
+                    "n_components": 10,
+                    "n_epochs": 5000
                 },
                 {
                     "n_neighbors": n_neighbors_2,
                     "min_dist": 0.0,
-                    "n_components": 2
+                    "n_components": 2,
+                    "n_epochs": 5000
+                }
+            ]
+            return json.dumps(config, indent=4)
+
+    elif 'Super-high-magnification objective' in preset_dropdown:
+        # 提取數字 ex: "Super-High-magnification objective (500, 300, 100)" -> [500, 300, 100]
+        numbers = re.findall(r'\d+', preset_dropdown)
+        if len(numbers) >= 3:
+            n_neighbors_1 = int(numbers[0])
+            n_neighbors_2 = int(numbers[1])
+            n_neighbors_3 = int(numbers[2])
+            config = [
+                {
+                    "n_neighbors": n_neighbors_1,
+                    "min_dist": 0.0,
+                    "n_components": 15,
+                    "n_epochs": 5000
+                },
+                {
+                    "n_neighbors": n_neighbors_2,
+                    "min_dist": 0.0,
+                    "n_components": 5,
+                    "n_epochs": 5000
+                },
+                {
+                    "n_neighbors": n_neighbors_3,
+                    "min_dist": 0.0,
+                    "n_components": 2,
+                    "n_epochs": 5000
                 }
             ]
             return json.dumps(config, indent=4)
@@ -264,7 +311,7 @@ class EmbeddingScatterPlot:
         return ex, ey
 
     def plot(self):
-        plt.figure()
+        fig = plt.figure()
         self.local_latents.plot_embedding()
         # plt.scatter(self.data[:,0], self.data[:,1], color='blue')
         plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
@@ -274,7 +321,7 @@ class EmbeddingScatterPlot:
 
         buf = io.BytesIO()
         plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
-        plt.close()
+        plt.close(fig)
         buf.seek(0)
         img = Image.open(buf)
 
@@ -283,7 +330,7 @@ class EmbeddingScatterPlot:
         return img
     
     def plot_named_embedding(self):
-        plt.figure()
+        fig = plt.figure()
         self.local_latents.plot_name_embedding()
         plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
         plt.axis('off')
@@ -292,7 +339,7 @@ class EmbeddingScatterPlot:
 
         buf = io.BytesIO()
         plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
-        plt.close()
+        plt.close(fig)
         buf.seek(0)
         img = Image.open(buf)
 
@@ -379,6 +426,9 @@ def update_select_cluster_list(latents):
 #     return latents.select(selected_cluster=cluster_name)
 
 
+
+
+
 def generate_embedding(latents, cluster_name, cfg):
     
     try:
@@ -386,12 +436,13 @@ def generate_embedding(latents, cluster_name, cfg):
     except:
         cfg = dict()
         gr.Info('UMAP config Json format error')
-        return None, None
+        return None, None, None
     
     local_latents = latents.select(selected_cluster=cluster_name)
     if len(local_latents.data) == 0:
         gr.Info('This Cluster is empty.')
         return None, None, None
+    
     
     local_latents.build_embedding(cfg)
     Z_plt = EmbeddingScatterPlot(local_latents)
@@ -420,12 +471,120 @@ def label_local_cluster(local_latents, cluster_id, cluster_name):
     local_latents.label_cluster(cluster_id, cluster_name)  
     gr.Info(f'Name {cluster_id} as {cluster_name}')
 
+def auto_generate_cluster_name(parent_name, cluster_id):
+    if parent_name is None:
+        parent_name = "root"
+    
+    import re
+    # Try to find the last level designator (single letter surrounded by underscores, followed by digits)
+    # e.g. ..._a123, ..._b4
+    match = re.search(r'_([a-z])(\d+)$', parent_name)
+    if match:
+        last_char = match.group(1)
+        next_char = chr(ord(last_char) + 1)
+    else:
+        next_char = 'a'
+        
+    return f"{parent_name}_{next_char}{cluster_id}"
+
+
+def label_all_and_submit(storage_path, project_name, latents, local_latents, mulvideo, parent_name):
+    # Iterate over all unique cluster IDs in the local_latents data
+    # Skip -1 as it usually denotes noise
+    unique_clusters = np.unique(local_latents.cluster)
+    
+    count = 0
+    for cluster_id in unique_clusters:
+        if cluster_id == -1:
+            continue
+        
+        cluster_name = auto_generate_cluster_name(parent_name, cluster_id)
+        local_latents.label_cluster(cluster_id, cluster_name)
+        count += 1
+        
+    gr.Info(f'Auto-labeled {count} clusters.')
+    
+    # After labeling, call import_info_from_local_latent to submit
+    return import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo, parent_name)
+
+
 def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo):
     
     return mulvideo.generate_subtitle(latents.cluster, latents.cluster_meta)
 
 
-def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo):
+def plot_syllables_per_video(latents, mulvideo):
+    """Plot syllables with one video per row, x-axis in seconds"""
+    from matplotlib.patches import Patch
+    
+    cluster = latents.cluster
+    cluster_meta = latents.cluster_meta
+    time_window = latents.time_window
+    videos_meta = mulvideo.videos_meta
+    fps = mulvideo.fps
+    bin_size = mulvideo.bin_size
+    
+    n_videos = len(videos_meta)
+    
+    # Create figure with subplots (one row per video) - shorter height
+    fig, axes = plt.subplots(n_videos, 1, figsize=(14, 0.8 * n_videos), squeeze=False)
+    axes = axes.flatten()
+    
+    # Helper function to get color for a cluster
+    def palette(c):
+        if c in cluster_meta:
+            return cluster_meta[c]['color']
+        else:
+            return 'grey'
+    
+    cum = 0
+    for video_idx, (vn, video_name) in enumerate(videos_meta):
+        ax = axes[video_idx]
+        
+        # Get cluster data for this video
+        video_cluster = cluster[cum:cum + vn]
+        
+        # Find key frames (where cluster changes)
+        n = len(video_cluster)
+        key_frames = [0] + [i + 1 for i in range(n - 1) if video_cluster[i] != video_cluster[i + 1]] + [n]
+        
+        # Calculate widths, colors, and positions
+        widths = [(key_frames[j+1] - key_frames[j]) * bin_size / fps for j in range(len(key_frames)-1)]
+        colors = [palette(video_cluster[key_frames[j]]) for j in range(len(key_frames)-1)]
+        lefts = [key_frames[j] * bin_size / fps for j in range(len(key_frames)-1)]
+        
+        # Total duration in seconds
+        total_seconds = n * bin_size / fps
+        
+        # Plot bars
+        ax.bar(lefts, height=[1]*len(widths), width=widths, color=colors, align='edge', edgecolor='none')
+        ax.set_xlim(0, total_seconds)
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
+        
+        # Set video name as title
+        video_basename = os.path.basename(video_name).split('.')[0]
+        ax.set_title(video_basename, fontsize=9, loc='left')
+        
+        cum += vn
+    
+    # Create legend from unique clusters (excluding -1)
+    unique_clusters = sorted(set(cluster))
+    if -1 in unique_clusters:
+        unique_clusters.remove(-1)
+    
+    legend_handles = [Patch(color=palette(cat), label=cluster_meta[cat]['name']) for cat in unique_clusters if cat in cluster_meta]
+    
+    # Add legend to the last subplot
+    if legend_handles:
+        axes[-1].legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.3), 
+                       ncol=min(len(legend_handles), 6), fontsize=8)
+    
+    plt.tight_layout()
+    return fig
+
+
+def import_info_from_local_latent(storage_path, project_name, latents, local_latents, mulvideo, parent_name=None):
     try:
         start_cluster_id = latents.num_cluster
         latents.import_local_latent(local_latents)
@@ -434,48 +593,112 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
         return None, update_select_cluster_list(latents), None, None, None
 
 
-    fig = plt.figure(figsize=(12, 2))
-    latents.plot_syllables()
-    plt.tight_layout()
+    # Plot syllables with one video per row, x-axis in seconds
+    fig = plot_syllables_per_video(latents, mulvideo)
+    # Note: fig is returned and will be displayed by Gradio, so we don't close it here
+    # Gradio will handle the figure lifecycle
 
     df1 = {
         'Id': [k for k, v in latents.cluster_meta.items()],
         'Name': [v['name'] for k, v in latents.cluster_meta.items()],
+        'Color': [v['color'] for k, v in latents.cluster_meta.items()],
     }
     df1 = pd.DataFrame(df1)
-    df2 = {
-        'behavior': np.repeat(latents.cluster, latents.time_window)
-    }
-    df2 = pd.DataFrame(df2)
 
     cluster_path = os.path.join(storage_path, project_name, 'cluster')
     os.makedirs(cluster_path, exist_ok=True)
 
-
     df1_path = os.path.join(cluster_path, 'id.csv')
-    df2_path = os.path.join(cluster_path, 'time_series.csv')
-    df1.to_csv(df1_path, index=False)  
-    df2.to_csv(df2_path)
+    df1.to_csv(df1_path, index=False)
+
+    # Generate per-video time_series CSV files
+    df2_paths = []
+    cum = 0
+    for vn, v in mulvideo.videos_meta:
+        video_cluster = latents.cluster[cum:cum + vn]
+        video_frames = np.repeat(video_cluster, latents.time_window)
+        df2 = pd.DataFrame({'behavior': video_frames})
+
+        video_basename = os.path.basename(v).split('.')[0]
+        df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+        df2.to_csv(df2_path)
+        df2_paths.append(df2_path)
+        cum += vn
 
     subtitle_path = convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo)
     
     Z_plt = EmbeddingScatterPlot(local_latents)
-    cluster_name = ""
-    for _, it in local_latents.export.items():
-        cluster_name += it['name'] + '_'
-
-    local_embedding_path = os.path.join(cluster_path, f'cluster_{cluster_name}.npz')
+    if not parent_name:
+        parent_name = "root"
+    local_embedding_path = os.path.join(cluster_path, f'cluster_{parent_name}_split.npz')
     Z_plt.save_named_embedding(save_path = local_embedding_path)
-    return fig, update_select_cluster_list(latents), df1_path, df2_path, subtitle_path, Z_plt, Z_plt.plot_named_embedding(), local_embedding_path
+    return fig, update_select_cluster_list(latents), df1_path, df2_paths, subtitle_path, Z_plt, Z_plt.plot_named_embedding(), local_embedding_path
 
+
+
+def check_session_exists(storage_path, project_name):
+    """Check if previous session files exist."""
+    if project_name is None:
+        return None
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+    id_csv = os.path.join(cluster_path, 'id.csv')
+    if not os.path.exists(id_csv):
+        return None
+    id_df = pd.read_csv(id_csv)
+    cluster_count = len(id_df) - 1  # Exclude root
+    return {'cluster_count': cluster_count, 'id_csv': id_csv}
+
+
+def restore_session(storage_path, project_name, select_roi_id, bin_size):
+    """Restore latents from saved CSV files."""
+    if project_name is None:
+        return None, None, None, None, None, None
+
+    mulv = MultiVideos(storage_path, project_name, select_roi_id, bin_size)
+    latents = mulv.get_latents()
+
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+
+    # Restore cluster_meta from id.csv
+    id_csv_path = os.path.join(cluster_path, 'id.csv')
+    id_df = pd.read_csv(id_csv_path)
+    for _, row in id_df.iterrows():
+        cluster_id = int(row['Id'])
+        latents.cluster_meta[cluster_id] = {'name': row['Name'], 'color': row['Color']}
+        latents.behavior_name2cluster_id[row['Name']] = cluster_id
+        if row['Color'] != 'grey':
+            latents.used_palette.add(row['Color'])
+    latents.num_cluster = len(id_df)
+
+    # Restore cluster assignments from time_series CSVs
+    cum = 0
+    df2_paths = []
+    for vn, v in mulv.videos_meta:
+        video_basename = os.path.basename(v).split('.')[0]
+        ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+        if os.path.exists(ts_path):
+            ts_df = pd.read_csv(ts_path)
+            # Downsample from frame-level to bin-level
+            bin_clusters = ts_df['behavior'].values[::mulv.bin_size][:vn]
+            latents.cluster[cum:cum+len(bin_clusters)] = bin_clusters
+            df2_paths.append(ts_path)
+        cum += vn
+
+    gr.Info(f'Restored session with {latents.num_cluster - 1} clusters')
+
+    # Generate syllables plot
+    fig = plot_syllables_per_video(latents, mulv)
+
+    return mulv, latents, fig, update_select_cluster_list(latents), id_csv_path, df2_paths
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size):
-    if project_name == None:
-        return None
-    
+    if project_name is None:
+        return None, None, None
+
     mulv = MultiVideos(storage_path, project_name, select_roi_id, bin_size)
-    return mulv, mulv.get_latents()
+    session_info = check_session_exists(storage_path, project_name)
+    return mulv, mulv.get_latents(), session_info
 
 
 
@@ -485,11 +708,14 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=False)
         ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=False)
         ui['reset'] = gr.Button("Initialize", interactive=True, visible=False)
-    
+        ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=True, visible=False)
+        ui['session_status'] = gr.Markdown("", visible=False)
+
     latents = gr.State(None)
     local_latents = gr.State(None)
     local_embedding_plot = gr.State(None)
     mulvideo = gr.State(None)
+    session_info = gr.State(None)
     with gr.Row(visible=True):
         with gr.Column(scale=2):
             ui['select_cluster'] = gr.Dropdown(label="Select Cluster",  visible=False,interactive=True)
@@ -502,7 +728,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=False)
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=False)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=False)
+            ui['enter_submit_all_btn'] = gr.Button("Enter & Submit all", interactive=True, visible=False)
         with gr.Column(scale=8):
+
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=False)
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)  
             ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=False)
@@ -514,7 +742,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         with gr.Column(scale=2):
             ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=False)
         with gr.Column(scale=2):
-            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=False)
+            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=False, file_count="multiple")
         with gr.Column(scale=2):
             ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=False)
 
@@ -523,7 +751,23 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['reset'].click(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size']],
-        outputs=[mulvideo, latents]
+        outputs=[mulvideo, latents, session_info]
+    ).then(
+        fn=lambda info: (
+            gr.update(visible=info is not None),
+            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters", visible=info is not None) if info else gr.update(visible=False)
+        ),
+        inputs=[session_info],
+        outputs=[ui['restore_btn'], ui['session_status']]
+    )
+
+    ui['restore_btn'].click(
+        fn=restore_session,
+        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size']],
+        outputs=[mulvideo, latents, ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv']]
+    ).then(
+        fn=lambda: (gr.update(visible=False), gr.update(visible=False)),
+        outputs=[ui['restore_btn'], ui['session_status']]
     )
 
     ui['select_cluster'].focus(
@@ -577,9 +821,23 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=label_local_cluster,
         inputs=[local_latents, ui['label_cluster_id'], ui['label_cluster_name']],
     )
+    
+    # Auto-generate cluster name when ID changes
+    ui['label_cluster_id'].change(
+        fn=auto_generate_cluster_name,
+        inputs=[ui['select_cluster'], ui['label_cluster_id']],
+        outputs=ui['label_cluster_name']
+    )
+
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
-        inputs=[storage_path, project_name, latents, local_latents, mulvideo],
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster']],
+        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
+    )
+
+    ui['enter_submit_all_btn'].click(
+        fn=label_all_and_submit,
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster']],
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
     )
 

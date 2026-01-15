@@ -27,7 +27,8 @@ class H5IO:
         return str(index) in self.f
 
     def read_mask(self, index):
-        assert str(index) in self.f, f"Without mask at frame {index}"
+        if str(index) not in self.f:
+            raise ValueError(f"Without mask at frame {index}")
         return self.f[str(index)][:]
 
 

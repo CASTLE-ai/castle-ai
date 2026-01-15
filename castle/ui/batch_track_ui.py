@@ -385,6 +385,93 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
     return "\n".join(messages)
 
 
+
+def generate_all_csvs(storage_path: str, project_name: str, progress=gr.Progress()) -> str:
+    """
+    Generate CSV analysis for all videos in the project.
+    
+    Args:
+        storage_path: Storage path
+        project_name: Project name
+        progress: Gradio progress object
+        
+    Returns:
+        Completion message with progress log
+    """
+    messages = []
+    
+    if not project_name:
+        return "Error: No project selected"
+    
+    videos = get_project_videos(storage_path, project_name)
+    if not videos:
+        return "Error: No videos found in project"
+    
+    total_videos = len(videos)
+    messages.append(f"Found {total_videos} videos to process")
+    progress(0, desc="Starting batch CSV generation...")
+    
+    success_count = 0
+    failed_videos = []
+    
+    for i, video_name in enumerate(videos):
+        try:
+            msg = f"Processing video {i+1}/{total_videos}: {video_name}"
+            messages.append(msg)
+            print(msg)
+            progress((i) / total_videos, desc=f"Processing video: {video_name}")
+            
+            # Load video file just to get FPS (though generate_csv_analysis might not strictly need it depending on implementation, 
+            # but it is passed as 'source_video' in original code. 
+            # Looking at generate_csv_analysis, it accepts 'source_video' but seemingly only uses it if it was used for mix video.
+            # Actually generate_csv_analysis implementation in this file DOES NOT USE source_video argument at all for CSV generation logic shown!
+            # It only uses it for mix video generation which is not part of this specific request (User asked for GEN CSV button).
+            # Wait, let's double check generate_csv_analysis signature and usage.
+            # def generate_csv_analysis(storage_path: str, project_name: str, video_name: str, source_video) -> str:
+            # It uses source_video? 
+            # 165: def generate_csv_analysis(storage_path: str, project_name: str, video_name: str, source_video) -> str:
+            # It is NOT used in the body of generate_csv_analysis provided in the view_file output (lines 165-222).
+            # However, I should probably pass checks or None if I can, or safer: load it if inexpensive, or just pass None and hope.
+            # But wait, lines 151 and 154 show it being passed.
+            # In generate_csv_analysis body:
+            # It iterates rois_results.
+            # It does NO operations on source_video.
+            # SO passing None should be safe for *this specific implementation*, but to be robust and follow pattern, 
+            # I can try to load it OR just pass None since I know the internal implementation doesn't use it.
+            # But wait, generate_video_analysis (line 126) loads it.
+            # Let's see if we can avoid loading the heavy video if we just want CSV.
+            # The user request is "add gen csv button".
+            # faster is better.
+            
+            csv_path = generate_csv_analysis(storage_path, project_name, video_name, None)
+            
+            if csv_path:
+                success_count += 1
+                msg = f"  ✅ Generated CSV: {os.path.basename(csv_path)}"
+                messages.append(msg)
+                print(msg)
+            else:
+                # If it failed to return path (e.g. no masks found), treat as fail or just skip?
+                # The function returns "" if no rois match.
+                msg = f"  ⚠️  No ROI data found or generation failed for {video_name}"
+                messages.append(msg)
+                
+        except Exception as e:
+            failed_videos.append(video_name)
+            msg = f"❌ Error: Failed to process video {video_name}: {str(e)}"
+            messages.append(msg)
+            print(msg)
+    
+    progress(1.0, desc="Batch CSV generation completed")
+    
+    result_msg = f"\n🎉 Batch CSV generation completed! Successfully processed {success_count}/{total_videos} videos"
+    if failed_videos:
+        result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"
+    
+    messages.append(result_msg)
+    return "\n".join(messages)
+
+
 def get_select_index(evt: gr.SelectData):
     """Get index of selected item"""
     return evt.index
@@ -486,6 +573,13 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
                     size="lg",
                     visible=False
                 )
+
+                ui["gen_csv_btn"] = gr.Button(
+                    "Generate All CSVs",
+                    variant="secondary",
+                    size="lg",
+                    visible=False
+                )
                 
                 ui["progress_text"] = gr.Textbox(
                     label="Progress & Results",
@@ -529,5 +623,13 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
         outputs=ui["progress_text"],
         show_progress=True
     )
-    
+
+    # Batch CSV button event
+    ui["gen_csv_btn"].click(
+        fn=generate_all_csvs,
+        inputs=[storage_path, project_name],
+        outputs=ui["progress_text"],
+        show_progress=True
+    )
+        
     return ui

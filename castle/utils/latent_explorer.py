@@ -14,18 +14,14 @@ elif torch.cuda.is_available():
 else:
     DEFAULT_DEVICE = 'cpu'
 
-_palette = [
-    '#1f77b4', '#ffff33', '#1f78b4', '#ff7f00', '#17becf', '#e41a1c', '#c6dbef', '#e31a1c', '#9edae5', '#d62728', 
-    '#dadaeb', '#2ca02c', '#fccde5', '#33a02c', '#f4cae4', '#393b79', '#ffffb3', '#f0027f', '#1b9e77', '#ff7f0e', 
-    '#3182bd', '#ffd92f', '#386cb0', '#e6ab02', '#377eb8', '#e6550d', '#cbd5e8', '#d95f02', '#aec7e8', '#bf5b17', 
-    '#e6f5c9', '#31a354', '#fff2ae', '#6a3d9a', '#ffed6f', '#5254a3', '#fed9a6', '#66a61e', '#decbe4', '#4daf4a', 
-    '#f7b6d2', '#7b4173', '#f1e2cc', '#e7298a', '#ccebc5', '#fd8d3c', '#6baed6', '#fc8d62', '#6b6ecf', '#fdb462', 
-    '#756bb1', '#fdbf6f', '#7570b3', '#ffbb78', '#66c2a5', '#fb8072', '#80b1d3', '#fdae6b', '#9ecae1', '#a55194', 
-    '#c7e9c0', '#984ea3', '#fdd0a2', '#9467bd', '#a6d854', '#f781bf', '#74c476', '#e377c2', '#7fc97f', '#e78ac3', 
-    '#b3de69', '#ce6dbd', '#98df8a', '#ff9896', '#8dd3c7', '#fb9a99', '#a6cee3', '#fdc086', '#8da0cb', '#fdcdac', 
-    '#9c9ede', '#b5cf6b', '#de9ed6', '#b2df8a', '#bc80bd', '#b3e2cd', '#e7969c', '#b3cde3', '#fbb4ae', '#9e9ac8', 
-    '#a1d99b', '#cab2d6', '#bcbddc', '#c5b0d5', '#bebada', '#beaed4'
-]
+_palette = ['#7AE4F0', '#FFD0EC', '#6EE368', '#C1B5EA',  '#A7CCED', '#FBC471', '#9E83E3']
+_palette += ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
+_palette += ['#FD3216', '#00FE35', '#6A76FC', '#FED4C4', '#FE00CE', '#0DF9FF', '#F6F926', '#FF9616', '#479B55', '#EEA6FB', '#DC587D', '#D626FF', '#6E899C', '#00B5F7', '#B68E00', '#C9FBE5', '#FF0092', '#22FFA7', '#E3EE9E', '#86CE00', '#BC7196', '#7E7DCD', '#FC6955', '#E48F72']
+_palette += ['#66c5cc', '#f6cf71', '#f89c74', '#dcb0f2', '#87c55f', '#9eb9f3', '#fe88b1', '#c9db74', '#8be0a4', '#b497e7', '#b3b3b3']
+_palette += ['#e58606', '#5d69b1', '#52bca3', '#99c945', '#cc61b0', '#24796c', '#daa51b', '#2f8ac4', '#764e9f', '#ed645a', '#a5aa99']
+
+
+
 
 
 

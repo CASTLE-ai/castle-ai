@@ -47,7 +47,8 @@ from castle.utils.video_io import ReadArray, WriteArray
 from castle.utils.h5_io import H5IO
 from castle.utils.video_align import (
     center_roi, rotate_based_on_roi_closest_center_point,
-    crop, blank_page, rotate_based_on_deg
+    crop, blank_page, rotate_based_on_deg,
+    get_roi_closest_point_safe, rotate_based_on_point
 )
 from castle.utils.plot import generate_mix_image
 
@@ -152,11 +153,110 @@ def extract_roi_crop_video(storage_path, project_name, select_model, select_roi,
 # ---------------------------
 # ROI Latent 提取（一般模式）
 # ---------------------------
+def interpolate_missing_points(valid_points, total_frames):
+    """
+    對缺失的幀執行線性內插或外插
+    
+    Args:
+        valid_points: dict {frame_idx: (x, y)} 有效的追蹤點
+        total_frames: 總幀數
+    
+    Returns:
+        dict {frame_idx: (x, y)} 包含所有幀的點（內插/外插後）
+    """
+    if not valid_points:
+        raise ValueError("No valid tracking points found for rotate_roi_tail_id")
+    
+    result = {}
+    
+    for idx in range(total_frames):
+        if idx in valid_points:
+            result[idx] = valid_points[idx]
+        else:
+            # 找前後最近的有效點
+            prev_indices = [i for i in valid_points.keys() if i < idx]
+            next_indices = [i for i in valid_points.keys() if i > idx]
+            prev_idx = max(prev_indices) if prev_indices else None
+            next_idx = min(next_indices) if next_indices else None
+            
+            if prev_idx is not None and next_idx is not None:
+                # 線性內插
+                t = (idx - prev_idx) / (next_idx - prev_idx)
+                prev_point = valid_points[prev_idx]
+                next_point = valid_points[next_idx]
+                result[idx] = (
+                    prev_point[0] + t * (next_point[0] - prev_point[0]),
+                    prev_point[1] + t * (next_point[1] - prev_point[1])
+                )
+            elif prev_idx is not None:
+                # 外插（使用前一個有效點）
+                print(f"Warning: Extrapolating at end of video for frame {idx} using frame {prev_idx}")
+                result[idx] = valid_points[prev_idx]
+            elif next_idx is not None:
+                # 外插（使用後一個有效點）
+                print(f"Warning: Extrapolating at beginning of video for frame {idx} using frame {next_idx}")
+                result[idx] = valid_points[next_idx]
+            else:
+                # 不應該發生（因為 valid_points 不為空）
+                raise ValueError(f"Cannot interpolate/extrapolate for frame {idx}")
+    
+    return result
+
+
 def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, select_roi, preprocess, progress):
     latent_list = []
     batch_size = int(batch_size)
     total_frames = len(source_video)
-    for i in progress.tqdm(range(0, total_frames, batch_size)):
+    
+    # 預先處理：如果需要旋轉，先掃描所有幀收集有效的 closest points  
+    interpolated_points = None
+    if preprocess.rotate_roi_tail_switch:
+        print(f"Scanning all frames for rotate_roi_tail_id={preprocess.rotate_roi_tail_id}...")
+        valid_points = {}
+        failed_frames = []
+        for idx in progress.tqdm(range(total_frames), desc="Scanning ROI"):
+            try:
+                mask = tracker.read_mask(idx)
+                # 需要先將 mask center 到 center_roi_id，因為 transform 會這樣做
+                if preprocess.center_roi_switch:
+                    mask = center_roi(mask, mask, preprocess.center_roi_id)
+                point = get_roi_closest_point_safe(mask, preprocess.rotate_roi_tail_id)
+                if point is not None:
+                    valid_points[idx] = point
+                else:
+                    failed_frames.append(idx)
+            except Exception as e:
+                # 如果 center_roi 失敗（例如 center_roi_id 不存在），跳過這一幀
+                # 這些幀會在後續通過內插來處理
+                failed_frames.append(idx)
+        
+        print(f"Found {len(valid_points)}/{total_frames} frames with valid tracking")
+        if failed_frames:
+            # 找出連續的失敗區間
+            failed_regions = []
+            if failed_frames:
+                start = failed_frames[0]
+                end = failed_frames[0]
+                for i in range(1, len(failed_frames)):
+                    if failed_frames[i] == end + 1:
+                        end = failed_frames[i]
+                    else:
+                        failed_regions.append((start, end))
+                        start = failed_frames[i]
+                        end = failed_frames[i]
+                failed_regions.append((start, end))
+            
+            print(f"Failed frames in {len(failed_regions)} regions:")
+            for start, end in failed_regions[:5]:  # 只顯示前5個區間
+                print(f"  Frames {start}-{end} ({end-start+1} frames)")
+            if len(failed_regions) > 5:
+                print(f"  ... and {len(failed_regions)-5} more regions")
+        
+        # 執行內插/外插
+        interpolated_points = interpolate_missing_points(valid_points, total_frames)
+    
+    # 主處理迴圈
+    for i in progress.tqdm(range(0, total_frames, batch_size), desc="Extracting latent"):
         frames, masks = [], []
         for j in range(batch_size):
             idx = i + j
@@ -164,23 +264,30 @@ def extract_roi_latent_from_video(observer, source_video, tracker, batch_size, s
                 break
             frames.append(source_video[idx])
             masks.append(tracker.read_mask(idx))
+        
         processed_frames, processed_masks = [], []
-        for frame, mask in zip(frames, masks):
-            pf, pm = preprocess.transform(frame, mask)
+        for j, (frame, mask) in enumerate(zip(frames, masks)):
+            idx = i + j
+            # 如果有內插的點，傳入 transform
+            closest_point = interpolated_points[idx] if interpolated_points else None
+            pf, pm = preprocess.transform(frame, mask, precomputed_closest_point=closest_point)
             processed_frames.append(pf)
             processed_masks.append(pm)
+        
         try:
             latent_batch = observer.extract_batch_latent(processed_frames, processed_masks, select_roi)
             latent_list.extend(latent_batch)
         except Exception as e:
             print(f"Batch starting at frame {i} failed: {e}. Process individually.")
-            for idx, (pf, pm) in enumerate(zip(processed_frames, processed_masks)):
+            for j, (pf, pm) in enumerate(zip(processed_frames, processed_masks)):
+                idx = i + j
                 try:
                     latent = observer.extract_image_latent(pf, pm, select_roi)
                 except Exception as ex:
-                    print(f"Failed at frame {i+idx}: {ex}")
+                    print(f"Failed at frame {idx}: {ex}")
                     latent = observer.nan_latent()
                 latent_list.append(latent)
+    
     latent_array = np.array(latent_list)
     print('Extracted latent shape:', latent_array.shape)
     return latent_array
@@ -232,7 +339,7 @@ def extract_roi_rotation_latent_from_video(observer, source_video, tracker, batc
     batch_size = int(batch_size)
     total_frames = len(source_video)
     embed_dim = observer.n_feature  # 使用 observer 的實際 embedding 維度
-    num_rotations = 24  # 360 / 15 = 24 個旋轉角度
+    num_rotations = 7  # 360 / 15 = 24 個旋轉角度
     for i in progress.tqdm(range(0, total_frames, batch_size)):
         frames, masks = [], []
         for j in range(batch_size):
@@ -243,7 +350,7 @@ def extract_roi_rotation_latent_from_video(observer, source_video, tracker, batc
             frame = source_video[idx]
             mask = tracker.read_mask(idx)
             # 對每個 frame 依據不同旋轉角度進行處理
-            for deg in range(0, 360, 15):
+            for deg in np.arange(0, 360, (360/num_rotations)):
                 pf, pm = preprocess.transform(frame, mask, deg)
                 frames.append(pf)
                 masks.append(pm)
@@ -308,25 +415,40 @@ class Preprocess:
         self.rotate_roi_tail_id = rotate_roi_tail_id
         self.remove_background_switch = (remove_background_switch == 'True')
 
-    def transform(self, frame, mask, deg=0):
+    def transform(self, frame, mask, deg=0, precomputed_closest_point=None):
         try:
             if self.center_roi_switch:
                 f = center_roi(frame, mask, self.center_roi_id)
                 m = center_roi(mask, mask, self.center_roi_id)
                 if self.rotate_roi_tail_switch:
-                    f = rotate_based_on_roi_closest_center_point(f, m, self.rotate_roi_tail_id)
-                    m = rotate_based_on_roi_closest_center_point(m, m, self.rotate_roi_tail_id)
-                if deg > 0:
-                    f = rotate_based_on_deg(f, deg)
-                    m = rotate_based_on_deg(m, deg)
-                f = crop(f, self.center_roi_crop_height, self.center_roi_crop_width)
-                m = crop(m, self.center_roi_crop_height, self.center_roi_crop_width)
+                    if precomputed_closest_point is not None:
+                        # 使用預先計算（可能是內插）的點
+                        try:
+                            f = rotate_based_on_point(f, precomputed_closest_point)
+                            m = rotate_based_on_point(m, precomputed_closest_point)
+                        except Exception as rot_e:
+                            print(f"Error in rotate_based_on_point with precomputed point {precomputed_closest_point}: {rot_e}")
+                            raise
+                    else:
+                        # 原有邏輯：直接從 mask 計算
+                        f = rotate_based_on_roi_closest_center_point(f, m, self.rotate_roi_tail_id)
+                        m = rotate_based_on_roi_closest_center_point(m, m, self.rotate_roi_tail_id)
             else:
                 f, m = frame, mask
+
+            if not deg == 0:
+                f = rotate_based_on_deg(f, deg)
+                m = rotate_based_on_deg(m, deg)
+
+            if self.center_roi_switch:
+                f = crop(f, self.center_roi_crop_height, self.center_roi_crop_width)
+                m = crop(m, self.center_roi_crop_height, self.center_roi_crop_width)
             if self.remove_background_switch:
                 f[m == 0] = 255
         except Exception as e:
             print(f"Error in Preprocess.transform: {e}")
+            print(f"  center_roi_switch={self.center_roi_switch}, rotate_roi_tail_switch={self.rotate_roi_tail_switch}")
+            print(f"  precomputed_closest_point={precomputed_closest_point}")
             f = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
             m = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
         return f, m

@@ -22,7 +22,7 @@ umap_config_template = '''[
         "n_neighbors": 100,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 10000
+        "n_epochs": 5000
     }
 ]'''
 
@@ -31,7 +31,7 @@ umap_config_low_magnification_template = '''[
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 10000   
+        "n_epochs": 5000   
     }
 ]'''
 umap_config_intermediate_magnification_template = '''[
@@ -39,13 +39,13 @@ umap_config_intermediate_magnification_template = '''[
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 5,
-        "n_epochs": 10000
+        "n_epochs": 5000
     },
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 10000
+        "n_epochs": 5000
     }
 ]'''
 umap_config_high_magnification_template = '''[
@@ -53,13 +53,13 @@ umap_config_high_magnification_template = '''[
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 10,
-        "n_epochs": 10000
+        "n_epochs": 5000
     },
     {
         "n_neighbors": 30,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 10000
+        "n_epochs": 5000
     }
 ]'''
 
@@ -72,6 +72,7 @@ dbscan_config_template='''{
 preset_dropdown_list = ['Low-magnification objective 1000', 'Low-magnification objective 500', 'Low-magnification objective 300', 'Low-magnification objective 100', 'Low-magnification objective 50', 'Low-magnification objective 25']
 preset_dropdown_list += ['Intermediate-magnification objective (1000, 500)', 'Intermediate-magnification objective (500, 300)', 'Intermediate-magnification objective (300, 100)', 'Intermediate-magnification objective (100, 50)', 'Intermediate-magnification objective (50, 25)']
 preset_dropdown_list += ['High-magnification objective (1000, 500)', 'High-magnification objective (500, 300)', 'High-magnification objective (300, 100)', 'High-magnification objective (100, 50)', 'High-magnification objective (50, 25)']
+preset_dropdown_list += ['Super-high-magnification objective (500, 300, 100)', 'Super-high-magnification objective (300, 100, 50)', 'Super-high-magnification objective (100, 50, 25)']
 
 def update_umap_config_text_with_preset(preset_dropdown):
     """根據使用者選擇的預設來生成對應的 UMAP 配置字串並調整 n_neighbors 數值"""
@@ -92,7 +93,7 @@ def update_umap_config_text_with_preset(preset_dropdown):
                     "n_neighbors": n_neighbors,
                     "min_dist": 0.0,
                     "n_components": 2,
-                    "n_epochs": 10000
+                    "n_epochs": 5000
                 }
             ]
             return json.dumps(config, indent=4)
@@ -108,13 +109,13 @@ def update_umap_config_text_with_preset(preset_dropdown):
                     "n_neighbors": n_neighbors_1,
                     "min_dist": 0.0,
                     "n_components": 5,
-                    "n_epochs": 10000
+                    "n_epochs": 5000
                 },
                 {
                     "n_neighbors": n_neighbors_2,
                     "min_dist": 0.0,
                     "n_components": 2,
-                    "n_epochs": 10000
+                    "n_epochs": 5000   
                 }
             ]
             return json.dumps(config, indent=4)
@@ -130,13 +131,42 @@ def update_umap_config_text_with_preset(preset_dropdown):
                     "n_neighbors": n_neighbors_1,
                     "min_dist": 0.0,
                     "n_components": 10,
-                    "n_epochs": 10000
+                    "n_epochs": 5000
                 },
                 {
                     "n_neighbors": n_neighbors_2,
                     "min_dist": 0.0,
                     "n_components": 2,
-                    "n_epochs": 10000
+                    "n_epochs": 5000
+                }
+            ]
+            return json.dumps(config, indent=4)
+
+    elif 'Super-high-magnification objective' in preset_dropdown:
+        # 提取數字 ex: "Super-High-magnification objective (500, 300, 100)" -> [500, 300, 100]
+        numbers = re.findall(r'\d+', preset_dropdown)
+        if len(numbers) >= 3:
+            n_neighbors_1 = int(numbers[0])
+            n_neighbors_2 = int(numbers[1])
+            n_neighbors_3 = int(numbers[2])
+            config = [
+                {
+                    "n_neighbors": n_neighbors_1,
+                    "min_dist": 0.0,
+                    "n_components": 15,
+                    "n_epochs": 5000
+                },
+                {
+                    "n_neighbors": n_neighbors_2,
+                    "min_dist": 0.0,
+                    "n_components": 5,
+                    "n_epochs": 5000
+                },
+                {
+                    "n_neighbors": n_neighbors_3,
+                    "min_dist": 0.0,
+                    "n_components": 2,
+                    "n_epochs": 5000
                 }
             ]
             return json.dumps(config, indent=4)
@@ -574,19 +604,26 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
         'Color': [v['color'] for k, v in latents.cluster_meta.items()],
     }
     df1 = pd.DataFrame(df1)
-    df2 = {
-        'behavior': np.repeat(latents.cluster, latents.time_window)
-    }
-    df2 = pd.DataFrame(df2)
 
     cluster_path = os.path.join(storage_path, project_name, 'cluster')
     os.makedirs(cluster_path, exist_ok=True)
 
-
     df1_path = os.path.join(cluster_path, 'id.csv')
-    df2_path = os.path.join(cluster_path, 'time_series.csv')
-    df1.to_csv(df1_path, index=False)  
-    df2.to_csv(df2_path)
+    df1.to_csv(df1_path, index=False)
+
+    # Generate per-video time_series CSV files
+    df2_paths = []
+    cum = 0
+    for vn, v in mulvideo.videos_meta:
+        video_cluster = latents.cluster[cum:cum + vn]
+        video_frames = np.repeat(video_cluster, latents.time_window)
+        df2 = pd.DataFrame({'behavior': video_frames})
+
+        video_basename = os.path.basename(v).split('.')[0]
+        df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+        df2.to_csv(df2_path)
+        df2_paths.append(df2_path)
+        cum += vn
 
     subtitle_path = convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulvideo)
     
@@ -595,16 +632,73 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
         parent_name = "root"
     local_embedding_path = os.path.join(cluster_path, f'cluster_{parent_name}_split.npz')
     Z_plt.save_named_embedding(save_path = local_embedding_path)
-    return fig, update_select_cluster_list(latents), df1_path, df2_path, subtitle_path, Z_plt, Z_plt.plot_named_embedding(), local_embedding_path
+    return fig, update_select_cluster_list(latents), df1_path, df2_paths, subtitle_path, Z_plt, Z_plt.plot_named_embedding(), local_embedding_path
 
+
+
+def check_session_exists(storage_path, project_name):
+    """Check if previous session files exist."""
+    if project_name is None:
+        return None
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+    id_csv = os.path.join(cluster_path, 'id.csv')
+    if not os.path.exists(id_csv):
+        return None
+    id_df = pd.read_csv(id_csv)
+    cluster_count = len(id_df) - 1  # Exclude root
+    return {'cluster_count': cluster_count, 'id_csv': id_csv}
+
+
+def restore_session(storage_path, project_name, select_roi_id, bin_size):
+    """Restore latents from saved CSV files."""
+    if project_name is None:
+        return None, None, None, None, None, None
+
+    mulv = MultiVideos(storage_path, project_name, select_roi_id, bin_size)
+    latents = mulv.get_latents()
+
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+
+    # Restore cluster_meta from id.csv
+    id_csv_path = os.path.join(cluster_path, 'id.csv')
+    id_df = pd.read_csv(id_csv_path)
+    for _, row in id_df.iterrows():
+        cluster_id = int(row['Id'])
+        latents.cluster_meta[cluster_id] = {'name': row['Name'], 'color': row['Color']}
+        latents.behavior_name2cluster_id[row['Name']] = cluster_id
+        if row['Color'] != 'grey':
+            latents.used_palette.add(row['Color'])
+    latents.num_cluster = len(id_df)
+
+    # Restore cluster assignments from time_series CSVs
+    cum = 0
+    df2_paths = []
+    for vn, v in mulv.videos_meta:
+        video_basename = os.path.basename(v).split('.')[0]
+        ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+        if os.path.exists(ts_path):
+            ts_df = pd.read_csv(ts_path)
+            # Downsample from frame-level to bin-level
+            bin_clusters = ts_df['behavior'].values[::mulv.bin_size][:vn]
+            latents.cluster[cum:cum+len(bin_clusters)] = bin_clusters
+            df2_paths.append(ts_path)
+        cum += vn
+
+    gr.Info(f'Restored session with {latents.num_cluster - 1} clusters')
+
+    # Generate syllables plot
+    fig = plot_syllables_per_video(latents, mulv)
+
+    return mulv, latents, fig, update_select_cluster_list(latents), id_csv_path, df2_paths
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size):
-    if project_name == None:
-        return None
-    
+    if project_name is None:
+        return None, None, None
+
     mulv = MultiVideos(storage_path, project_name, select_roi_id, bin_size)
-    return mulv, mulv.get_latents()
+    session_info = check_session_exists(storage_path, project_name)
+    return mulv, mulv.get_latents(), session_info
 
 
 
@@ -614,11 +708,14 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=False)
         ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=False)
         ui['reset'] = gr.Button("Initialize", interactive=True, visible=False)
-    
+        ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=True, visible=False)
+        ui['session_status'] = gr.Markdown("", visible=False)
+
     latents = gr.State(None)
     local_latents = gr.State(None)
     local_embedding_plot = gr.State(None)
     mulvideo = gr.State(None)
+    session_info = gr.State(None)
     with gr.Row(visible=True):
         with gr.Column(scale=2):
             ui['select_cluster'] = gr.Dropdown(label="Select Cluster",  visible=False,interactive=True)
@@ -645,7 +742,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         with gr.Column(scale=2):
             ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=False)
         with gr.Column(scale=2):
-            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=False)
+            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=False, file_count="multiple")
         with gr.Column(scale=2):
             ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=False)
 
@@ -654,7 +751,23 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['reset'].click(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size']],
-        outputs=[mulvideo, latents]
+        outputs=[mulvideo, latents, session_info]
+    ).then(
+        fn=lambda info: (
+            gr.update(visible=info is not None),
+            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters", visible=info is not None) if info else gr.update(visible=False)
+        ),
+        inputs=[session_info],
+        outputs=[ui['restore_btn'], ui['session_status']]
+    )
+
+    ui['restore_btn'].click(
+        fn=restore_session,
+        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size']],
+        outputs=[mulvideo, latents, ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv']]
+    ).then(
+        fn=lambda: (gr.update(visible=False), gr.update(visible=False)),
+        outputs=[ui['restore_btn'], ui['session_status']]
     )
 
     ui['select_cluster'].focus(

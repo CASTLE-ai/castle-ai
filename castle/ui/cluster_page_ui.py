@@ -516,20 +516,20 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, mulv
 def plot_syllables_per_video(latents, mulvideo):
     """Plot syllables with one video per row, x-axis in seconds"""
     from matplotlib.patches import Patch
-    
+
     cluster = latents.cluster
     cluster_meta = latents.cluster_meta
     time_window = latents.time_window
     videos_meta = mulvideo.videos_meta
     fps = mulvideo.fps
     bin_size = mulvideo.bin_size
-    
+
     n_videos = len(videos_meta)
-    
+
     # Create figure with subplots (one row per video) - shorter height
     fig, axes = plt.subplots(n_videos, 1, figsize=(14, 0.8 * n_videos), squeeze=False)
     axes = axes.flatten()
-    
+
     # Helper function to get color for a cluster
     def palette(c):
         if c in cluster_meta:

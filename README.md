@@ -6,6 +6,7 @@
 [![CI](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml)
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-castle--ai.github.io-blue)](https://castle-ai.github.io/castle-ai/)
 [![PyPI Downloads](https://static.pepy.tech/badge/castle-ai/month)](https://pepy.tech/projects/castle-ai)
 [![PyPI Downloads](https://static.pepy.tech/badge/castle-ai)](https://pepy.tech/projects/castle-ai)
 
@@ -18,6 +19,15 @@
 <p align="center">
   <img src="assets/Reaching_demo.gif" alt="Reaching Demo">
 </p>
+
+## Documentation
+
+📚 **Full documentation**: [castle-ai.github.io/castle-ai](https://castle-ai.github.io/castle-ai/)
+
+- [Installation Guide](https://castle-ai.github.io/castle-ai/getting-started/installation/)
+- [Quick Start](https://castle-ai.github.io/castle-ai/getting-started/quickstart/)
+- [Tutorials](https://castle-ai.github.io/castle-ai/tutorials/overview/)
+- [API Reference](https://castle-ai.github.io/castle-ai/reference/api/)
 
 ## Latest Updates
 - **2025-12: Performance & Stability Update**

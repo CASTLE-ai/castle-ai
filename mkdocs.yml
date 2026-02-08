@@ -1,0 +1,78 @@
+site_name: CASTLE Documentation
+site_url: https://castle-ai.github.io/castle-ai/
+site_description: Training-free framework for unsupervised animal behavior analysis
+repo_url: https://github.com/CASTLE-ai/castle-ai
+repo_name: CASTLE-ai/castle-ai
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            show_source: true
+            show_root_heading: true
+            docstring_style: google
+            show_if_no_docstring: false
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - GPU Requirements: getting-started/gpu-requirements.md
+  - Tutorials:
+    - Workflow Overview: tutorials/overview.md
+    - "Step 1: Create Project": tutorials/step1-project.md
+    - "Step 2: Track ROIs": tutorials/step2-tracking.md
+    - "Step 3: Extract Features": tutorials/step3-extract.md
+    - "Step 4: Behavior Analysis": tutorials/step4-analysis.md
+    - "Step 5: Export Results": tutorials/step5-export.md
+  - Technical Guide:
+    - Architecture: technical/architecture.md
+    - Algorithm: technical/algorithm.md
+    - Data Formats: technical/data-formats.md
+    - Configuration: technical/configuration.md
+  - API Reference: reference/api.md
+  - FAQ: faq.md
+  - Citation: citation.md

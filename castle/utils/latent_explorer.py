@@ -19,13 +19,26 @@ _palette += ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '
 _palette += ['#FD3216', '#00FE35', '#6A76FC', '#FED4C4', '#FE00CE', '#0DF9FF', '#F6F926', '#FF9616', '#479B55', '#EEA6FB', '#DC587D', '#D626FF', '#6E899C', '#00B5F7', '#B68E00', '#C9FBE5', '#FF0092', '#22FFA7', '#E3EE9E', '#86CE00', '#BC7196', '#7E7DCD', '#FC6955', '#E48F72']
 _palette += ['#66c5cc', '#f6cf71', '#f89c74', '#dcb0f2', '#87c55f', '#9eb9f3', '#fe88b1', '#c9db74', '#8be0a4', '#b497e7', '#b3b3b3']
 _palette += ['#e58606', '#5d69b1', '#52bca3', '#99c945', '#cc61b0', '#24796c', '#daa51b', '#2f8ac4', '#764e9f', '#ed645a', '#a5aa99']
+_palette = _palette * 5
 
 
+def generate_distinct_color(index, saturation=0.7, value=0.9):
+    """Generate a distinct color using golden ratio for even distribution in HSV space.
 
+    This ensures an unlimited number of visually distinct colors can be generated,
+    preventing clusters from becoming grey when the fixed palette is exhausted.
+    """
+    import colorsys
+    golden_ratio = 0.618033988749895
+    hue = (index * golden_ratio) % 1.0
+    rgb = colorsys.hsv_to_rgb(hue, saturation, value)
+    return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
 
 
 def generate_palette(avoid):
     res = [it for it in _palette if not it in avoid]
+    if len(res) == 0:
+        return _palette
     return res
     
 

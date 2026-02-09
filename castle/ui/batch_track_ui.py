@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import gradio as gr
 from natsort import natsorted
+from tqdm import tqdm # Import tqdm
 
 from castle import generate_aot
 from ..utils.h5_io import H5IO
@@ -62,7 +63,6 @@ def read_all_labels_without_video_filter(storage_path: str, project_name: str) -
                     "index": f"{index}, {video_basename}",  # Same format as track_ui
                     "frame": frame,
                     "mask": mask,
-                    # Additional info for batch tracking
                     "video_name": video_basename,
                     "frame_index": index,
                     "file_path": str(npz_file)
@@ -272,24 +272,41 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
     if not project_name:
         return "Error: No project selected"
     
-    videos = get_project_videos(storage_path, project_name)
-    if not videos:
+    all_videos = get_project_videos(storage_path, project_name) # Rename to avoid conflict
+    if not all_videos:
         return "Error: No videos found in project"
     
-    total_videos = len(videos)
-    messages.append(f"Found {total_videos} videos to process")
-    progress(0, desc="Starting batch tracking...")
+    # --- First Pass: Pre-flight Check (Identify videos to process) ---
+    videos_to_process = []
+    messages.append(f"Starting pre-flight check for {len(all_videos)} videos...")
     
+    total_all_videos = len(all_videos)
+    for i, video_name in enumerate(all_videos):
+        progress((i + 1) / total_all_videos, desc=f"Pre-flight Check: {i+1}/{total_all_videos}")
+        project_path = Path(storage_path) / project_name
+        track_dir_path = project_path / "track" / video_name
+        rois_results_path = track_dir_path / "mask_list.h5"
+        
+        if not rois_results_path.exists():
+            videos_to_process.append(video_name)
+        else:
+            messages.append(f"  Skipping existing video: {video_name}")
+
+    if not videos_to_process:
+        messages.append("All videos already processed. Nothing to track.")
+        progress(1.0, desc="Batch tracking completed (no new videos to track)")
+        return "\n".join(messages)
+
+    total_videos_to_process = len(videos_to_process)
+    messages.append(f"Found {total_videos_to_process} new videos to process")
+    
+    # --- Second Pass: Execution (Process identified videos) ---
     success_count = 0
     failed_videos = []
     
-    for i, video_name in enumerate(videos):
+    for i, video_name in enumerate(tqdm(videos_to_process, desc="Processing videos", unit="video")): # Use tqdm for console progress
+        progress((i + 1) / total_videos_to_process, desc=f"Overall Progress: {i+1}/{total_videos_to_process}") # Gradio progress bar
         try:
-            msg = f"Processing video {i+1}/{total_videos}: {video_name}"
-            messages.append(msg)
-            print(msg)  # Console output for debugging
-            progress((i) / total_videos, desc=f"Processing video: {video_name}")
-            
             # Load video file
             project_path = Path(storage_path) / project_name
             video_path = project_path / "sources" / video_name
@@ -376,95 +393,8 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
     
     progress(1.0, desc="Batch tracking completed")
     
-    result_msg = f"\n🎉 Batch tracking completed! Successfully processed {success_count}/{total_videos} videos"
+    result_msg = f"\n🎉 Batch tracking completed! Successfully processed {success_count}/{total_videos_to_process} videos"
     result_msg += f"\n📊 CSV analysis files and 🎬 mix videos generated for successful tracks"
-    if failed_videos:
-        result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"
-    
-    messages.append(result_msg)
-    return "\n".join(messages)
-
-
-
-def generate_all_csvs(storage_path: str, project_name: str, progress=gr.Progress()) -> str:
-    """
-    Generate CSV analysis for all videos in the project.
-    
-    Args:
-        storage_path: Storage path
-        project_name: Project name
-        progress: Gradio progress object
-        
-    Returns:
-        Completion message with progress log
-    """
-    messages = []
-    
-    if not project_name:
-        return "Error: No project selected"
-    
-    videos = get_project_videos(storage_path, project_name)
-    if not videos:
-        return "Error: No videos found in project"
-    
-    total_videos = len(videos)
-    messages.append(f"Found {total_videos} videos to process")
-    progress(0, desc="Starting batch CSV generation...")
-    
-    success_count = 0
-    failed_videos = []
-    
-    for i, video_name in enumerate(videos):
-        try:
-            msg = f"Processing video {i+1}/{total_videos}: {video_name}"
-            messages.append(msg)
-            print(msg)
-            progress((i) / total_videos, desc=f"Processing video: {video_name}")
-            
-            # Load video file just to get FPS (though generate_csv_analysis might not strictly need it depending on implementation, 
-            # but it is passed as 'source_video' in original code. 
-            # Looking at generate_csv_analysis, it accepts 'source_video' but seemingly only uses it if it was used for mix video.
-            # Actually generate_csv_analysis implementation in this file DOES NOT USE source_video argument at all for CSV generation logic shown!
-            # It only uses it for mix video generation which is not part of this specific request (User asked for GEN CSV button).
-            # Wait, let's double check generate_csv_analysis signature and usage.
-            # def generate_csv_analysis(storage_path: str, project_name: str, video_name: str, source_video) -> str:
-            # It uses source_video? 
-            # 165: def generate_csv_analysis(storage_path: str, project_name: str, video_name: str, source_video) -> str:
-            # It is NOT used in the body of generate_csv_analysis provided in the view_file output (lines 165-222).
-            # However, I should probably pass checks or None if I can, or safer: load it if inexpensive, or just pass None and hope.
-            # But wait, lines 151 and 154 show it being passed.
-            # In generate_csv_analysis body:
-            # It iterates rois_results.
-            # It does NO operations on source_video.
-            # SO passing None should be safe for *this specific implementation*, but to be robust and follow pattern, 
-            # I can try to load it OR just pass None since I know the internal implementation doesn't use it.
-            # But wait, generate_video_analysis (line 126) loads it.
-            # Let's see if we can avoid loading the heavy video if we just want CSV.
-            # The user request is "add gen csv button".
-            # faster is better.
-            
-            csv_path = generate_csv_analysis(storage_path, project_name, video_name, None)
-            
-            if csv_path:
-                success_count += 1
-                msg = f"  ✅ Generated CSV: {os.path.basename(csv_path)}"
-                messages.append(msg)
-                print(msg)
-            else:
-                # If it failed to return path (e.g. no masks found), treat as fail or just skip?
-                # The function returns "" if no rois match.
-                msg = f"  ⚠️  No ROI data found or generation failed for {video_name}"
-                messages.append(msg)
-                
-        except Exception as e:
-            failed_videos.append(video_name)
-            msg = f"❌ Error: Failed to process video {video_name}: {str(e)}"
-            messages.append(msg)
-            print(msg)
-    
-    progress(1.0, desc="Batch CSV generation completed")
-    
-    result_msg = f"\n🎉 Batch CSV generation completed! Successfully processed {success_count}/{total_videos} videos"
     if failed_videos:
         result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"
     
@@ -509,19 +439,7 @@ def delete_selected_label(storage_path: str, project_name: str, label_list: List
     return read_all_labels_to_gallery(storage_path, project_name)
 
 
-def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """
-    Create batch tracking UI interface.
-    
-    Args:
-        storage_path: Storage path
-        project_name: Project name
-        
-    Returns:
-        A tuple containing:
-        - A dictionary of UI components.
-        - A dictionary of UI states.
-    """
+def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_tab: gr.Tab) -> Tuple[Dict[str, Any], Dict[str, Any]]: # 修改簽名，新增 batch_tracking_tab 參數
     ui: Dict[str, Any] = {}
     states: Dict[str, Any] = {}
     
@@ -541,13 +459,13 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
                     object_fit="contain",
                     interactive=False,
                     columns=3,
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["delete_selected_btn"] = gr.Button(
                     "Delete Selected Label",
                     variant="secondary",
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
         
         with gr.Column(scale=1):
@@ -555,7 +473,7 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
                 ui["video_count_display"] = gr.Textbox(
                     label="Project Video Count",
                     interactive=False,
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["model_dropdown"] = gr.Dropdown(
@@ -564,44 +482,37 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
                     info="ResNet-50 or Swin-transformer",
                     value="r50_deaotl",
                     interactive=True,
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["track_all_btn"] = gr.Button(
                     "Start Tracking All Videos",
                     variant="primary",
                     size="lg",
-                    visible=False
-                )
-
-                ui["gen_csv_btn"] = gr.Button(
-                    "Generate All CSVs",
-                    variant="secondary",
-                    size="lg",
-                    visible=False
+                    visible=False # 設置為預設不可見
                 )
                 
                 ui["progress_text"] = gr.Textbox(
                     label="Progress & Results",
                     interactive=False,
-                    visible=False,
+                    visible=False, # 設置為預設不可見
                     lines=15,
                     max_lines=15
                 )
     
     # Event bindings
-    # Update UI when project changes
-    project_name.change(
-        fn=update_video_count,
-        inputs=[storage_path, project_name],
-        outputs=ui["video_count_display"]
-    )
+    # 移除原有的 project_name.change 事件，這些將由 batch_tracking_tab.select 處理
+    # project_name.change(
+    #     fn=update_video_count,
+    #     inputs=[storage_path, project_name],
+    #     outputs=ui["video_count_display"]
+    # )
     
-    project_name.change(
-        fn=refresh_gallery,
-        inputs=[storage_path, project_name],
-        outputs=[states["label_list_state"], ui["gallery"]]
-    )
+    # project_name.change(
+    #     fn=refresh_gallery,
+    #     inputs=[storage_path, project_name],
+    #     outputs=[states["label_list_state"], ui["gallery"]]
+    # )
     
     # Gallery selection event
     ui["gallery"].select(
@@ -623,13 +534,37 @@ def create_batch_track_ui(storage_path: str, project_name: str) -> Tuple[Dict[st
         outputs=ui["progress_text"],
         show_progress=True
     )
+    
+    # 新增 batch_tracking_tab.select 事件綁定
+    all_batch_ui_elements = [
+        ui["gallery"],
+        ui["delete_selected_btn"],
+        ui["video_count_display"],
+        ui["model_dropdown"],
+        ui["track_all_btn"],
+        ui["progress_text"]
+    ]
 
-    # Batch CSV button event
-    ui["gen_csv_btn"].click(
-        fn=generate_all_csvs,
-        inputs=[storage_path, project_name],
-        outputs=ui["progress_text"],
-        show_progress=True
+    def show_batch_track_ui(project_name_val):
+        is_visible = project_name_val is not None
+        return [gr.update(visible=is_visible)] * len(all_batch_ui_elements)
+    
+    (
+        batch_tracking_tab.select(
+            fn=show_batch_track_ui,
+            inputs=[project_name],
+            outputs=all_batch_ui_elements
+        )
+        .then( # 顯示 UI 後，再載入內容
+            fn=update_video_count,
+            inputs=[storage_path, project_name],
+            outputs=ui["video_count_display"]
+        )
+        .then(
+            fn=refresh_gallery,
+            inputs=[storage_path, project_name],
+            outputs=[states["label_list_state"], ui["gallery"]]
+        )
     )
-        
-    return ui
+    
+    return ui, states

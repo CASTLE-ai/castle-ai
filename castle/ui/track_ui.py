@@ -48,24 +48,21 @@ def initialize_tracker(
     Returns:
         Initialized ROITracker instance
     """
-    print(f"Initializing ROITracker: frames {start_frame} to {stop_frame}, model: {model_type}")
     return ROITracker(storage_path, project_name, source_video, start_frame, stop_frame, model_type)
 
 
-def run_tracking(tracker: ROITracker, progress=gr.Progress(track_tqdm=True)) -> str:
+def run_tracking(tracker: ROITracker, skip_existing: bool, progress=gr.Progress(track_tqdm=True)) -> str:
     """Run the ROI tracking process.
     
     Args:
         tracker: The ROITracker instance
+        skip_existing: Whether to skip if results exist
         progress: Gradio Progress instance for displaying progress (auto-injected)
         
     Returns:
         Status message with frame range
     """
-    if tracker is None:
-        raise gr.Error("Please click 'Apply parameters' to initialize the tracker first.")
-
-    status = tracker.track(progress)
+    status = tracker.track(progress, skip_existing=skip_existing)
     return f"{status}. Tracked from frame {tracker.start_frame} to {tracker.stop_frame}"
 
 
@@ -78,7 +75,6 @@ def toggle_intermediate_display(tracker: ROITracker) -> Generator[Tuple[Any, str
     Yields:
         Tuple of (mixed_image, display_mode_text)
     """
-    print(f"Toggling intermediate display. Current: {tracker.show_middle_result}")
     tracker.toggle_display_mode()
     
     while tracker.show_middle_result:
@@ -143,11 +139,18 @@ def create_track_ui(
                     visible=False
                 )
                 model_dropdown = gr.Dropdown(
-                    choices=["r50_deaotl", "sam2"],
+                    choices=["r50_deaotl", "swinb_deaotl"],
                     label="Tracking Model",
                     info="ResNet-50",
                     value="r50_deaotl",
                     interactive=True
+                )
+                skip_existing_checkbox = gr.Checkbox(
+                    label="Skip Processed Files",
+                    value=True,
+                    info="If checked, skips processing if mask_list.h5 already exists.",
+                    interactive=True,
+                    visible=False
                 )
                 init_tracker_btn = gr.Button(
                     "Apply parameters",
@@ -194,6 +197,7 @@ def create_track_ui(
         "start_frame": start_frame,
         "stop_frame": stop_frame,
         "model_dropdown": model_dropdown,
+        "skip_existing_checkbox": skip_existing_checkbox,
         "init_tracker_btn": init_tracker_btn,
         "tracking_btn": tracking_btn,
         "progress_text": progress_text,
@@ -222,7 +226,7 @@ def create_track_ui(
     # Event handlers - Run tracking
     tracking_btn.click(
         fn=run_tracking,
-        inputs=tracker_state,
+        inputs=[tracker_state, skip_existing_checkbox],
         outputs=progress_text
     )
     
@@ -230,7 +234,8 @@ def create_track_ui(
     display_middle_result_btn.click(
         fn=toggle_intermediate_display,
         inputs=tracker_state,
-        outputs=[display, display_mode_text]
+        outputs=[display, display_mode_text],
+        show_progress=False
     )
     
     # Event handlers - Cancel tracking

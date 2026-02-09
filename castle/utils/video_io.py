@@ -275,8 +275,22 @@ class VideoReader:
         if self._closed:
             raise RuntimeError("影片讀取器已關閉")
         
-        # 檢索是否為順序讀取（但排除第0幀，第0幀總是需要 seek）
-        if frame_index > 0 and frame_index == self._current_index + 1:
+        # 特殊處理影格 0，確保容器位於起始位置
+        if frame_index == 0:
+            logger.debug(f"正在嘗試直接讀取影格 0")
+            try:
+                # 重新 seek 到時間 0，確保從頭開始
+                self.container.seek(0, stream=self.video_stream, backward=True, any_frame=False)
+                # 取得第一個影格
+                for frame in self.container.decode(self.video_stream):
+                    self._current_index = 0
+                    return frame.to_rgb().to_ndarray()
+                raise RuntimeError("無法從影片中讀取到第一個影格")
+            except Exception as e:
+                raise RuntimeError(f"直接讀取影格 0 失敗: {e}")
+
+        # 檢索是否為順序讀取
+        if frame_index == self._current_index + 1:
             try:
                 self._current_index = frame_index
                 frame = next(self.container.decode(self.video_stream))
@@ -290,7 +304,7 @@ class VideoReader:
                 logger.debug(f"順序讀取影格 {frame_index} 時發生異常: {e}，改用 seek 方式")
                 pass
         
-        # 非順序讀取、第0幀或順序讀取失敗時，使用 seek 方式
+        # 非順序讀取或順序讀取失敗時，使用 seek 方式
         return self._seek_and_read_frame(frame_index)
     
     def _seek_and_read_frame(self, frame_index: int) -> np.ndarray:

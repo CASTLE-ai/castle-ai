@@ -8,9 +8,9 @@ plotly
 gradio
 h5py
 natsort
-pytest
-castle-ai
 gdown
+termcolor
+xFormers
 
 
 # NVIDIA packages

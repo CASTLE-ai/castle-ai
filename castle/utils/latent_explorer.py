@@ -22,19 +22,6 @@ _palette += ['#e58606', '#5d69b1', '#52bca3', '#99c945', '#cc61b0', '#24796c', '
 _palette = _palette * 5
 
 
-
-
-
-
-
-
-def generate_palette(avoid):
-    res = [it for it in _palette if not it in avoid]
-    if len(res) == 0:
-        return _palette
-    return res
-
-
 def generate_distinct_color(index, saturation=0.7, value=0.9):
     """Generate a distinct color using golden ratio for even distribution in HSV space.
 
@@ -46,6 +33,13 @@ def generate_distinct_color(index, saturation=0.7, value=0.9):
     hue = (index * golden_ratio) % 1.0
     rgb = colorsys.hsv_to_rgb(hue, saturation, value)
     return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
+
+
+def generate_palette(avoid):
+    res = [it for it in _palette if not it in avoid]
+    if len(res) == 0:
+        return _palette
+    return res
     
 
 
@@ -58,17 +52,16 @@ class Latent:
         num_feature = raw.shape[-1]
         self.time_window = time_window
         self.data = raw[:n].reshape((-1,  num_feature * time_window))
-        print('self.data:', self.data.shape)
         self.cluster = np.zeros(len(self.data)).astype(int)
         self.cluster[np.isnan(self.data.sum(axis=1))] = -1
         self.cluster_meta = dict()
         self.behavior_name2cluster_id = dict()
         
         self.cluster_meta[0] = {
-            'name': 'root',
+            'name': 'init',
             'color': 'grey'
         }
-        self.behavior_name2cluster_id['root'] = 0
+        self.behavior_name2cluster_id['init'] = 0
         self.num_cluster = 1
         self.need_maintain_key_frames = True
         self.device=device
@@ -136,6 +129,10 @@ class Latent:
         index_mask = local_latent.index_mask
         old_cluster = self.cluster[index_mask]
 
+        # Check Name used?
+        # for _, it in local_latent.export.items():
+            # assert not it['name'] in self.behavior_name2cluster_id, 'new name be used'
+
         for cluster_local_id, it in local_latent.export.items():
             if it['name'] in self.behavior_name2cluster_id:
                 continue
@@ -151,6 +148,7 @@ class Latent:
             self.used_palette.add(it['color'])
 
         self.cluster[index_mask] = old_cluster
+
         self.need_maintain_key_frames = True
 
 
@@ -161,7 +159,9 @@ class LocalLatent:
         self.device = device
         self.color_avoid = color_avoid
         self._palette = generate_palette(color_avoid)
-        self._unique_color_count = len(set(self._palette))  # Cache unique color count
+        if len(self._palette) == 0:
+            self._palette = _palette # Fallback to full palette if all used
+
         self.export = dict()
         
 
@@ -169,16 +169,13 @@ class LocalLatent:
         if self.device == 'cpu' or self.device == 'mps':
             from umap import UMAP
         elif 'cuda' in self.device:
-            # try:
-            #     from cuml.manifold import UMAP
-            #     print("Using cuml.manifold.UMAP")
-            # except:
+            try:
+                from cuml.manifold import UMAP
+            except:
                 try:
                     from castle.utils.myumap import UMAP
-                    print("Using castle.utils.myumap.UMAP")
                 except:
                     from umap import UMAP
-                    print("Using umap.UMAP")
         else:
             assert False, f'device error, expect cpu, mps, or cuda, got {self.device}'
         Z = self.data
@@ -221,43 +218,27 @@ class LocalLatent:
     def palette(self, x):
         if x == -1:
             return '#DDDDDD'
-
-        if self._unique_color_count > x:
-            # We have enough unique colors, use palette
-            return self._palette[x % len(self._palette)]
-        else:
-            # Not enough unique colors - use dynamic color generation
-            return generate_distinct_color(x)
+        return self._palette[x % len(self._palette)]
 
     
     def plot_embedding(self, dims=[0, 1]):
         assert hasattr(self, 'embedding')
         assert len(dims) == 2, 'dims should'
-
-        embedding_data = self.embedding
-        cluster_data = self.cluster if hasattr(self, 'cluster') else None
-
-        if len(embedding_data) > 50000:
-            idx = np.random.choice(len(embedding_data), 20000, replace=False)
-            embedding_data = embedding_data[idx]
-            if cluster_data is not None:
-                cluster_data = cluster_data[idx]
-        
-        if cluster_data is not None:
-            for it in range(0, cluster_data.max()+1):
-                plt.scatter(x=embedding_data[cluster_data == it, dims[0]], 
-                            y=embedding_data[cluster_data == it, dims[1]], 
+        if hasattr(self, 'cluster'):
+            for it in range(0, self.cluster.max()+1):
+                plt.scatter(x=self.embedding[self.cluster == it, dims[0]], 
+                            y=self.embedding[self.cluster == it, dims[1]], 
                             c=self.palette(it), 
                             label=f'{it}')
-            if -1 in cluster_data:
-                plt.scatter(x=embedding_data[cluster_data == -1, dims[0]], 
-                            y=embedding_data[cluster_data == -1, dims[1]], 
+            if -1 in self.cluster:
+                plt.scatter(x=self.embedding[self.cluster == -1, dims[0]], 
+                            y=self.embedding[self.cluster == -1, dims[1]], 
                             c='grey',
                             label=f'-1')
             plt.legend()
         else:
-            plt.scatter(x=embedding_data[:, dims[0]], 
-                        y=embedding_data[:, dims[1]], 
+            plt.scatter(x=self.embedding[:, dims[0]], 
+                        y=self.embedding[:, dims[1]], 
                         c='grey')
     
     def plot_name_embedding(self, dims=[0, 1]):
@@ -271,8 +252,8 @@ class LocalLatent:
                 else:
                     c = self.palette(-1)
                     label = it
-                plt.scatter(x=self.embedding[self.cluster == it, dims[0]],
-                            y=self.embedding[self.cluster == it, dims[1]],
+                plt.scatter(x=self.embedding[self.cluster == it, dims[0]], 
+                            y=self.embedding[self.cluster == it, dims[1]], 
                             c=c,
                             label=label)
            
@@ -308,14 +289,8 @@ class LocalLatent:
     def label_cluster(self, cluster_id, cluster_name, cluster_color=''):
         tmp = dict()
         tmp['name'] = cluster_name
-        if len(cluster_color) > 0:
-            tmp['color'] = cluster_color
-        else:
-            if self._unique_color_count > cluster_id:
-                tmp['color'] = self._palette[cluster_id % len(self._palette)]
-            else:
-                # Not enough unique colors - use dynamic generation
-                tmp['color'] = generate_distinct_color(cluster_id)
+        tmp['color'] = cluster_color if len(cluster_color) > 0 else self._palette[cluster_id]
+        # tmp['data'] = self.cluster == cluster_id
 
         self.export[cluster_id] = tmp
     

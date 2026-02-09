@@ -78,20 +78,61 @@ class AOTTracker(object):
 
 
     @torch.no_grad()
-    def track(self, image):
-        output_height, output_width = image.shape[0], image.shape[1]
-        sample = {'current_img': image}
-        sample = self.transform(sample)
-        image = sample[0]['current_img'].unsqueeze(0).float().to(self.device)
-        self.engine.match_propogate_one_frame(image)
+    def track(self, image, original_size=None):
+        is_tensor = isinstance(image, torch.Tensor)
+
+        if not is_tensor:
+            # Input is a numpy array, transform it
+            output_height, output_width = image.shape[0], image.shape[1]
+            sample = {'current_img': image}
+            sample = self.transform(sample)
+            image_tensor = sample[0]['current_img'].unsqueeze(0).float().to(self.device)
+        else:
+            # Input is already a tensor, just move to device
+            if original_size is None:
+                raise ValueError("original_size must be provided when a tensor is passed as input to track()")
+            output_height, output_width = original_size
+            image_tensor = image.float().to(self.device)
+
+        self.engine.match_propogate_one_frame(image_tensor)
         pred_logit = self.engine.decode_current_logits((output_height, output_width))
 
-        # pred_prob = torch.softmax(pred_logit, dim=1)
-        pred_label = torch.argmax(pred_logit, dim=1,
-                                    keepdim=True).float()
+        pred_label = torch.argmax(pred_logit, dim=1, keepdim=True).float()
 
-        return  pred_label
-    
+        return pred_label
+
+    @torch.no_grad()
+    def track_batch(self, image_batch, original_sizes):
+        """
+        Tracks a batch of frames with optimized batch encoding.
+        """
+        # Move the entire batch to the correct device
+        image_batch_tensor = image_batch.float().to(self.device)
+
+        # 1. Batch encode the entire batch of frames
+        # self.AOT.encode_image is a batch operation
+        all_enc_embs = self.model.encode_image(image_batch_tensor)
+
+        pred_labels = []
+        for i in range(image_batch_tensor.size(0)):
+            # 2. Sequentially perform tracking using pre-computed embeddings
+            # Get the embedding for the current frame
+            current_enc_embs = [emb[i:i+1] for emb in all_enc_embs]
+
+            # Use the pre-computed embeddings
+            self.engine.match_propogate_one_frame(img=None, img_embs=current_enc_embs)
+            
+            output_height, output_width = original_sizes[i]
+            pred_logit = self.engine.decode_current_logits((output_height, output_width))
+
+            pred_label = torch.argmax(pred_logit, dim=1, keepdim=True).float()
+            
+            # 3. Update memory sequentially
+            self.update_memory(pred_label)
+            pred_labels.append(pred_label)
+        
+        return torch.cat(pred_labels, dim=0)
+
     @torch.no_grad()
     def update_memory(self, pred_label):
         self.engine.update_memory(pred_label)
@@ -188,14 +229,16 @@ class DeAOTTrackerInferEngine(DeAOTInferEngine):
 
 
 def download_aot_ckpt(model_type):
+    from castle.core.config import DEFAULT_CKPT_DIR
+    
     if model_type == 'r50_deaotl':
-        ckpt_path = 'ckpt/R50_DeAOTL_PRE_YTB_DAV.pth'
-        download_with_gdown('1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ', ckpt_path)
-        return ckpt_path
+        ckpt_path = DEFAULT_CKPT_DIR / 'R50_DeAOTL_PRE_YTB_DAV.pth'
+        download_with_gdown('1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ', str(ckpt_path))
+        return str(ckpt_path)
     elif model_type == 'swinb_deaotl':
-        ckpt_path = 'ckpt/SwinB_DeAOTL_PRE_YTB_DAV.pth'
-        download_with_gdown('1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq', ckpt_path)
-        return ckpt_path
+        ckpt_path = DEFAULT_CKPT_DIR / 'SwinB_DeAOTL_PRE_YTB_DAV.pth'
+        download_with_gdown('1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq', str(ckpt_path))
+        return str(ckpt_path)
     else:
         raise ValueError(f"model_type mismatch {model_type}, expect r50_deaotl or swinb_deaotl")
 

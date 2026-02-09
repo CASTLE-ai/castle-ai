@@ -13,15 +13,7 @@ from .batch_track_ui import create_batch_track_ui
 
 # UI callback functions
 def list_project_video_dropdown(storage_path, project_name):
-    """List all videos in the project for dropdown selection.
-    
-    Args:
-        storage_path: Path to the storage directory
-        project_name: Name of the project
-        
-    Returns:
-        Gradio update object with video choices
-    """
+    """List all videos in the project for dropdown selection."""
     videos = get_project_videos(storage_path, project_name)
     return gr.update(choices=videos)
 
@@ -31,66 +23,59 @@ def unlock_select_video_edit_btn():
     return gr.update(interactive=True)
 
 
-def unlock_ui(object_count):
-    """Unlock all UI elements."""
-    return [gr.update(visible=True) for _ in range(object_count)]
-
-
-def load_video_for_editing(storage_path, project_name, video_name):
-    """Load video and initialize UI when edit button is clicked.
-    
-    Args:
-        storage_path: Path to the storage directory
-        project_name: Name of the project
-        video_name: Name of the video file
-        
-    Returns:
-        tuple: Video source, video name, and UI updates for sliders and displays
+def handle_edit_click(storage_path, project_name, video_name, view_ui_count, label_ui_count, knowledge_ui_count, track_ui_count, post_track_ui_count):
+    """
+    Handles all actions when the 'Edit' button is clicked.
+    Merges logic from load_video_for_editing, unlock_ui, and collapse_source_detail
+    to prevent deadlocks from multiple concurrent Gradio events.
     """
     import os
     
-    # Load video
+    # 1. Logic from load_video_for_editing
     video_path = os.path.join(storage_path, project_name, 'sources', video_name)
     source_video = ReadArray(video_path)
-    
-    # Get first frame and max frame index
     first_frame = source_video[0]
     max_frame = len(source_video) - 1
+
+    load_video_outputs = [
+        source_video,
+        video_name,
+        gr.update(maximum=max_frame),
+        gr.update(maximum=max_frame),
+        gr.update(maximum=max_frame),
+        gr.update(maximum=max_frame, value=max_frame),
+        first_frame,
+        first_frame,
+        first_frame
+    ]
+
+    # 2. Logic from collapse_source_detail
+    collapse_output = [gr.update(open=False)]
+
+    # 3. Logic from unlock_ui
+    view_ui_updates = [gr.update(visible=True) for _ in range(view_ui_count)]
+    label_ui_updates = [gr.update(visible=True) for _ in range(label_ui_count)]
+    knowledge_ui_updates = [gr.update(visible=True) for _ in range(knowledge_ui_count)]
+    track_ui_updates = [gr.update(visible=True) for _ in range(track_ui_count)]
+    post_track_ui_updates = [gr.update(visible=True) for _ in range(post_track_ui_count)]
     
-    # Return video data and UI updates
-    return (
-        source_video,                               # source_video state
-        video_name,                                 # select_video state
-        gr.update(maximum=max_frame),              # view index_slide
-        gr.update(maximum=max_frame),              # label index_slide
-        gr.update(maximum=max_frame),              # track start_frame
-        gr.update(maximum=max_frame, value=max_frame),  # track stop_frame
-        first_frame,                               # view display_view
-        first_frame,                               # label display_view
-        first_frame                                # label select_frame
+    unlock_outputs = (
+        view_ui_updates +
+        label_ui_updates +
+        knowledge_ui_updates +
+        track_ui_updates +
+        post_track_ui_updates
     )
-
-
-def collapse_source_detail():
-    """Collapse the source video selection accordion."""
-    return gr.update(open=False)
-
-
-def create_edit_ui(storage_path, project_name):
-    """Create the edit UI for ROI tracking.
     
-    Args:
-        storage_path: Gradio State for storage path
-        project_name: Gradio State for project name
-        
-    Returns:
-        dict: Dictionary containing all UI components
-    """
+    return tuple(load_video_outputs + collapse_output + unlock_outputs)
+
+
+def create_edit_ui(storage_path, project_name, edit_tab):
+    """Create the edit UI for ROI tracking."""
     ui = {}
     source_video = gr.State(None)
     ui['select_video'] = gr.State(None)
     
-    # User guidance (collapsible)
     with gr.Accordion("📋 ROI Tracking Workflow Guide", open=False, visible=False) as ui['guidance_accordion']:
         gr.Markdown("""
         ### 🎯 Phase 1: Single Video Tracking (Build Your ROI Prompts)
@@ -133,7 +118,6 @@ def create_edit_ui(storage_path, project_name):
         """)
 
     with gr.Tab(label='Single Video Tracking') as single_tracking_tab:
-        # Video selection
         with gr.Accordion('Select Source Video', open=True, visible=False) as ui['source_accordion']:
             ui['select_video_drop'] = gr.Dropdown(
                 label="Select Video",
@@ -146,102 +130,87 @@ def create_edit_ui(storage_path, project_name):
                 visible=False
             )
 
-        # Label ROI tab - Create and label ROI prompts
         with gr.Tab(label='Label ROI'):
             label_ui = create_label_ui(storage_path, project_name, source_video)
         
         with gr.Tab(label='ROI Prompts') as knowledge_tab:
             knowledge_ui = create_knowledge_ui(storage_path, project_name, knowledge_tab)
         
-        # Tracking tab - Run ROI tracking across frames
         with gr.Tab(label='Tracking') as track_tab:
             track_ui = create_track_ui(storage_path, project_name, source_video, track_tab)
         
-        # View tab - Preview video frames
         with gr.Tab(label='View'):
             view_ui = create_view_ui(storage_path, project_name, source_video)
         
-        # Analysis tab - Review tracking results
         with gr.Tab(label='Analysis'):
             post_track_ui = create_post_track_ui(storage_path, project_name, source_video)
     
     with gr.Tab(label='Batch Videos Tracking') as batch_tracking_tab:
-        batch_tracking_ui = create_batch_track_ui(storage_path, project_name)
+        batch_tracking_ui, batch_tracking_states = create_batch_track_ui(storage_path, project_name, batch_tracking_tab)
 
-    # Count UI elements for visibility management
     view_ui_object_count = gr.State(len(view_ui))
     label_ui_object_count = gr.State(len(label_ui))
     knowledge_ui_object_count = gr.State(len(knowledge_ui))
     track_ui_object_count = gr.State(len(track_ui))
     post_track_ui_object_count = gr.State(len(post_track_ui))
-    batch_tracking_ui_object_count = gr.State(len(batch_tracking_ui))
-
-    # Event handlers - Load video list when dropdown is focused
-    ui['select_video_drop'].focus(
-        fn=list_project_video_dropdown,
-        inputs=[storage_path, project_name],
-        outputs=ui['select_video_drop']
-    )
     
-    # Event handlers - Enable edit button when video is selected
+    all_ui_to_show_on_select = [
+        ui['guidance_accordion'],
+        ui['source_accordion'],
+        ui['select_video_drop'],
+        ui['select_video_edit_btn']
+    ]
+
+    def show_edit_ui(project_name):
+        is_visible = project_name is not None
+        return [gr.update(visible=is_visible)] * len(all_ui_to_show_on_select)
+
+    (
+        edit_tab.select(
+            fn=show_edit_ui,
+            inputs=[project_name],
+            outputs=all_ui_to_show_on_select
+        )
+        .then(
+            fn=list_project_video_dropdown,
+            inputs=[storage_path, project_name],
+            outputs=ui['select_video_drop']
+        )
+    )
+
     ui['select_video_drop'].select(
         fn=unlock_select_video_edit_btn,
         outputs=ui['select_video_edit_btn']
     )
-    
-    # Event handlers - Show all tabs when edit button is clicked
-    ui['select_video_edit_btn'].click(
-        fn=unlock_ui,
-        inputs=view_ui_object_count,
-        outputs=[v for k, v in view_ui.items()]
-    )
-    ui['select_video_edit_btn'].click(
-        fn=unlock_ui,
-        inputs=label_ui_object_count,
-        outputs=[v for k, v in label_ui.items()]
-    )
-    ui['select_video_edit_btn'].click(
-        fn=unlock_ui,
-        inputs=knowledge_ui_object_count,
-        outputs=[v for k, v in knowledge_ui.items()]
-    )
-    ui['select_video_edit_btn'].click(
-        fn=unlock_ui,
-        inputs=track_ui_object_count,
-        outputs=[v for k, v in track_ui.items()]
-    )
-    ui['select_video_edit_btn'].click(
-        fn=unlock_ui,
-        inputs=post_track_ui_object_count,
-        outputs=[v for k, v in post_track_ui.items()]
-    )
-    ui['select_video_edit_btn'].click(
-        fn=unlock_ui,
-        inputs=batch_tracking_ui_object_count,
-        outputs=[v for k, v in batch_tracking_ui.items()]
-    )
 
-    # Event handlers - Load video and initialize UI
-    ui['select_video_edit_btn'].click(
-        fn=load_video_for_editing,
-        inputs=[storage_path, project_name, ui['select_video_drop']],
-        outputs=[
-            source_video,
-            ui['select_video'],
-            view_ui['index_slide'],
-            label_ui['index_slide'],
-            track_ui['start_frame'],
-            track_ui['stop_frame'],
-            view_ui['display_view'],
-            label_ui['display_view'],
-            label_ui['select_frame']
-        ]
-    )
+    edit_button_inputs = [
+        storage_path,
+        project_name,
+        ui['select_video_drop'],
+        view_ui_object_count,
+        label_ui_object_count,
+        knowledge_ui_object_count,
+        track_ui_object_count,
+        post_track_ui_object_count
+    ]
     
-    # Event handlers - Collapse video selection after editing starts
+    edit_button_outputs = [
+        source_video,
+        ui['select_video'],
+        view_ui['index_slide'],
+        label_ui['index_slide'],
+        track_ui['start_frame'],
+        track_ui['stop_frame'],
+        view_ui['display_view'],
+        label_ui['display_view'],
+        label_ui['select_frame'],
+        ui['source_accordion'],
+    ] + list(view_ui.values()) + list(label_ui.values()) + list(knowledge_ui.values()) + list(track_ui.values()) + list(post_track_ui.values())
+
     ui['select_video_edit_btn'].click(
-        fn=collapse_source_detail,
-        outputs=ui['source_accordion']
+        fn=handle_edit_click,
+        inputs=edit_button_inputs,
+        outputs=edit_button_outputs
     )
     
     return ui

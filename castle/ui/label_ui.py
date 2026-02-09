@@ -15,6 +15,8 @@ def keep_click_mode_switch_only(mode):
 
 def index_slide_event(segmentor, source_video, index):
     del segmentor
+    if source_video is None:
+        return None, None, None, gr.update(interactive=False)
     frame = source_video[index]
     return None, frame, frame, gr.update(interactive=False)
 
@@ -46,6 +48,9 @@ def next_roi(segmentor):
     return segmentor
 
 def save_rois(storage_path, project_name, segmentor, index, source_video):
+    if source_video is None:
+        raise gr.Error("No video loaded. Please select and load a video first.")
+    
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     label_dir_path = os.path.join(project_path, 'label', video_name)

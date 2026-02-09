@@ -1,5 +1,6 @@
 import os
 import h5py
+import numpy as np
 
 
 class H5IO:
@@ -65,7 +66,20 @@ class H5IO:
         self.f = h5py.File(self.file_path, mode)
 
     def get_n_rois(self):
-        return int(self.f['n_rois'][()])
+        if 'n_rois' in self.f:
+            return int(self.f['n_rois'][()])
+        
+        # Calculate n_rois from masks if missing
+        n_rois = 0
+        for key in self.f.keys():
+            if key.isdigit():
+                mask = self.f[key][()]
+                if mask is not None and mask.size > 0:
+                    n_rois = max(n_rois, int(np.max(mask)))
+        
+        # Fix the h5 file
+        self.write_config('n_rois', n_rois)
+        return n_rois
     
     def __len__(self):
         return int(self.f['total_frames'][()])

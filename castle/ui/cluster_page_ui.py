@@ -508,7 +508,7 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
     Initializes LatentAggregator (formerly MultiVideos)
     """
     if not project_name:
-        return None, None
+        return None, None, None
     
     # Create Gradio-compatible notification callback
     def notify_callback(msg: str, level: str = "info"):
@@ -523,10 +523,11 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             model_name=select_model,
             notify=notify_callback
         )
-        return aggregator, aggregator.get_latent_object()
+        session_info = check_session_exists(storage_path, project_name)
+        return aggregator, aggregator.get_latent_object(), session_info
     except Exception as e:
         gr.Warning(f"Initialization Failed: {e}")
-        return None, None
+        return None, None, None
 
 # ---------------------------
 # UI Construction
@@ -534,8 +535,6 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
 
 def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui = dict()
-    # Create a main container to control visibility of the entire page
-    # Create a main container to control visibility of the entire page
     
     with gr.Accordion('Input setting', visible=False) as ui['cluster_input_accordion']:
             ui['select_model'] = gr.Dropdown(
@@ -543,19 +542,21 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
                 value="dinov3_vitb16",
                 interactive=True,
-                visible=True # Initially visible (controlled by parent accordion)
+                visible=True
             )
             ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=True)
             ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=True)
             ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
+            ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=True, visible=False)
+            ui['session_status'] = gr.Markdown("", visible=False)
         
     # State Holders
     latents = gr.State(None)
     local_latents = gr.State(None)
-    local_embedding_plot = gr.State(None) # Holds EmbeddingScatterPlot instance
-    mulvideo = gr.State(None) # Holds LatentAggregator instance
+    local_embedding_plot = gr.State(None)
+    mulvideo = gr.State(None)  # Holds LatentAggregator instance
+    session_info = gr.State(None)
 
-    # Manually track the visibility of this entire row
     with gr.Row(visible=True) as ui['cluster_row_main']:
         with gr.Column(scale=2):
             ui['select_cluster'] = gr.Dropdown(label="Select Cluster", visible=True, interactive=True)
@@ -568,6 +569,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=True)
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=True)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=True)
+            ui['enter_submit_all_btn'] = gr.Button("Enter & Submit all", interactive=True, visible=True)
         with gr.Column(scale=8):
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
             ui['display'] = gr.Image(label='Display', interactive=False, visible=True)  
@@ -578,15 +580,34 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         with gr.Column(scale=2):
             ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=True)
         with gr.Column(scale=2):
-            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=True)
+            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=True, file_count="multiple")
         with gr.Column(scale=2):
             ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=True)
 
-    # Event Bindings
+    # --- Event Bindings ---
+
+    # Initialize: create aggregator + check for previous session
     ui['reset'].click(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
-        outputs=[mulvideo, latents]
+        outputs=[mulvideo, latents, session_info]
+    ).then(
+        fn=lambda info: (
+            gr.update(visible=info is not None),
+            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters", visible=info is not None) if info else gr.update(visible=False)
+        ),
+        inputs=[session_info],
+        outputs=[ui['restore_btn'], ui['session_status']]
+    )
+
+    # Restore previous session
+    ui['restore_btn'].click(
+        fn=restore_session,
+        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
+        outputs=[mulvideo, latents, ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv']]
+    ).then(
+        fn=lambda: (gr.update(visible=False), gr.update(visible=False)),
+        outputs=[ui['restore_btn'], ui['session_status']]
     )
 
     ui['select_cluster'].focus(
@@ -614,20 +635,35 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['embedding_plot'].select(
         fn=embedding_plot_click,
         inputs=[mulvideo, local_embedding_plot],
-        outputs= [ui['embedding_plot'], ui['display']]
+        outputs=[ui['embedding_plot'], ui['display']]
     )
     ui['cluster_run'].click(
         fn=generate_local_cluster,
         inputs=[local_latents, ui['eps']],
-        outputs=[local_embedding_plot, ui['embedding_plot'] ],
+        outputs=[local_embedding_plot, ui['embedding_plot']],
     )
     ui['label_cluster_btn'].click(
         fn=label_local_cluster,
         inputs=[local_latents, ui['label_cluster_id'], ui['label_cluster_name']],
     )
+    
+    # Auto-generate cluster name when ID changes
+    ui['label_cluster_id'].change(
+        fn=auto_generate_cluster_name,
+        inputs=[ui['select_cluster'], ui['label_cluster_id']],
+        outputs=ui['label_cluster_name']
+    )
+
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo],
+        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
+    )
+
+    # Enter & Submit all: auto-label all clusters and submit
+    ui['enter_submit_all_btn'].click(
+        fn=label_all_and_submit,
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster']],
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
     )
 
@@ -638,8 +674,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=ui['select_cluster']
     )
 
-    # Return only the top-level containers for visibility toggling
-    # This avoids updating gr.Column directly and avoids recursive updates on children
     return {
         'cluster_input_accordion': ui['cluster_input_accordion'],
         'cluster_row_main': ui['cluster_row_main'],

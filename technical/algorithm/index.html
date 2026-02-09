@@ -1,0 +1,2052 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Training-free framework for unsupervised animal behavior analysis">
+      
+      
+      
+        <link rel="canonical" href="https://castle-ai.github.io/castle-ai/technical/algorithm/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../data-formats/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+    
+    
+      
+        <title>Algorithm - CASTLE Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#algorithm-methodology" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="CASTLE Documentation" class="md-header__button md-logo" aria-label="CASTLE Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            CASTLE Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Algorithm
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/CASTLE-ai/castle-ai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    CASTLE-ai/castle-ai
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../tutorials/overview/" class="md-tabs__link">
+          
+  
+  
+  Tutorials
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  Technical Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../faq/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../citation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Citation
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="CASTLE Documentation" class="md-nav__button md-logo" aria-label="CASTLE Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    CASTLE Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/CASTLE-ai/castle-ai" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    CASTLE-ai/castle-ai
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/gpu-requirements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU Requirements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workflow Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/step1-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Step 1: Create Project
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/step2-tracking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Step 2: Track ROIs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/step3-extract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Step 3: Extract Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/step4-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Step 4: Behavior Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/step5-export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Step 5: Export Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Algorithm
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Algorithm
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-image-segmentation-sam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Image Segmentation — SAM
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Image Segmentation — SAM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-video-object-tracking-deaot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Video Object Tracking — DeAOT
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Video Object Tracking — DeAOT">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-video-alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Video Alignment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Video Alignment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-visual-feature-extraction-dinov2-dinov3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Visual Feature Extraction — DINOv2 / DINOv3
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Visual Feature Extraction — DINOv2 / DINOv3">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-dimensionality-reduction-umap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Dimensionality Reduction — UMAP
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Dimensionality Reduction — UMAP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-clustering-dbscan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Clustering — DBSCAN
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Clustering — DBSCAN">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data-formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../citation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Citation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-image-segmentation-sam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Image Segmentation — SAM
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Image Segmentation — SAM">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-video-object-tracking-deaot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Video Object Tracking — DeAOT
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Video Object Tracking — DeAOT">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-video-alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Video Alignment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Video Alignment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-visual-feature-extraction-dinov2-dinov3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Visual Feature Extraction — DINOv2 / DINOv3
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Visual Feature Extraction — DINOv2 / DINOv3">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-dimensionality-reduction-umap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Dimensionality Reduction — UMAP
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Dimensionality Reduction — UMAP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-clustering-dbscan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Clustering — DBSCAN
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Clustering — DBSCAN">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What It Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#castles-usage_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASTLE's Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="algorithm-methodology">Algorithm &amp; Methodology<a class="headerlink" href="#algorithm-methodology" title="Permanent link">&para;</a></h1>
+<p>This page describes each algorithm in the CASTLE pipeline, how CASTLE uses it, and provides references to the original papers. For a conceptual overview, see the <a href="../../tutorials/overview/">Workflow Overview</a>.</p>
+<hr />
+<h2 id="1-image-segmentation-sam">1. Image Segmentation — SAM<a class="headerlink" href="#1-image-segmentation-sam" title="Permanent link">&para;</a></h2>
+<h3 id="what-it-does">What It Does<a class="headerlink" href="#what-it-does" title="Permanent link">&para;</a></h3>
+<p>The <strong>Segment Anything Model (SAM)</strong> generates pixel-level segmentation masks from minimal user input (point clicks or bounding boxes). It is a foundation model trained on 11 million images and 1 billion masks.</p>
+<h3 id="castles-usage">CASTLE's Usage<a class="headerlink" href="#castles-usage" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Model variant</strong>: ViT-B (<code>vit_b</code>)</li>
+<li><strong>Checkpoint</strong>: <code>sam_vit_b_01ec64.pth</code></li>
+<li><strong>Interface</strong>: Point-and-click in the Label ROI sub-tab</li>
+<li><strong>Implementation</strong>: <code>castle/utils/image_segment.py</code> → <code>Segmentor</code> class</li>
+</ul>
+<p>The <code>Segmentor</code> wraps SAM's <code>SamAutomaticMaskGenerator</code> and interactive predictor:</p>
+<ol>
+<li>User clicks on the frame → point coordinates sent to SAM</li>
+<li>SAM returns a binary mask for the clicked object</li>
+<li>Multiple clicks refine the mask (add/remove regions)</li>
+<li>Multiple ROIs can be labeled sequentially (e.g., body, head, tail)</li>
+</ol>
+<p><strong>Auto-mask generator parameters</strong> (from <code>model_config.json</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>points_per_side</code></td>
+<td>16</td>
+<td>Grid density for auto-segmentation</td>
+</tr>
+<tr>
+<td><code>pred_iou_thresh</code></td>
+<td>0.8</td>
+<td>IoU prediction threshold</td>
+</tr>
+<tr>
+<td><code>stability_score_thresh</code></td>
+<td>0.9</td>
+<td>Mask stability threshold</td>
+</tr>
+<tr>
+<td><code>crop_n_layers</code></td>
+<td>1</td>
+<td>Number of crop layers</td>
+</tr>
+<tr>
+<td><code>min_mask_region_area</code></td>
+<td>200</td>
+<td>Minimum mask area in pixels</td>
+</tr>
+</tbody>
+</table>
+<h3 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Kirillov, A., et al. (2023). <em>Segment Anything.</em> ICCV 2023.
+<a href="https://arxiv.org/abs/2304.02643">arXiv:2304.02643</a></p>
+</blockquote>
+<hr />
+<h2 id="2-video-object-tracking-deaot">2. Video Object Tracking — DeAOT<a class="headerlink" href="#2-video-object-tracking-deaot" title="Permanent link">&para;</a></h2>
+<h3 id="what-it-does_1">What It Does<a class="headerlink" href="#what-it-does_1" title="Permanent link">&para;</a></h3>
+<p><strong>DeAOT</strong> (Decoupling features in Associating Objects with Transformers) propagates segmentation masks from reference frames across an entire video. It handles object deformation, occlusion, and appearance changes.</p>
+<h3 id="castles-usage_1">CASTLE's Usage<a class="headerlink" href="#castles-usage_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Model variants</strong>:<ul>
+<li><code>R50_DeAOTL</code> — ResNet-50 backbone (faster)</li>
+<li><code>SwinB_DeAOTL</code> — Swin Transformer-B backbone (more accurate)</li>
+</ul>
+</li>
+<li><strong>Checkpoints</strong>: <code>R50_DeAOTL_PRE_YTB_DAV.pth</code>, <code>SwinB_DeAOTL_PRE_YTB_DAV.pth</code></li>
+<li><strong>Pretrained on</strong>: YouTube-VOS + DAVIS datasets</li>
+<li><strong>Implementation</strong>: <code>castle/utils/tracking_manager.py</code> → <code>ROITracker</code> class</li>
+</ul>
+<p>The tracking process:</p>
+<ol>
+<li>Load all ROI labels (frame + mask pairs) from the project</li>
+<li>Initialize DeAOT with the selected model</li>
+<li>For each frame in the specified range:<ul>
+<li>If labels exist for this frame, inject them</li>
+<li>Otherwise, propagate masks from previous frame</li>
+</ul>
+</li>
+<li>Store masks in HDF5 format (<code>mask_list.h5</code>) via <code>H5IO</code></li>
+</ol>
+<p><strong>Iterative refinement workflow</strong>: If tracking fails at frame N, the user labels frame N and re-runs tracking starting from that frame. This progressively improves prompt diversity.</p>
+<h3 id="reference_1">Reference<a class="headerlink" href="#reference_1" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Yang, L., et al. (2022). <em>Decoupling Features in Hierarchical Propagation for Video Object Segmentation.</em> NeurIPS 2022.
+<a href="https://arxiv.org/abs/2210.09782">arXiv:2210.09782</a></p>
+</blockquote>
+<hr />
+<h2 id="3-video-alignment">3. Video Alignment<a class="headerlink" href="#3-video-alignment" title="Permanent link">&para;</a></h2>
+<h3 id="what-it-does_2">What It Does<a class="headerlink" href="#what-it-does_2" title="Permanent link">&para;</a></h3>
+<p>Normalizes ROI position and orientation across frames so that features reflect <strong>posture and movement</strong>, not location in the frame.</p>
+<h3 id="castles-usage_2">CASTLE's Usage<a class="headerlink" href="#castles-usage_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Implementation</strong>: <code>castle/utils/video_align.py</code></li>
+</ul>
+<p>Available transformations:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>center_roi(frame, mask, roi_color)</code></td>
+<td>Translates frame so the ROI centroid is at the image center</td>
+</tr>
+<tr>
+<td><code>rotate_based_on_roi_closest_center_point(frame, mask, roi_color)</code></td>
+<td>Rotates frame so the closest contour point of a secondary ROI (e.g., tail) points upward</td>
+</tr>
+<tr>
+<td><code>crop(frame, crop_h, crop_w)</code></td>
+<td>Crops a fixed-size window centered on the frame</td>
+</tr>
+</tbody>
+</table>
+<p>The alignment pipeline (configured in the Extract Latent tab):</p>
+<ol>
+<li><strong>Center</strong> — find the largest connected component of the specified ROI, compute its centroid, translate the frame</li>
+<li><strong>Rotate</strong> — using a secondary ROI (e.g., tail), compute the angle from center to the closest contour point, rotate to normalize orientation</li>
+<li><strong>Crop</strong> — extract a fixed-size window (default 300×300 pixels)</li>
+<li><strong>Remove background</strong> (optional) — zero out pixels outside the ROI mask</li>
+</ol>
+<hr />
+<h2 id="4-visual-feature-extraction-dinov2-dinov3">4. Visual Feature Extraction — DINOv2 / DINOv3<a class="headerlink" href="#4-visual-feature-extraction-dinov2-dinov3" title="Permanent link">&para;</a></h2>
+<h3 id="what-it-does_3">What It Does<a class="headerlink" href="#what-it-does_3" title="Permanent link">&para;</a></h3>
+<p>Self-supervised Vision Transformers (ViT) extract rich visual features without task-specific training. Each frame is converted to a high-dimensional feature vector that captures visual patterns.</p>
+<h3 id="castles-usage_3">CASTLE's Usage<a class="headerlink" href="#castles-usage_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong>Models</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Checkpoint</th>
+<th>Feature Dim</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DINOv2 ViT-B/14 (with registers)</td>
+<td><code>dinov2_vitb14_reg4_pretrain.pth</code></td>
+<td>768</td>
+</tr>
+<tr>
+<td>DINOv3 ViT-B/16</td>
+<td><code>dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth</code></td>
+<td>768</td>
+</tr>
+<tr>
+<td>DINOv3 ViT-L/16</td>
+<td><code>dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth</code></td>
+<td>1024</td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p><strong>Implementation</strong>: <code>castle/core/extractor.py</code> + <code>castle/core/models.py</code></p>
+</li>
+</ul>
+<p>Extraction process:</p>
+<ol>
+<li>Load aligned video frames as a <code>VideoDataset</code> (PyTorch <code>Dataset</code>)</li>
+<li>Batch frames through the visual encoder (default batch size: 32)</li>
+<li>Extract CLS token or pooled features per frame</li>
+<li>Save as <code>.npz</code> file with shape <code>(n_frames, feature_dim)</code></li>
+<li>Frames with empty masks produce NaN vectors</li>
+</ol>
+<h3 id="reference_2">Reference<a class="headerlink" href="#reference_2" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Oquab, M., et al. (2024). <em>DINOv2: Learning Robust Visual Features without Supervision.</em> TMLR 2024.
+<a href="https://arxiv.org/abs/2304.07193">arXiv:2304.07193</a></p>
+</blockquote>
+<hr />
+<h2 id="5-dimensionality-reduction-umap">5. Dimensionality Reduction — UMAP<a class="headerlink" href="#5-dimensionality-reduction-umap" title="Permanent link">&para;</a></h2>
+<h3 id="what-it-does_4">What It Does<a class="headerlink" href="#what-it-does_4" title="Permanent link">&para;</a></h3>
+<p><strong>UMAP</strong> (Uniform Manifold Approximation and Projection) reduces high-dimensional data to 2D for visualization while preserving local and global structure.</p>
+<h3 id="castles-usage_4">CASTLE's Usage<a class="headerlink" href="#castles-usage_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Implementation</strong>: <code>castle/utils/myumap.py</code> — custom UMAP using cuml (GPU-accelerated) with spectral layout initialization</li>
+<li><strong>Called from</strong>: <code>castle/utils/latent_explorer.py</code> → <code>Latent.build_embedding()</code></li>
+</ul>
+<p>CASTLE's UMAP implementation uses:</p>
+<ul>
+<li><strong>cuml</strong> <code>fuzzy_simplicial_set</code> for graph construction</li>
+<li><strong>Spectral layout</strong> or <strong>PCA</strong> for initialization</li>
+<li><strong>cuml</strong> <code>simplicial_set_embedding</code> for optimization</li>
+<li>Default: 20,000 epochs for convergence</li>
+</ul>
+<p><strong>Hierarchical multi-stage UMAP</strong>: CASTLE supports chaining multiple UMAP stages to progressively reduce dimensions:</p>
+<table>
+<thead>
+<tr>
+<th>Magnification</th>
+<th>Stages</th>
+<th>Dimensions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Low</td>
+<td>1 stage</td>
+<td>→ 2D</td>
+</tr>
+<tr>
+<td>Intermediate</td>
+<td>2 stages</td>
+<td>→ 5D → 2D</td>
+</tr>
+<tr>
+<td>High</td>
+<td>2 stages</td>
+<td>→ 10D → 2D</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>n_neighbors</code> parameter controls the scale of structure preserved — higher values capture more global patterns, lower values capture finer local details.</p>
+<h3 id="reference_3">Reference<a class="headerlink" href="#reference_3" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>McInnes, L., Healy, J., &amp; Melville, J. (2018). <em>UMAP: Uniform Manifold Approximation and Projection for Dimension Reduction.</em>
+<a href="https://arxiv.org/abs/1802.03426">arXiv:1802.03426</a></p>
+</blockquote>
+<hr />
+<h2 id="6-clustering-dbscan">6. Clustering — DBSCAN<a class="headerlink" href="#6-clustering-dbscan" title="Permanent link">&para;</a></h2>
+<h3 id="what-it-does_5">What It Does<a class="headerlink" href="#what-it-does_5" title="Permanent link">&para;</a></h3>
+<p><strong>DBSCAN</strong> (Density-Based Spatial Clustering of Applications with Noise) discovers clusters of arbitrary shape based on point density. Points in sparse regions are labeled as noise (-1).</p>
+<h3 id="castles-usage_5">CASTLE's Usage<a class="headerlink" href="#castles-usage_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Implementation</strong>: <code>castle/utils/latent_explorer.py</code> → <code>Latent.build_cluster()</code></li>
+<li><strong>Key parameter</strong>: <code>eps</code> (epsilon-neighborhood radius)<ul>
+<li>Smaller eps → more, smaller clusters</li>
+<li>Larger eps → fewer, larger clusters</li>
+<li>Typical range: 0.1–10.0 (default: 1.0)</li>
+</ul>
+</li>
+</ul>
+<p>Clustering is applied to the 2D UMAP embedding, not the original high-dimensional features. This makes it fast and allows interactive parameter tuning.</p>
+<h3 id="reference_4">Reference<a class="headerlink" href="#reference_4" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Ester, M., Kriegel, H.-P., Sander, J., &amp; Xu, X. (1996). <em>A Density-Based Algorithm for Discovering Clusters in Large Spatial Databases with Noise.</em> KDD 1996.</p>
+</blockquote>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

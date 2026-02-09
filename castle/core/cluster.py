@@ -47,6 +47,27 @@ def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float) -> Tu
     distance, index = tree.query((x, y))
     return int(index), float(distance)
 
+def auto_generate_cluster_name(parent_name, cluster_id):
+    """Auto-generate a hierarchical cluster name based on parent name and cluster ID.
+    
+    Naming convention: parent_name + next_level_letter + cluster_id
+    e.g., root_a0, root_a0_b1, root_a0_b1_c2
+    """
+    import re
+    if parent_name is None:
+        parent_name = "root"
+    
+    # Try to find the last level designator (single letter followed by digits at end)
+    match = re.search(r'_([a-z])(\d+)$', parent_name)
+    if match:
+        last_char = match.group(1)
+        next_char = chr(ord(last_char) + 1)
+    else:
+        next_char = 'a'
+        
+    return f"{parent_name}_{next_char}{cluster_id}"
+
+
 # ---------------------------
 # Core Class: LatentAggregator
 # ---------------------------

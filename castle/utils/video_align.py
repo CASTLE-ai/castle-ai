@@ -21,6 +21,45 @@ def center_roi(frame, mask, roi_color, flags=cv2.INTER_LINEAR):
     return cv2.warpAffine(frame, matrix, (w, h), flags=flags)
 
 
+def get_roi_closest_point_safe(mask, roi_color):
+    """
+    安全地獲取 ROI 的最接近中心點
+    如果 ROI 不存在或發生錯誤，返回 None
+    
+    Args:
+        mask: 遮罩影像
+        roi_color: ROI 顏色識別碼
+    
+    Returns:
+        tuple (x, y) 或 None
+    """
+    try:
+        roi_contour = get_contour(mask, roi_color)
+        h, w = mask.shape[:2]
+        center_x, center_y = (w // 2, h // 2)
+        (closest_point_x, closest_point_y), _ = find_closest_point((center_x, center_y), roi_contour)
+        return (closest_point_x, closest_point_y)
+    except (ValueError, Exception):
+        return None
+
+
+def rotate_based_on_point(frame, closest_point):
+    """
+    根據預先計算的最接近點旋轉影像
+    
+    Args:
+        frame: 要旋轉的影像
+        closest_point: (x, y) 座標元組
+    
+    Returns:
+        旋轉後的影像
+    """
+    h, w = frame.shape[:2]
+    center_x, center_y = (w // 2, h // 2)
+    closest_point_x, closest_point_y = closest_point
+    theta = np.arctan2(closest_point_y - center_y, closest_point_x - center_x) * 180. / np.pi
+    matrix = cv2.getRotationMatrix2D((center_x, center_y), theta-90, 1.0)
+    return cv2.warpAffine(frame, matrix, (w, h))
 
 
 def rotate_based_on_roi_closest_center_point(frame, mask, roi_color, flags=cv2.INTER_LINEAR):

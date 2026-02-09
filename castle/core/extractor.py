@@ -15,7 +15,7 @@ from castle.core.logging_config import setup_logger
 from castle.core.project import get_project_config, save_project_config
 from castle.utils.video_io import VideoWriter, VideoReader
 from castle.utils.h5_io import H5IO
-from castle.utils.video_align import blank_page
+from castle.utils.video_align import blank_page, center_roi, get_roi_closest_point_safe
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -154,14 +154,47 @@ def extract_roi_latent_from_video(
     NUM_WORKERS = os.cpu_count() // 2 if os.cpu_count() else 1
     if NUM_WORKERS == 0: NUM_WORKERS = 1
 
-    dataset = VideoDataset(source_path, 0, mask_list_path, preprocess_config, roi_id)
     # Get video length
+    video_len = 0
     try:
         with VideoReader(source_path) as vr:
-            dataset.video_len = len(vr)
+            video_len = len(vr)
     except Exception as e:
         logger.error(f"Failed to open video {source_path}: {e}")
         return ""
+
+    # Pre-scan: if rotate_roi_tail is enabled, scan all frames to collect
+    # valid tail ROI points, then interpolate missing ones
+    interpolated_points = None
+    if preprocess_config.rotate_roi_tail_switch and preprocess_config.center_roi_switch:
+        logger.info(f"Pre-scanning {video_name} for tail ROI interpolation...")
+        valid_points = {}
+        failed_count = 0
+        tracker_scan = H5IO(mask_list_path)
+        
+        for idx in range(video_len):
+            try:
+                mask = tracker_scan.read_mask(idx)
+                # Center the mask first (same as transform does)
+                m = center_roi(mask, mask, preprocess_config.center_roi_id)
+                point = get_roi_closest_point_safe(m, preprocess_config.rotate_roi_tail_id)
+                if point is not None:
+                    valid_points[idx] = point
+                else:
+                    failed_count += 1
+            except Exception:
+                failed_count += 1
+        
+        del tracker_scan
+        
+        logger.info(f"Scan complete: {len(valid_points)}/{video_len} valid, {failed_count} missing")
+        
+        if valid_points:
+            interpolated_points = interpolate_missing_points(valid_points, video_len)
+            logger.info(f"Interpolation complete: all {video_len} frames now have rotation points")
+
+    dataset = VideoDataset(source_path, video_len, mask_list_path, preprocess_config, roi_id,
+                           interpolated_points=interpolated_points)
         
     loader = DataLoader(
         dataset, 

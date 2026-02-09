@@ -81,6 +81,7 @@ dbscan_config_template='''{
 preset_dropdown_list = ['Low-magnification objective 1000', 'Low-magnification objective 500', 'Low-magnification objective 300', 'Low-magnification objective 100', 'Low-magnification objective 50', 'Low-magnification objective 25']
 preset_dropdown_list += ['Intermediate-magnification objective (1000, 500)', 'Intermediate-magnification objective (500, 300)', 'Intermediate-magnification objective (300, 100)', 'Intermediate-magnification objective (100, 50)', 'Intermediate-magnification objective (50, 25)']
 preset_dropdown_list += ['High-magnification objective (1000, 500)', 'High-magnification objective (500, 300)', 'High-magnification objective (300, 100)', 'High-magnification objective (100, 50)', 'High-magnification objective (50, 25)']
+preset_dropdown_list += ['Super-high-magnification objective (500, 300, 100)', 'Super-high-magnification objective (300, 100, 50)', 'Super-high-magnification objective (100, 50, 25)']
 
 # ---------------------------
 # Helpers
@@ -114,6 +115,19 @@ def update_umap_config_text_with_preset(preset_dropdown):
             ]
             return json.dumps(config, indent=4)
     
+    elif 'Super-high-magnification objective' in preset_dropdown:
+        numbers = re.findall(r'\d+', preset_dropdown)
+        if len(numbers) >= 3:
+            n_neighbors_1 = int(numbers[0])
+            n_neighbors_2 = int(numbers[1])
+            n_neighbors_3 = int(numbers[2])
+            config = [
+                {"n_neighbors": n_neighbors_1, "min_dist": 0.0, "n_components": 15, "n_epochs": 5000},
+                {"n_neighbors": n_neighbors_2, "min_dist": 0.0, "n_components": 5, "n_epochs": 5000},
+                {"n_neighbors": n_neighbors_3, "min_dist": 0.0, "n_components": 2, "n_epochs": 5000}
+            ]
+            return json.dumps(config, indent=4)
+
     elif 'High-magnification objective' in preset_dropdown:
         numbers = re.findall(r'\d+', preset_dropdown)
         if len(numbers) >= 2:

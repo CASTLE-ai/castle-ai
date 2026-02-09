@@ -128,10 +128,12 @@ class LatentAggregator:
                 # Check 1: Must match ROI ID
                 if roi_key not in filename: continue
                 
-                # Check 2: Must match Model Name (since new filenames contain it)
-                # OR we just rely on file existence in the folder.
-                # Let's rely on finding it in the folder + being in config.
-                if model_name not in filename: continue 
+                # Check 2: Must match Model Name OR exist in model-specific directory
+                # Rotation latent filenames don't contain model_name, but are stored
+                # under latent/{model_name}/ directory, so also check file existence
+                latent_file_path = os.path.join(latent_dir_path, filename)
+                if model_name not in filename and not os.path.exists(latent_file_path):
+                    continue
                 
                 latent_files.append((filename, video_source_name))
         

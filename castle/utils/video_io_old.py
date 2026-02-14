@@ -1,3 +1,16 @@
+"""
+DEPRECATED: This module is superseded by castle.utils.video_io.
+Use VideoReader and VideoWriter from castle.utils.video_io instead.
+This file is kept only for backward compatibility reference.
+"""
+
+import warnings
+warnings.warn(
+    "castle.utils.video_io_old is deprecated. Use castle.utils.video_io instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import av
 import os
 

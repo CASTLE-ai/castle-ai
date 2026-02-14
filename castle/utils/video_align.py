@@ -144,17 +144,31 @@ def get_mask(frame, select_roi):
     
     
 def find_closest_point(ref, contour):
-    mini = int(1e6)
-    point_close = None
+    """Find the closest point in a contour to a reference point.
+    
+    Uses vectorized numpy operations instead of Python for-loop.
+    
+    Args:
+        ref: Reference point (x, y)
+        contour: Array of contour points, shape (N, 2)
+        
+    Returns:
+        Tuple of (closest_point, min_distance)
+        
+    Raises:
+        ValueError: If contour has fewer than 2 points
+    """
     if len(contour) < 2:
         raise ValueError('find_closest_point error: contour length must be >= 2')
-    for i in range(len(contour)):
-        distance = cv2.norm(ref - contour[i])
-        if distance < mini:
-            mini = distance
-            point_close = contour[i]
-
-    return point_close, mini
+    
+    ref = np.array(ref, dtype=np.float64)
+    contour = np.array(contour, dtype=np.float64)
+    
+    # Vectorized distance computation
+    distances = np.sqrt(np.sum((contour - ref) ** 2, axis=1))
+    min_idx = np.argmin(distances)
+    
+    return contour[min_idx].astype(int), float(distances[min_idx])
     
 
 def blank_page(crop_h, crop_w):

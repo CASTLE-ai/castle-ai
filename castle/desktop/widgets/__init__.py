@@ -1,0 +1,1 @@
+"""CASTLE Desktop widget panels."""

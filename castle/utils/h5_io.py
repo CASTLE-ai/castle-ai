@@ -1,13 +1,32 @@
 import os
+import logging
 import h5py
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 
 class H5IO:
+    """HDF5 I/O handler for mask storage.
+    
+    Supports context manager protocol for safe resource management:
+        with H5IO('masks.h5') as h5:
+            mask = h5.read_mask(0)
+    """
+    
     def __init__(self, file_path):
         self.file_path = file_path
         self.config = dict()
         self.reset()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensure file is closed."""
+        self.close()
+        return False
 
     def __setitem__(self, index, mask):
         self.write_mask(index, mask)
@@ -36,11 +55,11 @@ class H5IO:
 
     def read_config(self, key):
         value = self.f[key][()]
-        print('read_config', key, value)
+        logger.debug('read_config %s = %s', key, value)
         return value
 
     def write_config(self, key, value):
-        print('write_config', key, value)
+        logger.debug('write_config %s = %s', key, value)
         try:
             # Assume the dataset exists and try to overwrite
             dset = self.f[key]
@@ -84,12 +103,16 @@ class H5IO:
     def __len__(self):
         return int(self.f['total_frames'][()])
     
-    def __del__(self):
-        if hasattr(self, 'f') and self.f.id.valid:
+    def close(self):
+        """Explicitly close the HDF5 file."""
+        if hasattr(self, 'f'):
             try:
-                self.f.close()
+                if self.f.id.valid:
+                    self.f.close()
             except Exception as e:
-                print(f"Warning: Failed to close HDF5 file on __del__: {e}")
-            del self.f
+                logger.warning(f"Failed to close HDF5 file: {e}")
+
+    def __del__(self):
+        self.close()
 
 

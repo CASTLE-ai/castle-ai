@@ -30,7 +30,7 @@ def frame_to_timestamp(frame_number: int, fps: float) -> str:
     milliseconds = (seconds_rem % 1) * 1000
     return f"{hours:02}:{minutes:02}:{int(seconds_rem):02},{int(milliseconds):03}"
 
-def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float) -> Tuple[int, float]:
+def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float, tree=None) -> Tuple[int, float]:
     """
     Find the nearest point in embedding space using KDTree.
     
@@ -38,12 +38,14 @@ def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float) -> Tu
         embedding_data: 2D embedding array of shape (N, 2)
         x: Query x coordinate
         y: Query y coordinate
+        tree: Optional pre-built KDTree (avoids rebuilding each call)
     
     Returns:
         Tuple of (index, distance) to nearest point
     """
     from scipy.spatial import KDTree
-    tree = KDTree(embedding_data)
+    if tree is None:
+        tree = KDTree(embedding_data)
     distance, index = tree.query((x, y))
     return int(index), float(distance)
 

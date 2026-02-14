@@ -166,7 +166,10 @@ class EmbeddingScatterPlot:
         
         self.selected_point = (np.nan, np.nan)
         self.selected_index = -1
-        # M-03: KDTree removed - now computed in Core layer via find_nearest_embedding
+        
+        # F-01: Build KDTree once and cache for reuse
+        from scipy.spatial import KDTree
+        self._kdtree = KDTree(data)
     
     def pixel_2_embedding(self, px, py):
         px, py = float(px), float(py)
@@ -241,9 +244,9 @@ class EmbeddingScatterPlot:
         return self.plot()
         
     def near_point(self, x, y):
-        # M-03: Delegate to Core layer
+        # F-01: Use cached KDTree for O(log n) lookup
         from castle.core.cluster import find_nearest_embedding
-        index, _ = find_nearest_embedding(self.data, x, y)
+        index, _ = find_nearest_embedding(self.data, x, y, tree=self._kdtree)
         return index
 
 # ---------------------------

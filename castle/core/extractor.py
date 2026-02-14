@@ -45,7 +45,7 @@ def _get_observer(select_model):
 # --- Interpolation Utility ---
 def interpolate_missing_points(valid_points, total_frames):
     """
-    對缺失的幀執行線性內插或外插
+    對缺失的幀執行線性內插或外插（向量化版本）
     
     Args:
         valid_points: dict {frame_idx: (x, y)} 有效的追蹤點
@@ -57,37 +57,23 @@ def interpolate_missing_points(valid_points, total_frames):
     if not valid_points:
         raise ValueError("No valid tracking points found for rotate_roi_tail_id")
     
-    result = {}
+    # Sort valid indices and extract x, y arrays
+    sorted_indices = np.array(sorted(valid_points.keys()))
+    valid_x = np.array([valid_points[i][0] for i in sorted_indices])
+    valid_y = np.array([valid_points[i][1] for i in sorted_indices])
     
-    for idx in range(total_frames):
-        if idx in valid_points:
-            result[idx] = valid_points[idx]
-        else:
-            # 找前後最近的有效點
-            prev_indices = [i for i in valid_points.keys() if i < idx]
-            next_indices = [i for i in valid_points.keys() if i > idx]
-            prev_idx = max(prev_indices) if prev_indices else None
-            next_idx = min(next_indices) if next_indices else None
-            
-            if prev_idx is not None and next_idx is not None:
-                # 線性內插
-                t = (idx - prev_idx) / (next_idx - prev_idx)
-                prev_point = valid_points[prev_idx]
-                next_point = valid_points[next_idx]
-                result[idx] = (
-                    prev_point[0] + t * (next_point[0] - prev_point[0]),
-                    prev_point[1] + t * (next_point[1] - prev_point[1])
-                )
-            elif prev_idx is not None:
-                # 外插（使用前一個有效點）
-                logger.warning(f"Extrapolating at end of video for frame {idx} using frame {prev_idx}")
-                result[idx] = valid_points[prev_idx]
-            elif next_idx is not None:
-                # 外插（使用後一個有效點）
-                logger.warning(f"Extrapolating at beginning of video for frame {idx} using frame {next_idx}")
-                result[idx] = valid_points[next_idx]
-            else:
-                raise ValueError(f"Cannot interpolate/extrapolate for frame {idx}")
+    # Use numpy interp for vectorized linear interpolation (handles extrapolation at edges)
+    all_indices = np.arange(total_frames)
+    interp_x = np.interp(all_indices, sorted_indices, valid_x)
+    interp_y = np.interp(all_indices, sorted_indices, valid_y)
+    
+    # Log extrapolation at edges
+    if sorted_indices[0] > 0:
+        logger.warning(f"Extrapolating at beginning of video for frames 0-{sorted_indices[0]-1} using frame {sorted_indices[0]}")
+    if sorted_indices[-1] < total_frames - 1:
+        logger.warning(f"Extrapolating at end of video for frames {sorted_indices[-1]+1}-{total_frames-1} using frame {sorted_indices[-1]}")
+    
+    result = {idx: (float(interp_x[idx]), float(interp_y[idx])) for idx in range(total_frames)}
     
     return result
 

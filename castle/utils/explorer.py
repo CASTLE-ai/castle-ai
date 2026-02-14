@@ -66,13 +66,13 @@ class Latent:
         
         
     def merge(self, cids):
-        self.syllables[self.syllables == cid2] = cid1
-        self.need_maintain_key_frames = True
         assert hasattr(self, 'syllables'), 'Do split first'
         assert len(cids) >= 2
         
         for i in range(1, len(cids)):
             self.syllables[self.syllables == cids[i]] = cids[0]
+        
+        self.need_maintain_key_frames = True
             
             
             

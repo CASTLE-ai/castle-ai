@@ -412,10 +412,89 @@ def check_session_exists(storage_path, project_name):
     return {'cluster_count': cluster_count, 'id_csv': id_csv}
 
 
+def _find_latest_npz(cluster_path):
+    """Find the most recently modified cluster_*.npz file in cluster_path."""
+    import glob
+    npz_files = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
+    if not npz_files:
+        return None
+    # Sort by modification time, newest first
+    npz_files.sort(key=os.path.getmtime, reverse=True)
+    return npz_files[0]
+
+
+def _restore_embedding_from_npz(npz_path, latents):
+    """Restore a LocalLatent and EmbeddingScatterPlot from a saved .npz file.
+
+    The npz contains:
+      - emb: (N, 2) array with NaN for non-selected indices
+      - cls: (N,) int array with -1 for non-selected indices
+      - config: UMAP config used
+
+    Returns (local_latents, Z_plt) or (None, None) on failure.
+    """
+    from castle.utils.latent_explorer import LocalLatent
+    try:
+        data = np.load(npz_path, allow_pickle=True)
+        emb_full = data['emb']   # (N, 2) with NaN
+        cls_full = data['cls']   # (N,) with -1
+        config = data['config']
+
+        # Determine which indices were selected (non-NaN in embedding)
+        valid_mask = ~np.isnan(emb_full[:, 0])
+
+        masked_emb = emb_full[valid_mask]
+        masked_cls = cls_full[valid_mask]
+
+        # Reconstruct LocalLatent
+        local_data = latents.data[valid_mask] if hasattr(latents, 'data') else masked_emb
+        local_latents = LocalLatent(
+            data=local_data,
+            index_mask=valid_mask,
+            color_avoid=latents.used_palette,
+            device=latents.device,
+        )
+        local_latents.embedding = masked_emb
+        local_latents.cluster = masked_cls
+        local_latents.configs = config.tolist() if hasattr(config, 'tolist') else config
+
+        # Reconstruct export dict from the cluster assignments + global meta
+        for cid_local in np.unique(masked_cls):
+            if cid_local == -1:
+                continue
+            # Find the global cluster id that this local cluster mapped to
+            # by looking at latents.cluster for indices in valid_mask
+            global_indices = np.where(valid_mask)[0]
+            global_cluster_vals = latents.cluster[global_indices]
+            # Points in this local cluster
+            local_mask = masked_cls == cid_local
+            if not np.any(local_mask):
+                continue
+            # The corresponding global cluster ID (take the mode)
+            global_ids = global_cluster_vals[local_mask]
+            from collections import Counter
+            global_id = Counter(global_ids.tolist()).most_common(1)[0][0]
+
+            if global_id in latents.cluster_meta:
+                meta = latents.cluster_meta[global_id]
+                local_latents.export[cid_local] = {
+                    'name': meta['name'],
+                    'color': meta['color'],
+                }
+
+        Z_plt = EmbeddingScatterPlot(local_latents)
+        return local_latents, Z_plt
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return None, None
+
+
 def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model):
-    """Restore latents from saved CSV files."""
+    """Restore latents from saved CSV files and optionally restore UMAP embedding."""
     if project_name is None:
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
     def notify_callback(msg, level="info"):
         if level == "error":
@@ -457,11 +536,24 @@ def restore_session(storage_path, project_name, select_roi_id, bin_size, select_
             df2_paths.append(ts_path)
         cum += vn
 
+    # Restore UMAP embedding from saved .npz (B-03)
+    restored_local_latents = None
+    restored_Z_plt = None
+    restored_emb_img = None
+
+    npz_path = _find_latest_npz(cluster_path)
+    if npz_path:
+        restored_local_latents, restored_Z_plt = _restore_embedding_from_npz(npz_path, latents)
+        if restored_Z_plt is not None:
+            restored_emb_img = restored_Z_plt.plot_named_embedding()
+            gr.Info(f'Restored UMAP embedding from {os.path.basename(npz_path)}')
+
     gr.Info(f'Restored session with {latents.num_cluster - 1} clusters')
 
     fig = plot_syllables_per_video(latents, aggregator)
 
-    return aggregator, latents, fig, update_select_cluster_list(latents), id_csv_path, df2_paths
+    return (aggregator, latents, fig, update_select_cluster_list(latents),
+            id_csv_path, df2_paths, restored_Z_plt, restored_emb_img)
 
 
 def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggregator):
@@ -617,11 +709,13 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[ui['restore_btn'], ui['session_status']]
     )
 
-    # Restore previous session
+    # Restore previous session (B-03: also restores UMAP embedding)
     ui['restore_btn'].click(
         fn=restore_session,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
-        outputs=[mulvideo, latents, ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv']]
+        outputs=[mulvideo, latents, ui['syllables_plot'], ui['select_cluster'],
+                 ui['behavior_id_csv'], ui['behavior_time_series_csv'],
+                 local_embedding_plot, ui['embedding_plot']]
     ).then(
         fn=lambda: (gr.update(visible=False), gr.update(visible=False)),
         outputs=[ui['restore_btn'], ui['session_status']]

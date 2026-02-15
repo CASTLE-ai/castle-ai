@@ -2,15 +2,8 @@ from setuptools import setup, find_packages
 
 
 def readme():
-    try:
-        with open("README.md", encoding="UTF-8") as readme_file:
-            return readme_file.read()
-    except TypeError:
-        # Python 2.7 doesn't support encoding argument in builtin open
-        import io
-
-        with io.open("README.md", encoding="UTF-8") as readme_file:
-            return readme_file.read()
+    with open("README.md", encoding="UTF-8") as readme_file:
+        return readme_file.read()
 
 
 

@@ -65,16 +65,16 @@ def rotate_based_on_point(frame, closest_point):
 def rotate_based_on_roi_closest_center_point(frame, mask, roi_color, flags=cv2.INTER_LINEAR):
     roi_contour = get_contour(mask, roi_color)
     h, w = frame.shape[:2]
-    center_x, conter_y = (w // 2, h // 2)
-    (closest_point_x, closest_point_y), _ = find_closest_point((center_x, conter_y), roi_contour)
-    theta = np.arctan2(closest_point_y - conter_y, closest_point_x - center_x) * 180. / np.pi
-    matrix = cv2.getRotationMatrix2D((center_x, conter_y), theta-90, 1.0)
+    center_x, center_y = (w // 2, h // 2)
+    (closest_point_x, closest_point_y), _ = find_closest_point((center_x, center_y), roi_contour)
+    theta = np.arctan2(closest_point_y - center_y, closest_point_x - center_x) * 180. / np.pi
+    matrix = cv2.getRotationMatrix2D((center_x, center_y), theta-90, 1.0)
     return cv2.warpAffine(frame, matrix, (w, h), flags=flags)
 
 def rotate_based_on_deg(frame, deg, flags=cv2.INTER_LINEAR):
     h, w = frame.shape[:2]
-    center_x, conter_y = (w // 2, h // 2)
-    matrix = cv2.getRotationMatrix2D((center_x, conter_y), deg, 1.0)
+    center_x, center_y = (w // 2, h // 2)
+    matrix = cv2.getRotationMatrix2D((center_x, center_y), deg, 1.0)
     return cv2.warpAffine(frame, matrix, (w, h), flags=flags)
 
 

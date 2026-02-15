@@ -16,7 +16,7 @@ from castle.core.logging_config import setup_logger
 from castle.core.project import get_project_config, save_project_config
 from castle.utils.video_io import VideoWriter, VideoReader
 from castle.utils.h5_io import H5IO
-from castle.utils.video_align import center_roi, get_roi_closest_point_safe
+from castle.utils.video_align import center_roi, get_roi_closest_point_safe, blank_page
 
 # Setup logger
 logger = setup_logger(__name__)

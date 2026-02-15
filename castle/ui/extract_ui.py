@@ -365,15 +365,15 @@ def ui_extract_roi_rotation_latent(
 def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_switch, center_roi_id,
                        center_roi_crop_width, center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id, remove_background_switch):
     
-    # M-01 Fix: Handle string-to-bool conversion in UI layer
+    # Boolean switches now arrive as bool from gr.Checkbox (no string conversion needed)
     preprocess = Preprocess(
-        center_roi_switch=(center_roi_switch == 'True'),
+        center_roi_switch=bool(center_roi_switch),
         center_roi_id=center_roi_id,
         center_roi_crop_width=center_roi_crop_width,
         center_roi_crop_height=center_roi_crop_height,
-        rotate_roi_tail_switch=(rotate_roi_tail_switch == 'True'),
+        rotate_roi_tail_switch=bool(rotate_roi_tail_switch),
         rotate_roi_tail_id=rotate_roi_tail_id,
-        remove_background_switch=(remove_background_switch == 'True')
+        remove_background_switch=bool(remove_background_switch)
     )
     
     # Preview logic
@@ -427,13 +427,13 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             ui['skip_existing'] = gr.Checkbox(label="Skip existing files", value=True, visible=False)
             
         with gr.Column(scale=2):
-            ui['center_roi_switch'] = gr.Dropdown(label="Center ROI", value='False', choices=['True', 'False'], visible=False)
+            ui['center_roi_switch'] = gr.Checkbox(label="Center ROI", value=False, visible=False)
             ui['center_roi_id'] = gr.Number(label="Center ROI ID", value=1, visible=False)
             ui['center_roi_crop_width'] = gr.Number(label="width", value=300, visible=False)
             ui['center_roi_crop_height'] = gr.Number(label="height", value=300, visible=False)
-            ui['rotate_roi_tail_switch'] = gr.Dropdown(label="Rotate based on Tail", value='False', choices=['True', 'False'], visible=False)
+            ui['rotate_roi_tail_switch'] = gr.Checkbox(label="Rotate based on Tail", value=False, visible=False)
             ui['rotate_roi_tail_id'] = gr.Number(label="Tail ROI ID", value=2, visible=False)
-            ui['remove_background_switch'] = gr.Dropdown(label="Remove Background", value='False', choices=['True', 'False'], visible=False)
+            ui['remove_background_switch'] = gr.Checkbox(label="Remove Background", value=False, visible=False)
             ui['apply_preprocess'] = gr.Button("Apply", visible=False)
             
         with gr.Column(scale=4):

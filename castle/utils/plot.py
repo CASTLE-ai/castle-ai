@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-_palette_hex = ['#7AE4F0', '#FFD0EC', '#6EE368', '#C1B5EA', '#9E83E3', '#A7CCED', '#FBC471']
+from castle.core.config import PALETTE_HEX as _palette_hex
 
 _palette = [0,0,0]
 for hex_code in _palette_hex:

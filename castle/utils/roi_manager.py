@@ -40,8 +40,8 @@ def get_frame_display(storage_path, project_name, source_video, frame_index, dis
         return source_video[0]
     
     try:
-        tracker = H5IO(mask_list_path)
-        mask = tracker.read_mask(frame_index)
+        with H5IO(mask_list_path) as tracker:
+            mask = tracker.read_mask(frame_index)
         
         if display_mode == 'Image & Mask':
             frame = source_video[frame_index]
@@ -51,7 +51,6 @@ def get_frame_display(storage_path, project_name, source_video, frame_index, dis
         else:
             result = source_video[frame_index]
         
-        del tracker
         return result
     
     except Exception as e:
@@ -89,10 +88,9 @@ def save_frame_to_knowledge(storage_path, project_name, source_video, frame_inde
             return False, f"Mask file not found. Please run tracking first."
         
         # Load frame and mask
-        tracker = H5IO(mask_list_path)
         frame = source_video[frame_index]
-        mask = tracker.read_mask(frame_index)
-        del tracker
+        with H5IO(mask_list_path) as tracker:
+            mask = tracker.read_mask(frame_index)
         
         # Save to knowledge base
         label_path = os.path.join(label_dir_path, f'{frame_index}')

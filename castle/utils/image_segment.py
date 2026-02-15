@@ -134,9 +134,9 @@ def download_sa_ckpt(model_type):
 
 
 def generate_sa(ckpt_path='', model_type='vit_b', device=''):
-    if len(ckpt_path) == 0:
+    if not ckpt_path:
         ckpt_path = download_sa_ckpt(model_type)
-    if len(device) == 0:
+    if not device:
         device = DEFAULT_DEVICE
 
     sam_args = {

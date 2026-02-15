@@ -22,17 +22,14 @@ def generate_distinct_color(index, saturation=0.7, value=0.9):
 
 
 def generate_palette(avoid):
-    res = [it for it in _palette if not it in avoid]
-    if len(res) == 0:
-        return _palette
-    return res
-    
+    res = [c for c in _palette if c not in avoid]
+    return res or _palette
 
 
 
 class Latent:
     def __init__(self, raw, time_window=1, device=''):
-        if len(device) == 0:
+        if not device:
             device = DEFAULT_DEVICE
         n = (len(raw) // time_window) * time_window
         num_feature = raw.shape[-1]
@@ -130,9 +127,6 @@ class LocalLatent:
         self.device = device
         self.color_avoid = color_avoid
         self._palette = generate_palette(color_avoid)
-        if len(self._palette) == 0:
-            self._palette = _palette # Fallback to full palette if all used
-
         self.export = dict()
         
 
@@ -218,12 +212,10 @@ class LocalLatent:
 
 
     def label_cluster(self, cluster_id, cluster_name, cluster_color=''):
-        tmp = dict()
-        tmp['name'] = cluster_name
-        tmp['color'] = cluster_color if len(cluster_color) > 0 else self._palette[cluster_id]
-        # tmp['data'] = self.cluster == cluster_id
-
-        self.export[cluster_id] = tmp
+        self.export[cluster_id] = {
+            'name': cluster_name,
+            'color': cluster_color or self._palette[cluster_id % len(self._palette)],
+        }
     
     def clean_label(self):
         self.export = dict()

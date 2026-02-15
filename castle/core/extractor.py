@@ -137,11 +137,9 @@ def extract_roi_latent_from_video(
         return ""
     
     # 4. Processing
-    NUM_WORKERS = os.cpu_count() // 2 if os.cpu_count() else 1
-    if NUM_WORKERS == 0: NUM_WORKERS = 1
+    NUM_WORKERS = max(1, (os.cpu_count() or 2) // 2)
 
     # Get video length
-    video_len = 0
     try:
         with VideoReader(source_path) as vr:
             video_len = len(vr)
@@ -370,11 +368,8 @@ def extract_roi_rotation_latent_from_video(
     embed_dim = observer.n_feature
 
     # 4. Processing
-    NUM_WORKERS = os.cpu_count() // 2 if os.cpu_count() else 1
-    if NUM_WORKERS == 0: NUM_WORKERS = 1
+    NUM_WORKERS = max(1, (os.cpu_count() or 2) // 2)
     
-    # Get video length
-    video_len = 0
     try:
         with VideoReader(source_path) as vr:
             video_len = len(vr)

@@ -99,10 +99,8 @@ class Latent:
 
 
 def gen_palette(avoid):
-    res = [it for it in _palette if not it in avoid]
-    if len(res) == 0:
-        return _palette
-    return res
+    res = [c for c in _palette if c not in avoid]
+    return res or _palette
 
         
 class FocusLatent:

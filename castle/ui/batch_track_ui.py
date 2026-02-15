@@ -15,6 +15,7 @@ from ..utils.h5_io import H5IO
 from ..utils.plot import generate_mix_image, generate_mask_image
 from ..utils.video_io import ReadArray, WriteArray
 from ..utils.tracking_manager import ROITracker, read_roi_labels
+from ..utils.analysis_utils import compute_roi_info, save_kinematic_csv
 from .plot_mask_info import Plotter
 
 
@@ -163,7 +164,10 @@ def generate_video_analysis(storage_path: str, project_name: str, video_name: st
 
 
 def generate_csv_analysis(storage_path: str, project_name: str, video_name: str, source_video) -> str:
-    """Generate CSV kinematic analysis for a video."""
+    """Generate CSV kinematic analysis for a video.
+    
+    Uses shared compute_roi_info() and save_kinematic_csv() from analysis_utils.
+    """
     project_path = Path(storage_path) / project_name
     track_dir_path = project_path / "track" / video_name
     rois_results_path = track_dir_path / "mask_list.h5"
@@ -176,46 +180,11 @@ def generate_csv_analysis(storage_path: str, project_name: str, video_name: str,
         n_rois = rois_results.get_n_rois()
         total_frames = len(rois_results)
         
-        roi_info_list = [{"x": [], "y": [], "area": []} for i in range(n_rois)]
-        
-        for i_frame in range(total_frames):
-            for i in range(n_rois):
-                if not rois_results.has_mask(i_frame):
-                    roi_info_list[i]['x'].append(np.nan)
-                    roi_info_list[i]['y'].append(np.nan)
-                    roi_info_list[i]['area'].append(0)
-                    continue
-
-                mask = rois_results[i_frame][:]
-                mask = cv2.inRange(mask, i+1, i+1)
-                output = cv2.connectedComponentsWithStats(mask, 8, cv2.CV_32S)
-                num_labels, _, stats, centroids = output
-                if num_labels <= 1:
-                    roi_info_list[i]['x'].append(np.nan)
-                    roi_info_list[i]['y'].append(np.nan)
-                    roi_info_list[i]['area'].append(0)
-                    continue
-
-                areas = [stats[j, cv2.CC_STAT_AREA] for j in range(1, num_labels)]
-                max_label = np.argmax(areas)
-                roi_info_list[i]['x'].append((centroids[max_label + 1][0]))
-                roi_info_list[i]['y'].append((centroids[max_label + 1][1]))
-                roi_info_list[i]['area'].append(areas[max_label])
-        
-        # Convert to numpy arrays
-        for i in range(n_rois):
-            roi_info_list[i]['x'] = np.array(roi_info_list[i]['x'])
-            roi_info_list[i]['y'] = np.array(roi_info_list[i]['y'])
-            roi_info_list[i]['area'] = np.array(roi_info_list[i]['area']).astype(int)
-
-        # Generate CSV
-        video_name_wo_extension = video_name.split('.')[0]
-        csv_path = track_dir_path / f'{video_name_wo_extension}-basic-information.csv'
-        df = Plotter.create_pandas(roi_info_list)
-        df.to_csv(str(csv_path), float_format="%.4f")
+        roi_info_list = compute_roi_info(rois_results, n_rois, total_frames)
+        csv_path = save_kinematic_csv(str(track_dir_path), video_name, roi_info_list)
         
         del rois_results
-        return str(csv_path)
+        return csv_path
         
     except Exception as e:
         print(f"Error generating CSV for {video_name}: {e}")

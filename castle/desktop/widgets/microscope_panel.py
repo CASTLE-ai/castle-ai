@@ -301,7 +301,7 @@ class MicroscopePanel(QWidget):
             self._progress_bar.setVisible(False)
             
             # Check for existing session
-            from castle.ui.cluster_page_ui import check_session_exists
+            from castle.ui.cluster_handlers import check_session_exists
             session_info = check_session_exists(self._storage_path, self._project_name)
             self._restore_btn.setEnabled(session_info is not None)
             

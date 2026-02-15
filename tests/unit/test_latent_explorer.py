@@ -124,3 +124,32 @@ def test_local_latent_palette():
     assert local.palette(-1) == '#DDDDDD'
     color = local.palette(0)
     assert color.startswith('#')
+
+
+# ---- build_embedding progress_callback (C-05) ----
+
+def test_build_embedding_progress_callback():
+    """progress_callback should be invoked once per UMAP stage."""
+    from unittest.mock import MagicMock, patch
+
+    data = np.random.randn(30, 10).astype(np.float32)
+    mask = np.ones(30, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+
+    # Mock UMAP to avoid actual computation
+    mock_umap_instance = MagicMock()
+    mock_umap_instance.fit_transform.return_value = np.random.randn(30, 2)
+    mock_umap_cls = MagicMock(return_value=mock_umap_instance)
+
+    callback = MagicMock()
+
+    with patch('umap.UMAP', mock_umap_cls):
+        local.build_embedding(
+            [{"n_neighbors": 5}, {"n_neighbors": 5}],
+            progress_callback=callback,
+        )
+
+    assert callback.call_count == 2
+    callback.assert_any_call(0, 2)
+    callback.assert_any_call(1, 2)
+    assert hasattr(local, 'embedding')

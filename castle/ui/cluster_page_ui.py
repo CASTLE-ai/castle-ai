@@ -334,7 +334,7 @@ def update_select_cluster_list(latents):
         gr.Info('Latent init error, please wait.')
     return gr.update(choices=li)
 
-def generate_embedding(latents, cluster_name, cfg_str):
+def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
     try:
         cfg = json.loads(cfg_str)
     except:
@@ -346,11 +346,17 @@ def generate_embedding(latents, cluster_name, cfg_str):
         gr.Info('This Cluster is empty.')
         return None, None, None
     
-    local_latents.build_embedding(cfg)
+    # C-05: Report progress between UMAP stages
+    def umap_progress(stage, total):
+        progress(stage / total, desc=f"UMAP Stage {stage + 1}/{total}...")
+
+    local_latents.build_embedding(cfg, progress_callback=umap_progress)
+
+    progress(1.0, desc="Building plot...")
     Z_plt = EmbeddingScatterPlot(local_latents)
     return local_latents, Z_plt, Z_plt.plot()
 
-def generate_local_cluster(local_latents, eps):
+def generate_local_cluster(local_latents, eps, progress=gr.Progress()):
     try:
         cfg = json.loads(dbscan_config_template)
     except:
@@ -358,7 +364,9 @@ def generate_local_cluster(local_latents, eps):
         return None, None
     
     cfg['eps'] = eps
+    progress(0, desc="Running DBSCAN...")
     local_latents.build_cluster(method='dbscan', configs=cfg)
+    progress(1.0, desc="Building plot...")
     Z_plt = EmbeddingScatterPlot(local_latents)
     return Z_plt, Z_plt.plot()
 

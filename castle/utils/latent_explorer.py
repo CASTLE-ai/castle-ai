@@ -130,7 +130,15 @@ class LocalLatent:
         self.export = dict()
         
 
-    def build_embedding(self, configs):
+    def build_embedding(self, configs, progress_callback=None):
+        """Run multi-stage UMAP dimensionality reduction.
+
+        Args:
+            configs: Single UMAP config dict or list of dicts for multi-stage.
+            progress_callback: Optional ``(stage_index, total_stages) -> None``
+                callable invoked before each UMAP stage, useful for Gradio
+                progress bars.
+        """
         if self.device == 'cpu' or self.device == 'mps':
             from umap import UMAP
         elif 'cuda' in self.device:
@@ -150,7 +158,10 @@ class LocalLatent:
         if not isinstance(configs, list):
             configs = [configs]
 
-        for it in configs:
+        total_stages = len(configs)
+        for i, it in enumerate(configs):
+            if progress_callback is not None:
+                progress_callback(i, total_stages)
             Z = UMAP(**it).fit_transform(Z)
 
         self.embedding = np.array(Z)

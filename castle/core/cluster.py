@@ -110,6 +110,10 @@ class LatentAggregator:
         self.model_name = model_name
         self.notify = notify or print  # Fallback to print
         
+        # C-02: VideoReader LRU cache — keeps N most recently used readers open
+        self._video_reader_cache: Dict[str, VideoReader] = {}
+        self._cache_max_size: int = 3
+        
         # Load project configuration
         project_path, project_config = get_project_config(storage_path, project_name)
         self.project_path = project_path
@@ -183,11 +187,38 @@ class LatentAggregator:
         else:
              self.notify("Warning: No latents loaded.", "warning")
 
+    def _get_cached_reader(self, video_path: str) -> VideoReader:
+        """Get or create a cached VideoReader for a video path.
+        
+        Maintains an LRU-style cache (insertion-ordered dict) of at most
+        ``_cache_max_size`` open VideoReader instances so that repeated
+        ``get_frame`` calls for the same video avoid re-opening the file.
+        """
+        if video_path in self._video_reader_cache:
+            # Move to end (most recently used)
+            reader = self._video_reader_cache.pop(video_path)
+            self._video_reader_cache[video_path] = reader
+            return reader
+
+        # Evict oldest if cache is full
+        if len(self._video_reader_cache) >= self._cache_max_size:
+            oldest_key = next(iter(self._video_reader_cache))
+            old_reader = self._video_reader_cache.pop(oldest_key)
+            try:
+                old_reader.close()
+            except Exception:
+                pass
+
+        reader = VideoReader(video_path)
+        self._video_reader_cache[video_path] = reader
+        return reader
+
     def get_frame(self, index: int) -> Optional[np.ndarray]:
         """
         Retrieve the representative frame for a given global bin index.
         
         The frame is taken from the center of the bin (bin_size // 2).
+        Uses a cached VideoReader pool to avoid re-opening files on every call.
         
         Args:
             index: Global bin index across all aggregated videos
@@ -208,14 +239,27 @@ class LatentAggregator:
             
             self.notify(f'Retrieving frame from {video_name} at index {frame_idx}')
             try:
-                with VideoReader(video_path) as vr:
-                    return vr.get_frame(frame_idx)
+                reader = self._get_cached_reader(video_path)
+                return reader.get_frame(frame_idx)
             except Exception as e:
                 self.notify(f"Error reading frame: {e}", "error")
                 return None
                 
         self.notify('Error: Index out of bounds in Aggregator', "error")
         return None
+
+    def close(self) -> None:
+        """Close all cached VideoReader instances and release resources."""
+        for reader in self._video_reader_cache.values():
+            try:
+                reader.close()
+            except Exception:
+                pass
+        self._video_reader_cache.clear()
+
+    def __del__(self) -> None:
+        """Clean up cached readers on garbage collection."""
+        self.close()
 
     def get_latent_object(self) -> Latent:
         """Returns the high-level Latent explorer object."""

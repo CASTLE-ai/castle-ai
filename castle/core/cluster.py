@@ -220,9 +220,7 @@ class LatentAggregator:
     def get_latent_object(self) -> Latent:
         """Returns the high-level Latent explorer object."""
         if self.latents is None:
-            # Return empty or handle error. Latent() might expect valid data.
-            # Assuming Latent can handle empty or we shouldn't call this if init failed.
-            pass
+            raise ValueError("No latents loaded. Cannot create Latent object.")
         return Latent(self.latents, self.bin_size)
 
     def generate_subtitles(self, syllables: np.ndarray, meta: Dict) -> List[str]:

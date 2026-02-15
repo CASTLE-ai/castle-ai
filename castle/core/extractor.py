@@ -201,13 +201,16 @@ def extract_roi_latent_from_video(
             if hasattr(observer, 'extract_tensor_batch'):
                  latent_batch = observer.extract_tensor_batch(frames, masks, roi_id)
             else:
-                 # Fallback assumption
                  latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
                  
             latent_list.append(latent_batch)
 
         except Exception as e:
             logger.error(f"Batch {i} failed for video {video_name}: {e}")
+
+    if not latent_list:
+        logger.error(f"No latent batches extracted for {video_name}")
+        return ""
 
     latent_array = np.concatenate(latent_list, axis=0)
 

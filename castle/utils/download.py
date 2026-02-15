@@ -31,7 +31,7 @@ def download_with_gdown(file_id, destination, notify_func=None):
         if notify_func:
             try:
                 notify_func(message)
-            except:
+            except Exception:
                 pass  # If notification fails, continue execution
         
         # Use --id flag to ensure correct file ID handling
@@ -44,7 +44,7 @@ def download_with_gdown(file_id, destination, notify_func=None):
             if notify_func:
                 try:
                     notify_func(error_msg)
-                except:
+                except Exception:
                     pass
             raise RuntimeError(f"Failed to download {os.path.basename(destination)}")
         
@@ -53,7 +53,7 @@ def download_with_gdown(file_id, destination, notify_func=None):
         if notify_func:
             try:
                 notify_func(success_msg)
-            except:
+            except Exception:
                 pass
     else:
         message = f"{os.path.basename(destination)} already exists, skipping download"
@@ -61,5 +61,5 @@ def download_with_gdown(file_id, destination, notify_func=None):
         if notify_func:
             try:
                 notify_func(message)
-            except:
+            except Exception:
                 pass

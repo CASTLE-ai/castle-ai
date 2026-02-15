@@ -41,6 +41,9 @@ class Preprocess:
         self.rotate_roi_tail_switch = rotate_roi_tail_switch
         self.rotate_roi_tail_id = int(rotate_roi_tail_id)
         self.remove_background_switch = remove_background_switch
+        
+        if center_roi_switch and (self.center_roi_crop_width <= 0 or self.center_roi_crop_height <= 0):
+            raise ValueError(f"Crop dimensions must be positive, got width={self.center_roi_crop_width}, height={self.center_roi_crop_height}")
 
     def transform(self, frame: np.ndarray, mask: np.ndarray, deg: int = 0, 
                   precomputed_closest_point: Optional[Tuple[float, float]] = None) -> Tuple[np.ndarray, np.ndarray]:

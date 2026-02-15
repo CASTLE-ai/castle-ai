@@ -1,11 +1,4 @@
 
-import sys
-
-# sys.path.append("../aot")
-# sys.path.append("castle/aot")
-# # import os
-# # print(os.getcwd(), sys.path)
-from statistics import mode
 import torch
 import torch.nn.functional as F
 from castle.aot.networks.engines.aot_engine import AOTEngine,AOTInferEngine

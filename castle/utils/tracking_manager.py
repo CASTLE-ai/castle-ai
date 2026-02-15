@@ -58,7 +58,7 @@ def read_roi_labels(storage_path: str, project_name: str, video_name: Optional[s
                 
                 # Expect keys 'frame' and 'mask'
                 if "frame" not in data or "mask" not in data:
-                    print(f"Warning: Missing frame or mask in {npz_file}")
+                    logger.warning(f"Missing frame or mask in {npz_file}")
                     continue
                 
                 frame = data["frame"]
@@ -70,7 +70,7 @@ def read_roi_labels(storage_path: str, project_name: str, video_name: Optional[s
                     "mask": mask,
                 })
             except Exception as e:
-                print(f"Error loading label file {npz_file}: {str(e)}")
+                logger.error(f"Error loading label file {npz_file}: {e}")
                 continue
     
     return label_list
@@ -210,18 +210,16 @@ class ROITracker:
         tracker = generate_aot(model_type=self.model_type)
         mask_list_path = self.track_dir / "mask_list.h5"
         
-        # --- Start of new logic: Ensure a clean HDF5 file ---
         if os.path.exists(mask_list_path):
             if skip_existing:
-                print(f"Skipping existing tracked file: {mask_list_path}")
+                logger.info(f"Skipping existing tracked file: {mask_list_path}")
                 return "Skip"
                 
             try:
                 os.remove(mask_list_path)
-                print(f"Removed existing HDF5 file: {mask_list_path}")
+                logger.info(f"Removed existing HDF5 file: {mask_list_path}")
             except Exception as e:
-                print(f"Warning: Could not remove existing HDF5 file {mask_list_path}. Error: {e}")
-        # --- End of new logic ---
+                logger.warning(f"Could not remove existing HDF5 file {mask_list_path}: {e}")
 
         mask_seq = H5IO(str(mask_list_path))
 
@@ -242,10 +240,9 @@ class ROITracker:
 
         # Initialize DataLoader for batch processing
         # Initialize DataLoader for batch processing
-        # Limit num_workers to prevent OOM (20% of CPU cores)
         num_workers = max(1, int(os.cpu_count() * 0.2))
-        batch_size = 16  # Process frames in batches
-        print(f"DEBUG: Tracking with {num_workers} workers and batch size {batch_size}")
+        batch_size = 16
+        logger.debug(f"Tracking with {num_workers} workers and batch size {batch_size}")
 
         dataset = TrackingDataset(self.video_source, frame_range, tracker.transform)
         

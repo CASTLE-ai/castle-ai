@@ -137,10 +137,10 @@ class SystemMonitor:
             
             # Record
             elapsed = time.time() - start_t
-            if self.running: # Check again to avoid recording after stop
+            if self.running:
                 with Profiler()._lock:
                     self.stats["time"].append(elapsed)
-                    self.stats["cpu_percent"].append(cpu_percent := cpu_pct)
+                    self.stats["cpu_percent"].append(cpu_pct)
                     self.stats["gpu_percent"].append(gpu_pct)
                     self.stats["gpu_mem_used"].append(gpu_mem)
 

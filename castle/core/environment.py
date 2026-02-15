@@ -35,9 +35,9 @@ class Environment:
         if root_path:
              self.allowed_paths.append(root_path)
 
-        # HDF5 locking fix
-        # E-03: Logging side effects
-        print("Setting HDF5_USE_FILE_LOCKING = FALSE for Colab environment")
+        # HDF5 locking fix for Colab environment
+        import logging
+        logging.getLogger(__name__).info("Setting HDF5_USE_FILE_LOCKING = FALSE for Colab environment")
         os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 
 # Global instance

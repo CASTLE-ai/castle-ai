@@ -7,7 +7,6 @@ import numpy as np
 
 class UMAP:
     def __init__(self,  n_neighbors, n_components, min_dist=0.1, n_epochs=20000, init='spectral', random_state=np.random.randint(1, 1000), verbose=False):
-        print("here is mix UMAP")
         self.n_epochs = n_epochs
         self.n_neighbors = n_neighbors
         self.n_components = n_components
@@ -24,7 +23,6 @@ class UMAP:
                                      random_state=self.random_state, 
                                      metric='euclidean', 
                                      verbose=self.verbose)
-        print("created graph")
         if self.init == 'spectral':
             layout = spectral_layout(X, graph.tocsr().get(), 
                                      dim=self.n_components, 
@@ -36,12 +34,10 @@ class UMAP:
             selected = X.std(axis=0).argsort()[-n_samples+1:]
             layout = pca.fit_transform(X[:,selected])
         else:
-            assert 0, 'init method error'
+            raise ValueError(f'Unknown init method: {self.init}')
             
-        print("created layout")
         spread = 1.0
         a, b = find_ab_params(spread, self.min_dist)
-        print("created a, b")
         embedding = simplicial_set_embedding(X, graph, 
                                              init=layout,
                                              a=a, b=b,
@@ -49,14 +45,7 @@ class UMAP:
                                              n_components=self.n_components,
                                              random_state=self.random_state, 
                                              verbose=self.verbose)
-        print("created embedding")
-        # Handle both cupy arrays and numpy arrays
         if hasattr(embedding, 'to_host_array'):
-            out = embedding.to_host_array()
-            print("converted to numpy")
-            return out
+            return embedding.to_host_array()
         else:
-            # If it's already a numpy array or use cp.asnumpy for safety
-            out = cp.asnumpy(embedding)
-            print("converted to numpy")
-            return out
+            return cp.asnumpy(embedding)

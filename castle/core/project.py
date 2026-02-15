@@ -20,10 +20,6 @@ def get_project_config(storage_path: str, project_name: str) -> Tuple[str, Dict]
     project_path = os.path.join(storage_path, project_name)
     config_path = os.path.join(project_path, 'config.json')
     
-    # Ensure project path exists before trying to read config? 
-    # Or just let it fail if file not found is expected behavior?
-    # Original code just did open().
-    
     with open(config_path, 'r') as f:
         config = json.load(f)
     

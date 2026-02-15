@@ -79,7 +79,7 @@ class H5IO:
             try:
                 self.f.close()
             except Exception as e:
-                print(f"Warning: Failed to close HDF5 file: {e}")
+                logger.warning(f"Failed to close HDF5 file: {e}")
 
         mode = 'a' if os.path.isfile(self.file_path) else 'w'
         self.f = h5py.File(self.file_path, mode)

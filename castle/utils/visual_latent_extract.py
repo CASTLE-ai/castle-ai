@@ -4,9 +4,7 @@ Wrapper module for backward compatibility.
 Delegates to castle.core.models.
 """
 
-from typing import Optional, Any
 import os
-import torch
 from castle.core.models import get_visual_encoder, VisualEncoder
 
 # Backward compatibility wrappers
@@ -53,6 +51,3 @@ def download_dinov3_ckpt(model_name: str) -> str:
         logger.warning(f"No Google ID found for {model_name}, skipping download.")
         
     return str(ckpt_path)
-
-# Helper alias if the original code used these classes directly (imports typically masked by generate functions)
-# But strictly speaking, extract_ui.py imported generate_dinov2, generate_dinov3.

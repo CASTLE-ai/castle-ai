@@ -5,7 +5,6 @@ import subprocess
 def download_file(url, destination):
     # Ensure the destination directory exists
     os.makedirs(os.path.dirname(destination), exist_ok=True)
-    print(os.path.dirname(destination))
     # Check if the file does not exist before downloading
     if not os.path.isfile(destination):
         print(f"Downloading {os.path.basename(destination)}...")

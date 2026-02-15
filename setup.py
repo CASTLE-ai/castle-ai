@@ -59,6 +59,11 @@ configuration = {
     "packages": find_packages(),
     "install_requires": read_requirements(),
 
+    "entry_points": {
+        'console_scripts': [
+            'castle=castle.cli.main:app',
+        ],
+    },
     "ext_modules": [],
     "cmdclass": {},
     "test_suite": "pytest",

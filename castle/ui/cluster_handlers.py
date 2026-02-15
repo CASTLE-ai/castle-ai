@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
 from castle.ui.embedding_scatter import EmbeddingScatterPlot
 from castle.ui.cluster_tree import build_cluster_tree_markdown
+from castle.service.history_service import HistoryManager
 
 
 # ---------------------------
@@ -94,27 +95,37 @@ def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
     return local_latents, Z_plt, Z_plt.plot()
 
 
-def generate_local_cluster(local_latents, eps, progress=gr.Progress()):
+def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
     try:
         cfg = json.loads(dbscan_config_template)
     except:
         gr.Info('Cluster JSON format error')
-        return None, None
-    
+        return None, None, history
+
+    if history is None:
+        history = HistoryManager()
+
     cfg['eps'] = eps
+    history.save_state(local_latents, f"DBSCAN clustering (eps={eps})")
     progress(0, desc="Running DBSCAN...")
     local_latents.build_cluster(method='dbscan', configs=cfg)
     progress(1.0, desc="Building plot...")
     Z_plt = EmbeddingScatterPlot(local_latents)
-    return Z_plt, Z_plt.plot()
+    return Z_plt, Z_plt.plot(), history
 
 
-def label_local_cluster(local_latents, cluster_id, cluster_name):
+def label_local_cluster(local_latents, cluster_id, cluster_name, history):
     if not cluster_name:
         gr.Info('Name is empty')
-        return 
-    local_latents.label_cluster(cluster_id, cluster_name)  
+        return history
+
+    if history is None:
+        history = HistoryManager()
+
+    history.save_state(local_latents, f"Label cluster {cluster_id} as {cluster_name}")
+    local_latents.label_cluster(cluster_id, cluster_name)
     gr.Info(f'Named {cluster_id} as {cluster_name}')
+    return history
 
 
 def plot_syllables_per_video(latents, aggregator):
@@ -177,22 +188,28 @@ def plot_syllables_per_video(latents, aggregator):
     return fig
 
 
-def label_all_and_submit(storage_path, project_name, latents, local_latents, aggregator, parent_name):
+def label_all_and_submit(storage_path, project_name, latents, local_latents, aggregator, parent_name, history):
     """Auto-label all clusters and submit."""
+    if history is None:
+        history = HistoryManager()
+
+    history.save_state(local_latents, "Submit all clusters to parent")
+
     unique_clusters = np.unique(local_latents.cluster)
-    
+
     count = 0
     for cluster_id in unique_clusters:
         if cluster_id == -1:
             continue
-        
+
         cluster_name = auto_generate_cluster_name(parent_name, cluster_id)
         local_latents.label_cluster(cluster_id, cluster_name)
         count += 1
-        
+
     gr.Info(f'Auto-labeled {count} clusters.')
-    
-    return import_info_from_local_latent(storage_path, project_name, latents, local_latents, aggregator)
+
+    result = import_info_from_local_latent(storage_path, project_name, latents, local_latents, aggregator)
+    return result + (history,)
 
 
 def check_session_exists(storage_path, project_name):
@@ -430,3 +447,56 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
     except Exception as e:
         gr.Warning(f"Initialization Failed: {e}")
         return None, None, None
+
+
+# ---------------------------
+# Undo / Redo Handlers
+# ---------------------------
+
+def handle_undo(local_latents, history):
+    """Undo the last clustering operation and redraw the plot."""
+    if history is None or not history.can_undo:
+        gr.Info("Nothing to undo")
+        return gr.update(), gr.update(), history, _history_status(history)
+
+    desc = history.undo(local_latents)
+    gr.Info(f"Undone: {desc}")
+
+    Z_plt = EmbeddingScatterPlot(local_latents)
+    return Z_plt, Z_plt.plot(), history, _history_status(history)
+
+
+def handle_redo(local_latents, history):
+    """Redo the last undone clustering operation and redraw the plot."""
+    if history is None or not history.can_redo:
+        gr.Info("Nothing to redo")
+        return gr.update(), gr.update(), history, _history_status(history)
+
+    desc = history.redo(local_latents)
+    gr.Info(f"Redone: {desc}")
+
+    Z_plt = EmbeddingScatterPlot(local_latents)
+    return Z_plt, Z_plt.plot(), history, _history_status(history)
+
+
+def _history_status(history):
+    """Return a human-readable status string for the history UI."""
+    if history is None:
+        return ""
+    parts = []
+    if history.can_undo:
+        parts.append(f"Undo: {history.undo_description}")
+    if history.can_redo:
+        parts.append(f"Redo available")
+    return " | ".join(parts) if parts else "No history"
+
+
+def update_history_buttons(history):
+    """Return interactive states for undo/redo buttons + status text."""
+    if history is None:
+        return gr.update(interactive=False), gr.update(interactive=False), ""
+    return (
+        gr.update(interactive=history.can_undo),
+        gr.update(interactive=history.can_redo),
+        _history_status(history),
+    )

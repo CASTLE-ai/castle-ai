@@ -30,6 +30,9 @@ from castle.ui.cluster_handlers import (
     restore_session,
     import_info_from_local_latent,
     init_mulvideo,
+    handle_undo,
+    handle_redo,
+    update_history_buttons,
 )
 
 
@@ -177,6 +180,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     local_embedding_plot = gr.State(None)
     mulvideo = gr.State(None)  # Holds LatentAggregator instance
     session_info = gr.State(None)
+    history_state = gr.State(None)  # HistoryManager for undo/redo
 
     ui['cluster_tree'] = gr.Markdown("*No clusters yet*", visible=True)
 
@@ -193,6 +197,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=True)
             ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=True)
             ui['enter_submit_all_btn'] = gr.Button("Enter & Submit all", interactive=True, visible=True)
+            with gr.Row():
+                ui['undo_btn'] = gr.Button("↩️ Undo", interactive=False)
+                ui['redo_btn'] = gr.Button("↪️ Redo", interactive=False)
+            ui['history_info'] = gr.Textbox(label="History", interactive=False, max_lines=1)
         with gr.Column(scale=8):
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
             ui['display'] = gr.Image(label='Display', interactive=False, visible=True)  
@@ -268,12 +276,21 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['cluster_run'].click(
         fn=generate_local_cluster,
-        inputs=[local_latents, ui['eps']],
-        outputs=[local_embedding_plot, ui['embedding_plot']],
+        inputs=[local_latents, ui['eps'], history_state],
+        outputs=[local_embedding_plot, ui['embedding_plot'], history_state],
+    ).then(
+        fn=update_history_buttons,
+        inputs=[history_state],
+        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
     )
     ui['label_cluster_btn'].click(
         fn=label_local_cluster,
-        inputs=[local_latents, ui['label_cluster_id'], ui['label_cluster_name']],
+        inputs=[local_latents, ui['label_cluster_id'], ui['label_cluster_name'], history_state],
+        outputs=[history_state],
+    ).then(
+        fn=update_history_buttons,
+        inputs=[history_state],
+        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
     )
     
     # Auto-generate cluster name when ID changes
@@ -296,12 +313,37 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # Enter & Submit all: auto-label all clusters and submit
     ui['enter_submit_all_btn'].click(
         fn=label_all_and_submit,
-        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster']],
-        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster'], history_state],
+        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps'], history_state],
     ).then(
         fn=lambda lat: build_cluster_tree_markdown(lat.cluster_meta, lat.cluster) if lat else "*No clusters yet*",
         inputs=latents,
         outputs=ui['cluster_tree']
+    ).then(
+        fn=update_history_buttons,
+        inputs=[history_state],
+        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
+    )
+
+    # Undo / Redo
+    ui['undo_btn'].click(
+        fn=handle_undo,
+        inputs=[local_latents, history_state],
+        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info']],
+    ).then(
+        fn=update_history_buttons,
+        inputs=[history_state],
+        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
+    )
+
+    ui['redo_btn'].click(
+        fn=handle_redo,
+        inputs=[local_latents, history_state],
+        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info']],
+    ).then(
+        fn=update_history_buttons,
+        inputs=[history_state],
+        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
     )
 
     # Auto-update cluster list when tab is selected

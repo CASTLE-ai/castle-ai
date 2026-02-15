@@ -313,19 +313,50 @@ class DINOv3Encoder(VisualEncoder):
 
 # A-07: Model singleton cache — avoid reloading the same model
 _model_cache: dict = {}
+_MODEL_CACHE_MAX = 1  # Keep at most 1 model cached (the current one)
+
+
+def _evict_model_cache():
+    """Evict all models from cache and free GPU memory."""
+    for old_key in list(_model_cache.keys()):
+        logger.info(f"Evicting cached model: {old_key}")
+        old_model = _model_cache.pop(old_key)
+        # Delete model's underlying torch model to free GPU memory
+        if hasattr(old_model, 'model') and old_model.model is not None:
+            del old_model.model
+            old_model.model = None
+        del old_model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
 
 def get_visual_encoder(model_name: str) -> VisualEncoder:
-    """Get or create a visual encoder, with singleton caching."""
-    if model_name not in _model_cache:
-        if 'dinov3' in model_name:
-            encoder = DINOv3Encoder(model_name)
-        else:
-            encoder = DINOv2Encoder(model_name)
-        _model_cache[model_name] = encoder
-        logger.info(f"Created and cached encoder: {model_name}")
+    """Get or create a visual encoder, with singleton caching.
+    
+    Keeps at most _MODEL_CACHE_MAX models cached. When the cache is full
+    and a new model is requested, old models are evicted and GPU memory
+    is freed via torch.cuda.empty_cache().
+    """
+    if model_name in _model_cache:
+        logger.debug(f"Model cache hit: {model_name}")
+        return _model_cache[model_name]
+    
+    # Evict old models if cache is full
+    if len(_model_cache) >= _MODEL_CACHE_MAX:
+        _evict_model_cache()
+    
+    # Create new encoder
+    if 'dinov3' in model_name:
+        encoder = DINOv3Encoder(model_name)
+    else:
+        encoder = DINOv2Encoder(model_name)
+    
+    _model_cache[model_name] = encoder
+    logger.info(f"Created and cached encoder: {model_name}")
     return _model_cache[model_name]
 
 
 def clear_model_cache():
-    """Clear the model cache (useful for freeing GPU memory)."""
-    _model_cache.clear()
+    """Clear the model cache and free GPU memory."""
+    _evict_model_cache()
+    logger.info("Model cache cleared")

@@ -149,12 +149,13 @@ class VideoReader:
                 process_frame(frame)
     """
     
-    def __init__(self, video_path: Union[str, Path]):
+    def __init__(self, video_path: Union[str, Path], cache_size: int = 10):
         """
         初始化影片讀取器
         
         Args:
             video_path: 影片檔案路徑
+            cache_size: 最大快取影格數量 (0 表示停用快取)。預設 10。
             
         Raises:
             VideoIOError: 當影片初始化失敗時
@@ -186,6 +187,8 @@ class VideoReader:
             # 內部狀態
             self._current_index = -1
             self._frame_cache = {}
+            self._cache_size = cache_size
+            self._cache_order = []  # Track insertion order for LRU eviction
             self._closed = False
             
             logger.debug(f"影片讀取器初始化完成: {self.path}")
@@ -428,7 +431,7 @@ class VideoReader:
             raise IndexError(f"影格索引 {frame_idx} 超出範圍 [0, {self.frame_count})")
         
         # 檢查快取
-        if frame_idx in self._frame_cache:
+        if self._cache_size > 0 and frame_idx in self._frame_cache:
             return self._frame_cache[frame_idx]
         
         # 讀取影格
@@ -443,14 +446,15 @@ class VideoReader:
                 # 其他錯誤直接拋出
                 raise
         
-        # 快取管理（限制快取大小）
-        if len(self._frame_cache) >= 100:
-            # 移除最舊的快取項目
-            oldest_key = next(iter(self._frame_cache))
-            del self._frame_cache[oldest_key]
-        
-        self._frame_cache[frame_idx] = frame
-        logger.debug(f"成功讀取並快取影格 {frame_idx}")
+        # 快取管理（使用可設定的快取大小，LRU 策略）
+        if self._cache_size > 0:
+            if len(self._frame_cache) >= self._cache_size:
+                # 移除最舊的快取項目
+                oldest_key = self._cache_order.pop(0)
+                self._frame_cache.pop(oldest_key, None)
+            self._frame_cache[frame_idx] = frame
+            self._cache_order.append(frame_idx)
+            logger.debug(f"成功讀取並快取影格 {frame_idx}")
         
         return frame
     
@@ -541,6 +545,7 @@ class VideoReader:
     def clear_cache(self) -> None:
         """清除影格快取"""
         self._frame_cache.clear()
+        self._cache_order.clear()
         logger.debug("影格快取已清除")
     
     def close(self) -> None:

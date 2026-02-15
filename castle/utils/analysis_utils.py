@@ -73,6 +73,37 @@ def compute_roi_info(rois_results: H5IO, n_rois: int, total_frames: int,
     return roi_info_list
 
 
+def create_kinematic_dataframe(roi_info_list: List[Dict[str, np.ndarray]]) -> 'pd.DataFrame':
+    """
+    Create a pandas DataFrame with per-ROI kinematics (x, y, speed, area).
+    
+    This is the pure data logic extracted from castle.ui.plot_mask_info.Plotter.create_pandas()
+    so that the utils layer doesn't depend on the UI layer.
+    
+    Args:
+        roi_info_list: ROI info as returned by compute_roi_info()
+    
+    Returns:
+        DataFrame with columns ROI{i}.x, ROI{i}.y, ROI{i}.speed, ROI{i}.area
+    """
+    import pandas as pd
+    
+    df_dict = {}
+    for index, it in enumerate(roi_info_list):
+        df_dict[f'ROI{index+1}.x'] = it['x']
+        df_dict[f'ROI{index+1}.y'] = it['y']
+
+        speed = np.zeros(len(it['x']))
+        dx = np.array(it['x'][1:] - it['x'][:-1])
+        dy = np.array(it['y'][1:] - it['y'][:-1])
+        speed[1:] = np.sqrt(dx * dx + dy * dy)
+
+        df_dict[f'ROI{index+1}.speed'] = speed
+        df_dict[f'ROI{index+1}.area'] = it['area']
+
+    return pd.DataFrame(df_dict)
+
+
 def save_kinematic_csv(track_dir_path: str, video_name: str,
                        roi_info_list: List[Dict[str, np.ndarray]]) -> str:
     """
@@ -86,12 +117,9 @@ def save_kinematic_csv(track_dir_path: str, video_name: str,
     Returns:
         Path to the generated CSV file.
     """
-    # Lazy import to avoid circular dependency (Plotter is in castle.ui)
-    from castle.ui.plot_mask_info import Plotter
-    
     video_name_wo_extension = video_name.split('.')[0]
     csv_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-basic-information.csv')
-    df = Plotter.create_pandas(roi_info_list)
+    df = create_kinematic_dataframe(roi_info_list)
     df.to_csv(csv_path, float_format="%.4f")
     return csv_path
 

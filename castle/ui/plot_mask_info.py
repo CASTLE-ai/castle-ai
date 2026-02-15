@@ -66,20 +66,10 @@ class Plotter:
     
     @staticmethod
     def create_pandas(results):
-        num = len(results)
-        df = dict()
-        for index, it in enumerate(results):
-            df[f'ROI{index+1}.x'] = it['x']
-            df[f'ROI{index+1}.y'] = it['y']
-
-            speed = np.zeros(len(it['x']))
-            dx = np.array(it['x'][1:] - it['x'][:-1])
-            dy = np.array(it['y'][1:] - it['y'][:-1])
-            speed[1:] = np.sqrt(dx*dx+dy*dy)
-
-
-            df[f'ROI{index+1}.speed'] = speed
-            df[f'ROI{index+1}.area'] = it['area']
-
-        # fig.update_layout(title_text="area of the colors over time")
-        return pd.DataFrame(df)
+        """Create a DataFrame with per-ROI kinematics.
+        
+        Delegates to castle.utils.analysis_utils.create_kinematic_dataframe()
+        to keep the canonical implementation in the utils layer.
+        """
+        from castle.utils.analysis_utils import create_kinematic_dataframe
+        return create_kinematic_dataframe(results)

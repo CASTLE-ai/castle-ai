@@ -86,31 +86,27 @@ class SystemMonitor:
             with open('/proc/stat', 'r') as f:
                 line = f.readline()
                 if line.startswith('cpu '):
-                    # cpu  user nice system idle iowait irq softirq steal guest guest_nice
                     parts = line.split()
-                    # times: user, nice, system, idle, iowait, irq, softirq, steal
                     times = [float(x) for x in parts[1:8]] 
-                    idle = times[3] + times[4]  # idle + iowait
+                    idle = times[3] + times[4]
                     active = sum(times) - idle
                     return active, idle + active
-        except:
+        except (OSError, ValueError, IndexError):
             pass
         return 0, 0
 
     def _get_gpu_stats(self):
         try:
             import subprocess
-            # Query nvidia-smi
             result = subprocess.run(
                 ['nvidia-smi', '--query-gpu=utilization.gpu,memory.used', '--format=csv,noheader,nounits'],
                 capture_output=True, text=True, timeout=0.1
             )
             if result.returncode == 0:
-                # Output format: "util_gpu, mem_used" e.g "30, 4000"
                 line = result.stdout.strip().split('\n')[0]
                 util_str, mem_str = line.split(',')
                 return float(util_str), float(mem_str)
-        except:
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
             pass
         return 0.0, 0.0
 

@@ -127,7 +127,7 @@ class FocusLatent:
             # from cuml.manifold import UMAP
             from myumap import UMAP
         
-        if not type(configs) == list:
+        if not isinstance(configs, list):
             configs = [configs]
 
         self.models = []

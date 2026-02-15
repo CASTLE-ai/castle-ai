@@ -11,10 +11,13 @@ from torch.utils.data import Dataset
 from castle.utils.video_io import ReadArray
 from castle.utils.h5_io import H5IO
 import cv2  # Added for interpolation flags
+import logging
 from castle.utils.video_align import (
     center_roi, rotate_based_on_roi_closest_center_point,
     rotate_based_on_point, crop, blank_page, rotate_based_on_deg
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------
 # 預處理類別 (Moved from castle/ui/extract_ui.py)
@@ -79,8 +82,6 @@ class Preprocess:
             if self.remove_background_switch:
                 f[m == 0] = 255
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Preprocessing transform failed for ROI ID {self.center_roi_id} (Center) and {self.rotate_roi_tail_id} (Tail). Error: {e}")
             f = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
             m = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)

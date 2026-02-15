@@ -92,7 +92,7 @@ def crop(frame, crop_h, crop_w):
 
 def roi_connected_components(frame, select_roi, tolerance=30):
 
-    if type(select_roi) == list and len(select_roi) == 3:
+    if isinstance(select_roi, list) and len(select_roi) == 3:
         h, w = frame.shape[:2]
         mask = np.zeros((h, w)).astype(np.uint8)
         lower_bound = np.array([select_roi[0] - tolerance,

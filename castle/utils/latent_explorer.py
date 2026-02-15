@@ -58,7 +58,7 @@ class Latent:
         return self.time_window
 
     def select(self, selected_cluster):
-        if type(selected_cluster) == str:
+        if isinstance(selected_cluster, str):
             selected_cluster = self.behavior_name2cluster_id[selected_cluster]
         return LocalLatent(self.data[self.cluster == selected_cluster], self.cluster == selected_cluster, color_avoid=self.used_palette, device=self.device)
     
@@ -142,18 +142,18 @@ class LocalLatent:
         elif 'cuda' in self.device:
             try:
                 from cuml.manifold import UMAP
-            except:
+            except ImportError:
                 try:
                     from castle.utils.myumap import UMAP
-                except:
+                except ImportError:
                     from umap import UMAP
         else:
-            assert False, f'device error, expect cpu, mps, or cuda, got {self.device}'
+            raise ValueError(f'Unsupported device: {self.device}, expected cpu, mps, or cuda')
         Z = self.data
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
 
-        if not type(configs) == list:
+        if not isinstance(configs, list):
             configs = [configs]
 
         for it in configs:
@@ -171,7 +171,7 @@ class LocalLatent:
         elif 'cuda' in self.device:
             try:
                 from cuml.cluster import DBSCAN
-            except:
+            except ImportError:
                 from sklearn.cluster import DBSCAN
 
             

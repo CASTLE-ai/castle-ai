@@ -96,10 +96,11 @@ def filter_by_reference(
         )
 
         if num_labels <= 1:
-            # Only one component (+ background label 0)
-            # Keep it if it meets threshold
-            if num_labels == 1:
-                continue
+            # num_labels includes background (label 0), so <= 1 means no component found
+            continue
+        
+        if num_labels == 2:
+            # Exactly one component — keep it if it meets threshold
             area = stats[1, cv2.CC_STAT_AREA]
             if area >= threshold:
                 new_mask[labels == 1] = obj_id

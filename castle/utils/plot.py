@@ -18,9 +18,9 @@ def colorize_mask(pred_mask):
     return np.array(save_mask)
 
 def generate_mix_image(frame, mask, alpha=0.5):
-    mix = np.array(frame)
+    mix = np.array(frame, dtype=np.float64)
     binary_mask = (mask != 0)
-    foreground = frame * (1-alpha) + colorize_mask(mask) * alpha
+    foreground = mix * (1-alpha) + colorize_mask(mask).astype(np.float64) * alpha
     mix[binary_mask] = foreground[binary_mask]
     return mix.astype(np.uint8)
 

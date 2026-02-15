@@ -43,9 +43,9 @@ class EmbeddingScatterPlot:
     
     def pixel_2_embedding(self, px, py):
         px, py = float(px), float(py)
-        # Warning: self.width/height depend on the LAST GENERATED image size.
+        # width/height are set by plot() — must be called first
         if not hasattr(self, 'width') or not hasattr(self, 'height'):
-             return 0, 0 # Fallback
+             raise RuntimeError('Plot not yet rendered. Call plot() first.')
              
         ex = (px / self.width) * (self.xlim[1] - self.xlim[0]) + self.xlim[0]
         ey = (py / self.height) * (self.ylim[1] - self.ylim[0]) + self.ylim[0]

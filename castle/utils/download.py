@@ -1,14 +1,16 @@
 import os
 import subprocess
+import urllib.request
 
 
 def download_file(url, destination):
+    """Download file using urllib instead of wget subprocess."""
     # Ensure the destination directory exists
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     # Check if the file does not exist before downloading
     if not os.path.isfile(destination):
         print(f"Downloading {os.path.basename(destination)}...")
-        subprocess.run(["wget", "-P", os.path.dirname(destination), url])
+        urllib.request.urlretrieve(url, destination)
     else:
         print(f"{os.path.basename(destination)} already downloaded.")
 

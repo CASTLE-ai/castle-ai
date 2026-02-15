@@ -1,3 +1,5 @@
+"""Video frame alignment: center ROI, rotation, cropping."""
+
 import cv2
 import numpy as np
 

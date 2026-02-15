@@ -3,8 +3,11 @@
 import os
 import numpy as np
 
+from castle.core.logging_config import setup_logger
 from .h5_io import H5IO
 from .plot import generate_mask_image, generate_mix_image
+
+logger = setup_logger(__name__)
 
 
 def get_frame_display(storage_path, project_name, source_video, frame_index, display_mode='Image'):
@@ -32,11 +35,11 @@ def get_frame_display(storage_path, project_name, source_video, frame_index, dis
     
     # Check if mask file exists
     if not os.path.exists(mask_list_path):
-        print(f"Mask file not found: {mask_list_path}")
+        logger.warning(f"Mask file not found: {mask_list_path}")
         return source_video[frame_index]
 
     if frame_index < 0 or frame_index >= len(source_video):
-        print(f"Error frame_index: {frame_index}")
+        logger.error(f"Error frame_index: {frame_index}")
         return source_video[0]
     
     try:
@@ -54,7 +57,7 @@ def get_frame_display(storage_path, project_name, source_video, frame_index, dis
         return result
     
     except Exception as e:
-        print(f"Error loading mask: {str(e)}")
+        logger.error(f"Error loading mask: {str(e)}")
         return source_video[frame_index]
 
 

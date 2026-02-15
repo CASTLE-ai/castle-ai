@@ -1,6 +1,12 @@
+"""File download utilities (HTTP, Google Drive)."""
+
 import os
 import subprocess
 import urllib.request
+
+from castle.core.logging_config import setup_logger
+
+logger = setup_logger(__name__)
 
 
 def download_file(url, destination):
@@ -9,10 +15,10 @@ def download_file(url, destination):
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     # Check if the file does not exist before downloading
     if not os.path.isfile(destination):
-        print(f"Downloading {os.path.basename(destination)}...")
+        logger.info(f"Downloading {os.path.basename(destination)}...")
         urllib.request.urlretrieve(url, destination)
     else:
-        print(f"{os.path.basename(destination)} already downloaded.")
+        logger.info(f"{os.path.basename(destination)} already downloaded.")
 
 def download_with_gdown(file_id, destination, notify_func=None):
     """
@@ -29,7 +35,7 @@ def download_with_gdown(file_id, destination, notify_func=None):
     # Check if the file does not exist before downloading
     if not os.path.isfile(destination):
         message = f"Downloading {os.path.basename(destination)}..."
-        print(message)
+        logger.info(message)
         if notify_func:
             try:
                 notify_func(message)
@@ -41,8 +47,7 @@ def download_with_gdown(file_id, destination, notify_func=None):
                               capture_output=True, text=True)
         if result.returncode != 0:
             error_msg = f"Failed to download {os.path.basename(destination)}"
-            print(f"Error downloading {os.path.basename(destination)}:")
-            print(result.stderr)
+            logger.error(f"Error downloading {os.path.basename(destination)}: {result.stderr}")
             if notify_func:
                 try:
                     notify_func(error_msg)
@@ -51,7 +56,7 @@ def download_with_gdown(file_id, destination, notify_func=None):
             raise RuntimeError(f"Failed to download {os.path.basename(destination)}")
         
         success_msg = f"Successfully downloaded {os.path.basename(destination)}"
-        print(success_msg)
+        logger.info(success_msg)
         if notify_func:
             try:
                 notify_func(success_msg)
@@ -59,7 +64,7 @@ def download_with_gdown(file_id, destination, notify_func=None):
                 pass
     else:
         message = f"{os.path.basename(destination)} already exists, skipping download"
-        print(message)
+        logger.info(message)
         if notify_func:
             try:
                 notify_func(message)

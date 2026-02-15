@@ -75,8 +75,8 @@ def update_select_cluster_list(latents):
 def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
     try:
         cfg = json.loads(cfg_str)
-    except:
-        gr.Info('UMAP config JSON format error')
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        gr.Info(f'UMAP config JSON format error: {e}')
         return None, None, None
     
     local_latents = latents.select(selected_cluster=cluster_name)
@@ -98,8 +98,8 @@ def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
 def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
     try:
         cfg = json.loads(dbscan_config_template)
-    except:
-        gr.Info('Cluster JSON format error')
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        gr.Info(f'Cluster JSON format error: {e}')
         return None, None, history
 
     if history is None:

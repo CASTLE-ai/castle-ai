@@ -1,3 +1,5 @@
+"""Latent space exploration: Latent and LocalLatent classes."""
+
 import numpy as np
 
 from castle.core.environment import get_device

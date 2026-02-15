@@ -1,3 +1,5 @@
+"""Deprecated: use castle.utils.latent_explorer instead."""
+
 import warnings
 warnings.warn(
     "castle.utils.explorer is deprecated. Use castle.utils.latent_explorer instead.",

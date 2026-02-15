@@ -1,3 +1,5 @@
+"""Low-level plotting utilities for mask visualization."""
+
 import cv2
 import numpy as np
 from PIL import Image

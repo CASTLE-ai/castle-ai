@@ -1,3 +1,4 @@
+"""DeAOT-based video object segmentation engine."""
 
 import torch
 import torch.nn.functional as F
@@ -14,6 +15,9 @@ from castle.aot.networks.engines import build_engine
 from .download import download_with_gdown
 from torchvision import transforms
 from castle.core.environment import get_device
+from castle.core.logging_config import setup_logger
+
+logger = setup_logger(__name__)
 DEFAULT_DEVICE = get_device()
 
 
@@ -41,7 +45,7 @@ class AOTTracker(object):
         ])
 
         self.model.eval()
-        print("AOTTracker Device:", self.device)
+        logger.info(f"AOTTracker Device: {self.device}")
 
     @torch.no_grad()
     def add_reference_frame(self, frame, mask, obj_nums, frame_step=-1, incremental=False):

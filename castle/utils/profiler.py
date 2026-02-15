@@ -1,9 +1,14 @@
+"""System resource profiler for GPU/CPU monitoring."""
 
 import time
 from collections import defaultdict
 import statistics
 import json
 import threading
+
+from castle.core.logging_config import setup_logger
+
+logger = setup_logger(__name__)
 
 class Profiler:
     _instance = None
@@ -37,18 +42,18 @@ class Profiler:
         return report
 
     def print_report(self):
-        print("\n" + "="*50)
-        print("PERFORMANCE PROFILING REPORT")
-        print("="*50)
+        logger.info("\n" + "="*50)
+        logger.info("PERFORMANCE PROFILING REPORT")
+        logger.info("="*50)
         report = self.get_report()
         # Sort by total time descending
         sorted_items = sorted(report.items(), key=lambda x: x[1]['total_ms'], reverse=True)
         
-        print(f"{'Name':<35} | {'Count':<6} | {'Total(ms)':<10} | {'Mean(ms)':<10} | {'Max(ms)':<10}")
-        print("-" * 85)
+        logger.info(f"{'Name':<35} | {'Count':<6} | {'Total(ms)':<10} | {'Mean(ms)':<10} | {'Max(ms)':<10}")
+        logger.info("-" * 85)
         for name, stats in sorted_items:
-            print(f"{name:<35} | {stats['count']:<6} | {stats['total_ms']:<10.2f} | {stats['mean_ms']:<10.2f} | {stats['max_ms']:<10.2f}")
-        print("="*50 + "\n")
+            logger.info(f"{name:<35} | {stats['count']:<6} | {stats['total_ms']:<10.2f} | {stats['mean_ms']:<10.2f} | {stats['max_ms']:<10.2f}")
+        logger.info("="*50 + "\n")
 
     def reset(self):
         with self._lock:
@@ -144,17 +149,17 @@ class SystemMonitor:
         self.running = True
         self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.thread.start()
-        print("System Monitoring Started...")
+        logger.info("System Monitoring Started...")
 
     def stop(self):
         self.running = False
         if self.thread:
             self.thread.join(timeout=1.0)
-        print("System Monitoring Stopped.")
+        logger.info("System Monitoring Stopped.")
 
     def print_stats(self):
         if not self.stats["cpu_percent"]:
-            print("No system stats collected.")
+            logger.info("No system stats collected.")
             return
 
         cpu_avg = statistics.mean(self.stats["cpu_percent"])
@@ -166,12 +171,12 @@ class SystemMonitor:
         mem_avg = statistics.mean(self.stats["gpu_mem_used"])
         mem_max = max(self.stats["gpu_mem_used"])
         
-        print("\n" + "="*50)
-        print("SYSTEM RESOURCE USAGE")
-        print("="*50)
-        print(f"{'Metric':<20} | {'Average':<10} | {'Max':<10}")
-        print("-" * 46)
-        print(f"{'CPU Usage (%)':<20} | {cpu_avg:<10.1f} | {cpu_max:<10.1f}")
-        print(f"{'GPU Usage (%)':<20} | {gpu_avg:<10.1f} | {gpu_max:<10.1f}")
-        print(f"{'GPU Mem (MB)':<20} | {mem_avg:<10.0f} | {mem_max:<10.0f}")
-        print("="*50 + "\n")
+        logger.info("\n" + "="*50)
+        logger.info("SYSTEM RESOURCE USAGE")
+        logger.info("="*50)
+        logger.info(f"{'Metric':<20} | {'Average':<10} | {'Max':<10}")
+        logger.info("-" * 46)
+        logger.info(f"{'CPU Usage (%)':<20} | {cpu_avg:<10.1f} | {cpu_max:<10.1f}")
+        logger.info(f"{'GPU Usage (%)':<20} | {gpu_avg:<10.1f} | {gpu_max:<10.1f}")
+        logger.info(f"{'GPU Mem (MB)':<20} | {mem_avg:<10.0f} | {mem_max:<10.0f}")
+        logger.info("="*50 + "\n")

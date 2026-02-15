@@ -1,3 +1,5 @@
+"""HDF5 I/O for reading and writing tracking masks."""
+
 import os
 import logging
 import threading

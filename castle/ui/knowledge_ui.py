@@ -1,3 +1,5 @@
+"""Knowledge base UI for viewing tracked labels."""
+
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple

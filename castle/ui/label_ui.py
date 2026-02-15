@@ -1,3 +1,5 @@
+"""SAM-based interactive labeling UI for ROI segmentation."""
+
 import os
 import json
 import gradio as gr

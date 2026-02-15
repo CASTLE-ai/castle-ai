@@ -1,3 +1,5 @@
+"""Batch tracking UI components for Gradio."""
+
 import os
 import json
 from pathlib import Path
@@ -6,6 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import gradio as gr
 from tqdm import tqdm
+
+from castle.core.logging_config import setup_logger
+
+logger = setup_logger(__name__)
 
 from ..utils.h5_io import H5IO
 from ..utils.plot import generate_mix_image
@@ -121,7 +127,7 @@ def generate_video_analysis(storage_path: str, project_name: str, video_name: st
         mix_video_path = generate_mix_video_for_video(storage_path, project_name, video_name, source_video)
         
     except Exception as e:
-        print(f"Error generating analysis for {video_name}: {e}")
+        logger.error(f"Error generating analysis for {video_name}: {e}")
     
     return csv_path, mix_video_path
 
@@ -150,7 +156,7 @@ def generate_csv_analysis(storage_path: str, project_name: str, video_name: str,
         return csv_path
         
     except Exception as e:
-        print(f"Error generating CSV for {video_name}: {e}")
+        logger.error(f"Error generating CSV for {video_name}: {e}")
         return ""
 
 
@@ -181,7 +187,7 @@ def generate_mix_video_for_video(storage_path: str, project_name: str, video_nam
         return str(output_path)
         
     except Exception as e:
-        print(f"Error generating mix video for {video_name}: {e}")
+        logger.error(f"Error generating mix video for {video_name}: {e}")
         return ""
 
 
@@ -247,7 +253,7 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
                 failed_videos.append(video_name)
                 msg = f"Warning: Video file not found {video_name}"
                 messages.append(msg)
-                print(msg)
+                logger.warning(msg)
                 continue
             
             # Create video reader
@@ -256,7 +262,7 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
             
             msg = f"Video {video_name}: {total_frames} frames total"
             messages.append(msg)
-            print(msg)
+            logger.info(msg)
             
             # Create tracker (track entire video)
             start_frame = 0
@@ -273,7 +279,7 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
             
             msg = f"Starting tracking for video {video_name} (frames {start_frame}-{stop_frame})"
             messages.append(msg)
-            print(msg)
+            logger.info(msg)
             
             # Execute tracking without progress bar (to avoid sub-progress complexity)
             result = tracker.track(progress=None)
@@ -282,46 +288,46 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
                 success_count += 1
                 msg = f"✅ Completed tracking for video {video_name}"
                 messages.append(msg)
-                print(msg)
+                logger.info(msg)
                 
                 # Generate CSV and mix video after successful tracking
                 try:
                     msg = f"Generating analysis files for {video_name}..."
                     messages.append(msg)
-                    print(msg)
+                    logger.info(msg)
                     
                     csv_path, mix_video_path = generate_video_analysis(storage_path, project_name, video_name)
                     
                     if csv_path:
                         msg = f"  ✅ Generated CSV: {os.path.basename(csv_path)}"
                         messages.append(msg)
-                        print(msg)
+                        logger.info(msg)
                     if mix_video_path:
                         msg = f"  ✅ Generated mix video: {os.path.basename(mix_video_path)}"
                         messages.append(msg)
-                        print(msg)
+                        logger.info(msg)
                         
                 except Exception as e:
                     msg = f"  ⚠️  Warning: Failed to generate analysis files for {video_name}: {str(e)}"
                     messages.append(msg)
-                    print(msg)
+                    logger.warning(msg)
                     
             elif result == "Cancel":
                 msg = f"❌ Tracking for video {video_name} was cancelled"
                 messages.append(msg)
-                print(msg)
+                logger.warning(msg)
                 break
             else:
                 failed_videos.append(video_name)
                 msg = f"❌ Tracking failed for video {video_name}: {result}"
                 messages.append(msg)
-                print(msg)
+                logger.error(msg)
                 
         except Exception as e:
             failed_videos.append(video_name)
             msg = f"❌ Error: Failed to process video {video_name}: {str(e)}"
             messages.append(msg)
-            print(msg)
+            logger.error(msg)
     
     progress(1.0, desc="Batch tracking completed")
     

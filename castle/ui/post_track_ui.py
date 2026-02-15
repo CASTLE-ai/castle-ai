@@ -1,3 +1,5 @@
+"""Post-tracking analysis and mask editing UI."""
+
 import os
 import cv2
 import numpy as np
@@ -17,7 +19,10 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
     track_dir_path = os.path.join(project_path, 'track', video_name)
 
     rois_results_path = os.path.join(track_dir_path, f'mask_list.h5')
-    rois_results = H5IO(rois_results_path) # TODO: check file is exist first
+    if not os.path.exists(rois_results_path):
+        gr.Warning(f"Mask file not found: {rois_results_path}")
+        return None, None, None, None, None
+    rois_results = H5IO(rois_results_path)
     n_rois = rois_results.get_n_rois()
     total_frames = len(rois_results)
 
@@ -36,8 +41,11 @@ def generate_mask_video(storage_path, project_name, source_video):
     rois_results_path = os.path.join(track_dir_path, f'mask_list.h5')
     video_name_wo_extension = video_name.split('.')[0]
     output_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-rois.mp4')
+    if not os.path.exists(rois_results_path):
+        gr.Warning(f"Mask file not found: {rois_results_path}")
+        return None
     output = WriteArray(output_path, fps=source_video.fps, crf=15)
-    rois_results = H5IO(rois_results_path) # TODO: check file is exist first
+    rois_results = H5IO(rois_results_path)
     n_frames = len(rois_results)
 
     for i in range(n_frames):
@@ -56,8 +64,11 @@ def generate_mix_video(storage_path, project_name, source_video):
     rois_results_path = os.path.join(track_dir_path, f'mask_list.h5')
     video_name_wo_extension = video_name.split('.')[0]
     output_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-mix.mp4')
+    if not os.path.exists(rois_results_path):
+        gr.Warning(f"Mask file not found: {rois_results_path}")
+        return None
     output = WriteArray(output_path, fps=source_video.fps, crf=15)
-    rois_results = H5IO(rois_results_path) # TODO: check file is exist first
+    rois_results = H5IO(rois_results_path)
     n_frames = len(rois_results)
 
     for i in range(n_frames):

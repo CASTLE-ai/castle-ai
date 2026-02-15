@@ -1,3 +1,5 @@
+"""Mask information plotting and visualization utilities."""
+
 import plotly.graph_objects as go
 import plotly.subplots as sp
 import numpy as np

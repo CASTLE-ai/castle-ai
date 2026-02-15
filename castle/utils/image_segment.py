@@ -1,3 +1,4 @@
+"""SAM-based image segmentation utilities."""
 
 import cv2
 import torch

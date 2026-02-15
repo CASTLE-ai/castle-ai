@@ -3,6 +3,7 @@ import json
 import gradio as gr
 import numpy as np
 from castle import generate_sa
+from castle.utils.image_segment import load_sam_model
 from castle.utils.plot import generate_mix_image, generate_image_with_dots
 # from api.segmentor import MultiObjectSegmentor, merge_frame_and_mask
 
@@ -13,18 +14,21 @@ def keep_click_mode_switch_only(mode):
         return 'Remove'
     return 'Add'
 
-def index_slide_event(segmentor, source_video, index):
+def index_slide_event(segmentor, sam_model, source_video, index):
+    # Reset segmentor per frame, but keep sam_model (heavy weights) cached
     del segmentor
     if source_video is None:
-        return None, None, None, gr.update(interactive=False)
+        return None, sam_model, None, None, gr.update(interactive=False)
     frame = source_video[index]
-    return None, frame, frame, gr.update(interactive=False)
+    return None, sam_model, frame, frame, gr.update(interactive=False)
 
 
-def label_click_fn(segmentor, frame, mode, evt: gr.SelectData):
-    if segmentor == None:
-        # segmentor = MultiObjectSegmentor(model_config['sam_args'])
-        segmentor = generate_sa(model_type='vit_b')
+def label_click_fn(segmentor, sam_model, frame, mode, evt: gr.SelectData):
+    # Load SAM model once and reuse across frames
+    if sam_model is None:
+        sam_model = load_sam_model(model_type='vit_b')
+    if segmentor is None:
+        segmentor = generate_sa(model_type='vit_b', sam_model=sam_model)
         segmentor.set_frame(frame)
 
 
@@ -37,7 +41,7 @@ def label_click_fn(segmentor, frame, mode, evt: gr.SelectData):
     mix_img = generate_mix_image(frame, mask)
     mix_img_with_dots = generate_image_with_dots(mix_img, segmentor.click_points, segmentor.click_modes)
     
-    return segmentor, mix_img_with_dots
+    return segmentor, sam_model, mix_img_with_dots
     # return segmentor, merge_frame_and_mask(frame, mask, segmentor.click_points, segmentor.click_modes)
 
 def reset_click_mode():
@@ -74,6 +78,7 @@ def clean_rois_event():
 def create_label_ui(storage_path, project_name, source_video):
     ui = dict()
     segmentor = gr.State(None)
+    sam_model_state = gr.State(None)  # Heavy SAM model — persists across frame switches
     ui['select_frame'] = gr.State(None)
     with gr.Row(visible=True):
         with gr.Column(scale=2):
@@ -96,14 +101,14 @@ def create_label_ui(storage_path, project_name, source_video):
 
     ui['index_slide'].change(
         fn=index_slide_event,
-        inputs=[segmentor, source_video, ui['index_slide']],
-        outputs=[segmentor, ui['select_frame'], ui['display_view'], ui['display_view']]
+        inputs=[segmentor, sam_model_state, source_video, ui['index_slide']],
+        outputs=[segmentor, sam_model_state, ui['select_frame'], ui['display_view'], ui['display_view']]
     )
 
     ui['display_view'].select(
         fn=label_click_fn,
-        inputs=[segmentor, ui['select_frame'], ui['click_mode']],
-        outputs=[segmentor, ui['display_view']],
+        inputs=[segmentor, sam_model_state, ui['select_frame'], ui['click_mode']],
+        outputs=[segmentor, sam_model_state, ui['display_view']],
     )
 
     ui['next_roi_btn'].click(
@@ -131,8 +136,8 @@ def create_label_ui(storage_path, project_name, source_video):
 
     ui['clean_rois_btn'].click(
         fn=index_slide_event,
-        inputs=[segmentor, source_video, ui['index_slide']],
-        outputs=[segmentor, ui['select_frame'], ui['display_view'], ui['display_view']]
+        inputs=[segmentor, sam_model_state, source_video, ui['index_slide']],
+        outputs=[segmentor, sam_model_state, ui['select_frame'], ui['display_view'], ui['display_view']]
     )
 
     ui['index_slide'].change(

@@ -10,16 +10,20 @@ DEFAULT_DEVICE = get_device()
 
 
 class Segmentor:
-    def __init__(self, sam_args):
+    def __init__(self, sam_args, sam_model=None):
         """
         sam_args:
             sam_checkpoint: path of SAM checkpoint
             generator_args: args for everything_generator
             device: device
+        sam_model: optional pre-loaded SAM model to reuse (avoids reloading weights)
         """
         self.device = sam_args["device"]
-        self.sam = sam_model_registry[sam_args["model_type"]](checkpoint=sam_args["sam_checkpoint"])
-        self.sam.to(device=self.device)
+        if sam_model is not None:
+            self.sam = sam_model
+        else:
+            self.sam = sam_model_registry[sam_args["model_type"]](checkpoint=sam_args["sam_checkpoint"])
+            self.sam.to(device=self.device)
         self.everything_generator = SamAutomaticMaskGenerator(model=self.sam, **sam_args['generator_args'])
         self.interactive_predictor = self.everything_generator.predictor
         self.have_embedded = False
@@ -77,13 +81,20 @@ class Segmentor:
 
 
 class MultiObjectSegmentor():
-    def __init__(self, sam_args) -> None:
+    def __init__(self, sam_args, sam_model=None) -> None:
         self.sam_args = sam_args
         self.click_points = []
         self.click_modes = []
         self.n_rois = 0
         self.next = True
-        pass
+        # Load SAM model once and reuse across clicks
+        if sam_model is not None:
+            self._sam_model = sam_model
+        else:
+            self._sam_model = sam_model_registry[sam_args["model_type"]](
+                checkpoint=sam_args["sam_checkpoint"]
+            )
+            self._sam_model.to(device=sam_args["device"])
 
 
     def set_frame(self, frame):
@@ -98,13 +109,14 @@ class MultiObjectSegmentor():
         self.click_points.append(point)
         self.click_modes.append(mode)
 
-        sam = Segmentor(self.sam_args)
+        # Reuse the cached SAM model instead of reloading every click
+        sam = Segmentor(self.sam_args, sam_model=self._sam_model)
         mask = sam.segment_with_click(
             self.frame, 
             np.array(self.click_points), 
             np.array(self.click_modes)
         )
-        del sam
+        # Don't delete sam — the underlying model is shared via self._sam_model
         self.temp_mask = np.array(self.pre_mask)
         self.temp_mask[mask > 0] = self.n_rois
         return self.temp_mask
@@ -118,6 +130,8 @@ class MultiObjectSegmentor():
         
 
     def __del__(self):
+        if hasattr(self, '_sam_model'):
+            del self._sam_model
         torch.cuda.empty_cache()
    
 
@@ -133,7 +147,28 @@ def download_sa_ckpt(model_type):
         assert False, f"model_type mismatch {model_type}, expect vit_b."
 
 
-def generate_sa(ckpt_path='', model_type='vit_b', device=''):
+def load_sam_model(ckpt_path='', model_type='vit_b', device=''):
+    """Load and return the raw SAM model (heavy weights).
+    
+    Call once and keep the result in a gr.State to avoid reloading
+    the model on every frame switch.
+    """
+    if not ckpt_path:
+        ckpt_path = download_sa_ckpt(model_type)
+    if not device:
+        device = DEFAULT_DEVICE
+    model = sam_model_registry[model_type](checkpoint=ckpt_path)
+    model.to(device=device)
+    return model
+
+
+def generate_sa(ckpt_path='', model_type='vit_b', device='', sam_model=None):
+    """Create a MultiObjectSegmentor, optionally reusing a pre-loaded SAM model.
+    
+    Args:
+        sam_model: Pre-loaded SAM model from load_sam_model(). If None,
+                   the model is loaded from scratch.
+    """
     if not ckpt_path:
         ckpt_path = download_sa_ckpt(model_type)
     if not device:
@@ -152,4 +187,4 @@ def generate_sa(ckpt_path='', model_type='vit_b', device=''):
         },
         'device': device,
     }
-    return MultiObjectSegmentor(sam_args)
+    return MultiObjectSegmentor(sam_args, sam_model=sam_model)

@@ -1,110 +1,155 @@
 """
 CASTLE Desktop - Background Worker Threads
 
-QThread-based workers for long-running computations:
-- UMAP embedding generation
-- DBSCAN clustering
-- Latent extraction
-
-These prevent the UI from freezing during computation.
+Generic QThread-based worker for running service layer functions
+without freezing the UI.
 """
 
-from PySide6.QtCore import QThread, Signal
+from PyQt6.QtCore import QThread, pyqtSignal
 
 
-class UMAPWorker(QThread):
-    """Background thread for UMAP computation."""
-    
-    finished = Signal(object)  # Emits LocalLatent
-    progress = Signal(str)     # Progress message
-    error = Signal(str)        # Error message
-    
-    def __init__(self, latents, cluster_name, config):
+class ServiceWorker(QThread):
+    """Generic background thread for any callable.
+
+    Usage:
+        worker = ServiceWorker(some_service_fn, arg1, arg2, key=val)
+        worker.finished.connect(on_done)
+        worker.error.connect(on_error)
+        worker.start()
+    """
+
+    progress = pyqtSignal(int, str)    # (percent 0-100, message)
+    finished = pyqtSignal(object)      # result of fn()
+    error = pyqtSignal(str)            # error message
+
+    def __init__(self, fn, *args, **kwargs):
         super().__init__()
-        self._latents = latents
-        self._cluster_name = cluster_name
-        self._config = config
-    
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+
     def run(self):
         try:
-            self.progress.emit(f"Selecting cluster '{self._cluster_name}'...")
-            local_latents = self._latents.select(self._cluster_name)
-            
-            if len(local_latents.data) == 0:
-                self.error.emit("Selected cluster is empty.")
-                return
-            
-            self.progress.emit("Running UMAP embedding...")
-            local_latents.build_embedding(self._config)
-            
-            self.finished.emit(local_latents)
-            
+            result = self.fn(*self.args, **self.kwargs)
+            self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
 
 
-class ClusterWorker(QThread):
-    """Background thread for DBSCAN clustering."""
-    
-    finished = Signal(object)  # Emits LocalLatent with cluster
-    error = Signal(str)
-    
-    def __init__(self, local_latents, method, config):
+class TrackingWorker(QThread):
+    """Worker thread for tracking a single video."""
+
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(str)       # status string
+    error = pyqtSignal(str)
+
+    def __init__(self, storage_path, project_name, video_name, model,
+                 skip_existing=True):
         super().__init__()
-        self._local_latents = local_latents
-        self._method = method
-        self._config = config
-    
+        self._storage = storage_path
+        self._project = project_name
+        self._video = video_name
+        self._model = model
+        self._skip = skip_existing
+
     def run(self):
         try:
-            self._local_latents.build_cluster(
-                method=self._method,
-                configs=self._config
+            from castle.service.tracking_service import track_video
+            result = track_video(
+                self._storage, self._project, self._video,
+                model=self._model,
+                skip_existing=self._skip,
             )
-            self.finished.emit(self._local_latents)
+            self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
 
 
 class ExtractionWorker(QThread):
-    """Background thread for latent extraction."""
-    
-    finished = Signal(str)     # Emits output path
-    progress = Signal(float, str)  # (fraction, description)
-    error = Signal(str)
-    
-    def __init__(self, storage_path, project_name, video_name, roi_id,
-                 model_name, batch_size, preprocess_config, skip_existing):
+    """Worker thread for latent extraction."""
+
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(str)       # semicolon-separated paths
+    error = pyqtSignal(str)
+
+    def __init__(self, storage_path, project_name, video_name, model,
+                 roi, batch_size=32, preprocess_config=None,
+                 skip_existing=True):
         super().__init__()
-        self._storage_path = storage_path
-        self._project_name = project_name
-        self._video_name = video_name
-        self._roi_id = roi_id
-        self._model_name = model_name
-        self._batch_size = batch_size
-        self._preprocess_config = preprocess_config
-        self._skip_existing = skip_existing
-    
+        self._storage = storage_path
+        self._project = project_name
+        self._video = video_name
+        self._model = model
+        self._roi = roi
+        self._batch = batch_size
+        self._preprocess = preprocess_config
+        self._skip = skip_existing
+
     def run(self):
         try:
-            from castle.core.extractor import extract_roi_latent_from_video
-            
-            def progress_callback(p, desc=None):
-                self.progress.emit(p, desc or "")
-            
-            path = extract_roi_latent_from_video(
-                storage_path=self._storage_path,
-                project_name=self._project_name,
-                video_name=self._video_name,
-                roi_id=self._roi_id,
-                model_name=self._model_name,
-                batch_size=self._batch_size,
-                preprocess_config=self._preprocess_config,
-                skip_existing=self._skip_existing,
-                progress_callback=progress_callback
+            from castle.service.extraction_service import extract_latent
+
+            def _progress(frac, desc=None):
+                pct = int(frac * 100) if frac <= 1.0 else int(frac)
+                self.progress.emit(pct, desc or "")
+
+            result = extract_latent(
+                self._storage, self._project, self._video,
+                model=self._model,
+                roi=self._roi,
+                batch_size=self._batch,
+                preprocess_config=self._preprocess,
+                skip_existing=self._skip,
+                progress_callback=_progress,
             )
-            
-            self.finished.emit(path or "")
-            
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class ClusteringSessionWorker(QThread):
+    """Worker thread for initializing a ClusteringSession."""
+
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(object)      # ClusteringSession instance
+    error = pyqtSignal(str)
+
+    def __init__(self, storage_path, project_name, roi, bin_size, model):
+        super().__init__()
+        self._storage = storage_path
+        self._project = project_name
+        self._roi = roi
+        self._bin = bin_size
+        self._model = model
+
+    def run(self):
+        try:
+            from castle.service.clustering_service import ClusteringSession
+            session = ClusteringSession(
+                self._storage, self._project,
+                roi=self._roi, bin_size=self._bin, model=self._model,
+            )
+            self.finished.emit(session)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class UMAPWorker(QThread):
+    """Worker thread for UMAP computation."""
+
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(object)    # result dict from session.run_umap()
+    error = pyqtSignal(str)
+
+    def __init__(self, session, cluster_name, umap_config):
+        super().__init__()
+        self._session = session
+        self._cluster_name = cluster_name
+        self._config = umap_config
+
+    def run(self):
+        try:
+            result = self._session.run_umap(self._cluster_name, self._config)
+            self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))

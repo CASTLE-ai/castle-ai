@@ -239,8 +239,8 @@ class ROITracker:
         frame_range = list(range(self.start_frame, self.stop_frame + delta, delta))
 
         # Initialize DataLoader for batch processing
-        # Initialize DataLoader for batch processing
-        num_workers = max(1, int(os.cpu_count() * 0.2))
+        from castle.core.environment import get_num_workers
+        num_workers = get_num_workers('tracking')
         batch_size = 16
         logger.debug(f"Tracking with {num_workers} workers and batch size {batch_size}")
 

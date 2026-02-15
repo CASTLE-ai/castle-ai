@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 # Import from our new Core modules
 from castle.core.data import VideoDataset, Preprocess
 from castle.core.config import SUPPORTED_MODELS, ERROR_MESSAGES
+from castle.core.environment import get_num_workers
 from castle.core.logging_config import setup_logger
 from castle.core.project import get_project_config, save_project_config
 from castle.utils.video_io import VideoWriter, VideoReader
@@ -137,7 +138,7 @@ def extract_roi_latent_from_video(
         return ""
     
     # 4. Processing
-    NUM_WORKERS = max(1, (os.cpu_count() or 2) // 2)
+    NUM_WORKERS = get_num_workers('extraction')
 
     # Get video length
     try:
@@ -368,7 +369,7 @@ def extract_roi_rotation_latent_from_video(
     embed_dim = observer.n_feature
 
     # 4. Processing
-    NUM_WORKERS = max(1, (os.cpu_count() or 2) // 2)
+    NUM_WORKERS = get_num_workers('extraction')
     
     try:
         with VideoReader(source_path) as vr:

@@ -51,3 +51,32 @@ def get_device() -> str:
     All modules should use this instead of implementing their own detection.
     """
     return env.device
+
+
+def get_num_workers(task_type: str = 'default') -> int:
+    """Get optimal number of DataLoader workers based on system resources.
+
+    This is the single canonical source for worker count across CASTLE.
+    All modules should use this instead of inline cpu_count calculations.
+
+    Args:
+        task_type:
+            'extraction' — CPU-heavy preprocessing + GPU inference; more
+                workers help keep the GPU fed.
+            'tracking' — GPU-heavy batch inference; fewer workers to save
+                GPU memory and avoid contention.
+            'default' — balanced middle-ground.
+
+    Returns:
+        Number of workers (always >= 1).
+    """
+    cpu_count = os.cpu_count() or 4
+
+    if task_type == 'extraction':
+        workers = max(1, cpu_count // 2)
+    elif task_type == 'tracking':
+        workers = max(1, min(4, cpu_count // 4))
+    else:
+        workers = max(1, cpu_count // 4)
+
+    return workers

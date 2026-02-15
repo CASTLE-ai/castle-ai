@@ -6,7 +6,6 @@ Delegates all logic to castle.core.extractor.
 
 import os
 import gradio as gr
-from typing import List
 from tqdm import tqdm # 新增: 匯入 tqdm
 
 from castle.core.data import Preprocess
@@ -430,7 +429,6 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
 # ---------------------------
 # UI Construction
 # ---------------------------
-from ..utils.video_manager import get_project_videos
 
 
 # ---------------------------

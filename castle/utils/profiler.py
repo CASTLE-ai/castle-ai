@@ -3,7 +3,6 @@
 import time
 from collections import defaultdict
 import statistics
-import json
 import threading
 
 from castle.core.logging_config import setup_logger

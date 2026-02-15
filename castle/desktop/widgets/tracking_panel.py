@@ -4,14 +4,12 @@ CASTLE Desktop - Tracking Panel (Tab 2)
 ROI tracking using the service layer.
 """
 
-import os
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QGroupBox, QListWidget, QProgressBar,
     QCheckBox, QTextEdit, QMessageBox
 )
-from PyQt6.QtCore import pyqtSignal
 
 from castle.service.project_service import get_project_info as svc_get_project_info
 from castle.service.tracking_service import get_tracking_status as svc_tracking_status

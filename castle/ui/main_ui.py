@@ -53,12 +53,12 @@ def create_ui(OS_SYS, root=''):
         # Tracking ROIs tab
         with gr.Tab(label='2. Tracking ROIs') as edit_tab:
             # The UI update logic is now handled within create_edit_ui
-            edit_ui = create_edit_ui(storage_path, project_name, edit_tab)
+            _edit_ui = create_edit_ui(storage_path, project_name, edit_tab)
 
         # Extract latent features tab
         with gr.Tab(label='3. Extract Latent') as extract_tab:
             # The UI update logic is handled within create_extract_ui
-            extract_ui = create_extract_ui(storage_path, project_name, extract_tab)
+            _extract_ui = create_extract_ui(storage_path, project_name, extract_tab)
 
         # Behavior analysis tab (Stage 4)
         with gr.Tab(label='4. Behavior Microscope') as cluster_page_tab:
@@ -71,7 +71,7 @@ def create_ui(OS_SYS, root=''):
 
                 # Sub-tab: Cluster Annotator (A-04)
                 with gr.Tab(label='Cluster Annotator'):
-                    annotator_ui = create_annotator_ui(
+                    _annotator_ui = create_annotator_ui(
                         storage_path, project_name,
                         shared_states['latents'],
                         shared_states['mulvideo'],

@@ -8,16 +8,13 @@ No gradio imports.
 
 import os
 import json
-import shutil
 import logging
-from typing import Dict, List, Optional
+from typing import List
 
-from castle.core.project import get_project_config, save_project_config
+from castle.core.project import get_project_config
 from castle.utils.video_manager import (
-    is_video_file,
     add_video_to_project,
     list_videos_in_directory,
-    get_project_videos,
     add_videos_batch,
 )
 

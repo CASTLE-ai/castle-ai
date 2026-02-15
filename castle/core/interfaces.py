@@ -3,7 +3,7 @@ castle/core/interfaces.py
 Protocols for Castle AI core components.
 """
 
-from typing import Protocol, Any, Iterable, List, Tuple, Optional
+from typing import Protocol, Any, Iterable, List, Optional
 import numpy as np
 
 class ProgressReporter(Protocol):

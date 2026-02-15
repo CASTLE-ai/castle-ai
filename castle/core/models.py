@@ -6,9 +6,8 @@ Unified Visual Encoder Interface.
 import torch
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
-from typing import List, Any, Optional, Union, Tuple
+from typing import List, Any, Optional, Union
 import numpy as np
-import os
 from torchvision import transforms
 from PIL import Image
 import torchvision.transforms.functional as TF
@@ -100,7 +99,7 @@ class VisualEncoder(ABC):
 
     def _multiscale_pooling(self, features: torch.Tensor, masks: torch.Tensor,
                             image_size: int, patch_size: int,
-                            scales: List[int] = [1, 2, 4]) -> torch.Tensor:
+                            scales: Optional[List[int]] = None) -> torch.Tensor:
         """
         Multi-scale spatial pyramid pooling (SPP).
 
@@ -118,6 +117,8 @@ class VisualEncoder(ABC):
             (B, sum(s²) × C) concatenated multi-scale features
             e.g., scales=[1,2,4] → (B, 21 × 768) = (B, 16128)
         """
+        if scales is None:
+            scales = [1, 2, 4]
         # 1. Resize masks to image_size, then downsample to patch grid
         masks_resized = F.interpolate(
             masks[:, None, ...], size=(image_size, image_size), mode='nearest'

@@ -3,10 +3,9 @@ castle/core/data.py
 Data structures and dataset classes.
 """
 
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple
 
 import numpy as np
-import torch
 from torch.utils.data import Dataset
 from castle.utils.video_io import VideoReader
 from castle.utils.h5_io import H5IO

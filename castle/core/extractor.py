@@ -447,7 +447,7 @@ def extract_roi_rotation_latent_from_video(
         
         return latent_path
 
-    except Exception as e:
+    except Exception:
         logger.error(f"Rotation extraction failed for {video_name}", exc_info=True)
         # Clean up partial file?
         if os.path.exists(latent_path):

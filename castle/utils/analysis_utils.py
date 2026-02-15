@@ -9,11 +9,11 @@ to eliminate code duplication (C-07).
 import os
 import cv2
 import numpy as np
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict
 
 from castle.utils.h5_io import H5IO
 from castle.utils.plot import generate_mix_image, generate_mask_image
-from castle.utils.video_io import ReadArray, WriteArray
+from castle.utils.video_io import WriteArray
 
 
 def compute_roi_info(rois_results: H5IO, n_rois: int, total_frames: int,

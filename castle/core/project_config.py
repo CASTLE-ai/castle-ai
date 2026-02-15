@@ -108,7 +108,6 @@ class ProjectConfig:
                 return data
             # Inspect the dataclass fields and recursively build nested ones
             import dataclasses
-            field_types = {f.name: f.type for f in dataclasses.fields(dc_cls)}
             kwargs = {}
             for f in dataclasses.fields(dc_cls):
                 if f.name not in data:
@@ -123,7 +122,6 @@ class ProjectConfig:
                     kwargs[f.name] = _build(ftype, val)
                 elif hasattr(ftype, '__origin__'):
                     # Handle List[...] generics
-                    import typing
                     origin = getattr(ftype, '__origin__', None)
                     args = getattr(ftype, '__args__', ())
                     if origin is list and args and dataclasses.is_dataclass(args[0]):

@@ -3,9 +3,8 @@
 import os
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-import numpy as np
 import gradio as gr
 from tqdm import tqdm
 

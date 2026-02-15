@@ -38,7 +38,7 @@ def build_cluster_tree_markdown(cluster_meta, cluster_array):
         depth = len(parts) - 1  # 'root' = 0, 'root_a0' = 1, etc.
         indent = '\u00a0\u00a0\u00a0\u00a0' * depth  # Non-breaking spaces for indent
 
-        color = meta.get('color', 'grey')
+        _color = meta.get('color', 'grey')
         prefix = '├── ' if depth > 0 else ''
         line = f"{indent}{prefix}🔸 **{name}** ({count} bins)"
         lines.append(line)

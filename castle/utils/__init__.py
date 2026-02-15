@@ -1,5 +1,5 @@
-from .video_object_segment import generate_aot
-from .image_segment import generate_sa
+from .video_object_segment import generate_aot  # noqa: F401
+from .image_segment import generate_sa  # noqa: F401
 
 
 def __getattr__(name):

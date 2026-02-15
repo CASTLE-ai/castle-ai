@@ -12,13 +12,13 @@ not class instances, so they can be used from any frontend.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
-from typing import List, Dict, Optional, Callable, Tuple
+from typing import List, Dict, Optional, Callable
 
 
 def plot_embedding(embedding: np.ndarray,
                    cluster: Optional[np.ndarray] = None,
                    palette_fn: Optional[Callable[[int], str]] = None,
-                   dims: List[int] = [0, 1],
+                   dims: Optional[List[int]] = None,
                    legend: bool = True) -> None:
     """
     Plot 2D embedding scatter with optional cluster coloring.
@@ -32,6 +32,8 @@ def plot_embedding(embedding: np.ndarray,
         dims: Which two dimensions of embedding to plot.
         legend: Whether to show legend.
     """
+    if dims is None:
+        dims = [0, 1]
     assert len(dims) == 2, 'dims must have exactly 2 elements'
 
     if cluster is not None and palette_fn is not None:
@@ -66,7 +68,7 @@ def plot_named_embedding(embedding: np.ndarray,
                          cluster: np.ndarray,
                          export: Dict[int, Dict],
                          palette_fn: Callable[[int], str],
-                         dims: List[int] = [0, 1],
+                         dims: Optional[List[int]] = None,
                          legend: bool = True) -> None:
     """
     Plot 2D embedding scatter colored by named cluster labels.
@@ -81,6 +83,8 @@ def plot_named_embedding(embedding: np.ndarray,
         dims: Which two dimensions to plot.
         legend: Whether to show legend.
     """
+    if dims is None:
+        dims = [0, 1]
     assert len(dims) == 2, 'dims must have exactly 2 elements'
 
     if cluster is not None:
@@ -207,7 +211,7 @@ def plot_focus_embedding(embedding: np.ndarray,
                          focus: np.ndarray,
                          cluster: Optional[np.ndarray] = None,
                          palette_fn: Optional[Callable[[int], str]] = None,
-                         dims: List[int] = [0, 1],
+                         dims: Optional[List[int]] = None,
                          legend: bool = True) -> None:
     """
     Plot 2D embedding scatter for FocusLatent (explorer.py style).
@@ -223,6 +227,8 @@ def plot_focus_embedding(embedding: np.ndarray,
         dims: Which two dimensions to plot.
         legend: Whether to show legend.
     """
+    if dims is None:
+        dims = [0, 1]
     assert len(dims) == 2, 'dims must have exactly 2 elements'
 
     if cluster is not None and palette_fn is not None:

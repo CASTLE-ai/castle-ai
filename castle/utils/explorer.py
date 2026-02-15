@@ -184,8 +184,10 @@ class FocusLatent:
             self.cluster[self.cluster == cids[i]] = cids[0]
         
         
-    def plot(self, dimensions=[0, 1], legend=True):
+    def plot(self, dimensions=None, legend=True):
         """Plot embedding scatter. Delegates to castle.visualization."""
+        if dimensions is None:
+            dimensions = [0, 1]
         assert hasattr(self, 'embedding')
         from castle.visualization.embedding_plots import plot_focus_embedding as _plot_focus
         cluster = self.cluster if hasattr(self, 'cluster') else None

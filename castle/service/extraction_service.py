@@ -6,9 +6,8 @@ All functions take simple types and return strings/dicts.
 No gradio imports.
 """
 
-import os
 import logging
-from typing import Optional, Callable, Dict
+from typing import Optional, Callable
 
 from castle.core.data import Preprocess
 from castle.core.extractor import (

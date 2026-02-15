@@ -1,7 +1,6 @@
 """SAM-based interactive labeling UI for ROI segmentation."""
 
 import os
-import json
 import gradio as gr
 import numpy as np
 from castle import generate_sa

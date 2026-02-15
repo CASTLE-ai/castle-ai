@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QGroupBox, QLabel, QPushButton, QComboBox, QSpinBox,
     QDoubleSpinBox, QTextEdit, QLineEdit, QProgressBar,
-    QMessageBox, QRadioButton, QButtonGroup
+    QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSlot
 

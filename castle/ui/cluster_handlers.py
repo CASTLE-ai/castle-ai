@@ -19,7 +19,6 @@ import matplotlib.pyplot as plt
 
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
 from castle.ui.embedding_scatter import EmbeddingScatterPlot
-from castle.ui.cluster_tree import build_cluster_tree_markdown
 from castle.service.history_service import HistoryManager
 
 
@@ -134,7 +133,6 @@ def plot_syllables_per_video(latents, aggregator):
 
     cluster = latents.cluster
     cluster_meta = latents.cluster_meta
-    time_window = latents.time_window
     videos_meta = aggregator.videos_meta
     fps = aggregator.fps
     bin_size = aggregator.bin_size
@@ -293,7 +291,7 @@ def _restore_embedding_from_npz(npz_path, latents):
         Z_plt = EmbeddingScatterPlot(local_latents)
         return local_latents, Z_plt
 
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         return None, None

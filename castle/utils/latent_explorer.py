@@ -199,15 +199,19 @@ class LocalLatent:
         return self._palette[x % len(self._palette)]
 
     
-    def plot_embedding(self, dims=[0, 1]):
+    def plot_embedding(self, dims=None):
         """Plot embedding scatter colored by cluster. Delegates to castle.visualization."""
+        if dims is None:
+            dims = [0, 1]
         assert hasattr(self, 'embedding')
         from castle.visualization.embedding_plots import plot_embedding as _plot_embedding
         cluster = self.cluster if hasattr(self, 'cluster') else None
         _plot_embedding(self.embedding, cluster=cluster, palette_fn=self.palette, dims=dims)
     
-    def plot_name_embedding(self, dims=[0, 1]):
+    def plot_name_embedding(self, dims=None):
         """Plot embedding scatter colored by named labels. Delegates to castle.visualization."""
+        if dims is None:
+            dims = [0, 1]
         assert hasattr(self, 'embedding')
         from castle.visualization.embedding_plots import plot_named_embedding as _plot_named
         cluster = self.cluster if hasattr(self, 'cluster') else None

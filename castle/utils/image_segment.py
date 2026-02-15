@@ -1,9 +1,7 @@
 """SAM-based image segmentation utilities."""
 
-import cv2
 import torch
 import numpy as np
-from PIL import Image
 from .download import download_file
 from castle.sam.segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from castle.core.environment import get_device

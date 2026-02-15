@@ -4,7 +4,6 @@ Project management CLI commands: init, info, add-videos, list.
 """
 
 import os
-from typing import List, Optional
 
 import typer
 from rich.console import Console

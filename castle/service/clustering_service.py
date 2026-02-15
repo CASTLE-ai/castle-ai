@@ -13,10 +13,10 @@ import json
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Callable, Any
+from typing import List, Optional, Callable, Any
 
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
-from castle.utils.latent_explorer import Latent, LocalLatent
+from castle.utils.latent_explorer import LocalLatent
 
 logger = logging.getLogger(__name__)
 

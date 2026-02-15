@@ -117,7 +117,7 @@ def create_edit_ui(storage_path, project_name, edit_tab):
         in the **View** tab after tracking completes.
         """)
 
-    with gr.Tab(label='Single Video Tracking') as single_tracking_tab:
+    with gr.Tab(label='Single Video Tracking') as _single_tracking_tab:
         with gr.Accordion('Select Source Video', open=True, visible=False) as ui['source_accordion']:
             ui['select_video_drop'] = gr.Dropdown(
                 label="Select Video",

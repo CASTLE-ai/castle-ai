@@ -1,15 +1,13 @@
 """Post-tracking analysis and mask editing UI."""
 
 import os
-import cv2
-import numpy as np
 
 import gradio as gr
 
 from .plot_mask_info import Plotter
 from castle.utils.plot import generate_mix_image, generate_mask_image
 from castle.utils.h5_io import H5IO
-from castle.utils.video_io import ReadArray, WriteArray
+from castle.utils.video_io import WriteArray
 from castle.utils.analysis_utils import compute_roi_info, save_kinematic_csv
 
 

@@ -2,9 +2,8 @@
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-import numpy as np
 import gradio as gr
 
 from castle.utils.plot import generate_mix_image

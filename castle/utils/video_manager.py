@@ -1,7 +1,6 @@
 """Video management utilities for Castle AI."""
 
 import os
-import json
 import shutil
 import logging
 

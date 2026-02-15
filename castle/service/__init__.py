@@ -11,10 +11,18 @@ Service functions:
 - Manage state (project lifecycle, model lifetime, etc.)
 """
 
-from castle.service import (
+from castle.service import (  # noqa: F401
     project_service,
     extraction_service,
     clustering_service,
     bout_service,
     annotation_service,
 )
+
+__all__ = [
+    "project_service",
+    "extraction_service",
+    "clustering_service",
+    "bout_service",
+    "annotation_service",
+]

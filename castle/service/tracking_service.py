@@ -6,16 +6,13 @@ All functions take simple types and return dicts.
 No gradio imports.
 """
 
-import os
 import logging
 from pathlib import Path
 from typing import Optional, Callable
 
-from castle.core.project import get_project_config
 from castle.utils.video_io import ReadArray
 from castle.utils.h5_io import H5IO
 from castle.utils.tracking_manager import ROITracker
-from castle.utils.analysis_utils import compute_roi_info, save_kinematic_csv
 
 logger = logging.getLogger(__name__)
 

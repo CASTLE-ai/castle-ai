@@ -4,15 +4,13 @@ Core clustering logic and data aggregation.
 """
 
 import os
-import json
 import threading
 import numpy as np
-import pandas as pd
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Optional
 
 from castle.core.interfaces import NotificationCallback
 from castle.core.logging_config import setup_logger
-from castle.utils.video_io import VideoReader, VideoIOError
+from castle.utils.video_io import VideoReader
 from castle.core.project import get_project_config
 from castle.utils.latent_explorer import Latent
 

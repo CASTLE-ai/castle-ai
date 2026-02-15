@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import (
     QComboBox, QGroupBox, QCheckBox, QSpinBox,
     QProgressBar, QTextEdit, QMessageBox
 )
-from PyQt6.QtCore import pyqtSignal
 
 from castle.service.project_service import get_project_info as svc_get_project_info
 from castle.service.extraction_service import make_preprocess_config

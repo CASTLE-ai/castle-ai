@@ -7,9 +7,9 @@ the CASTLE pipeline stages.
 
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout,
-    QStatusBar, QLabel, QMenuBar, QMessageBox
+    QStatusBar, QLabel, QMessageBox
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QAction
 
 from castle.desktop.widgets.project_panel import ProjectPanel

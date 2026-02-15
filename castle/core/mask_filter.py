@@ -9,7 +9,7 @@ of the tracking pipeline — e.g. during extraction or analysis.
 import cv2
 import numpy as np
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 

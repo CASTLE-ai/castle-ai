@@ -16,7 +16,6 @@ import gradio as gr
 from castle.core.cluster import auto_generate_cluster_name
 
 # Import from split modules
-from castle.ui.embedding_scatter import EmbeddingScatterPlot
 from castle.ui.cluster_tree import build_cluster_tree_markdown
 from castle.ui.cluster_handlers import (
     embedding_plot_click,
@@ -26,7 +25,6 @@ from castle.ui.cluster_handlers import (
     generate_local_cluster,
     label_local_cluster,
     label_all_and_submit,
-    check_session_exists,
     restore_session,
     import_info_from_local_latent,
     init_mulvideo,

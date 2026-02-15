@@ -8,8 +8,6 @@ import os
 
 import numpy as np
 from natsort import natsorted
-import cv2  # Added for smart filtering
-import torch
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm # 新增：匯入 tqdm
 

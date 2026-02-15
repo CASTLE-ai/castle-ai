@@ -94,32 +94,13 @@ class Latent:
             return 'grey'
         
     def plot(self, legend=True):
+        """Plot syllables bar timeline. Delegates to castle.visualization."""
         if self.need_maintain_key_frames:
             self.maintain_key_frames()
 
-        widths, colors, lefts = [], [], []
-        for j in range(len(self.key_frames) - 1):
-            widths.append(self.key_frames[j + 1] - self.key_frames[j])
-            colors.append(self.palette(self.syllables[self.key_frames[j]]))
-            lefts.append(self.key_frames[j])
-
-        # Plot the bar chart
-        plt.bar(lefts, height=[1] * len(widths), width=widths, color=colors, align='edge', edgecolor='none')
-        plt.xlim(0, self.key_frames[-1])
-        plt.ylim(0, 1)
-        plt.yticks([])
-
-        # Prepare legend if necessary
-        if legend:
-            unique_categories = sorted(set(self.syllables[self.key_frames[j]] for j in range(len(self.key_frames) - 1)))
-            if -1 in unique_categories:
-                unique_categories.remove(-1)
-
-            legend_handles = [
-                Patch(color=self.palette(cat), label=self.meta[cat]['name'])
-                for cat in unique_categories
-            ]
-            plt.legend(handles=legend_handles, title="Categories")
+        from castle.visualization.embedding_plots import plot_syllables_bar as _plot_bar
+        _plot_bar(self.syllables, self.key_frames, self.meta, 
+                  palette_fn=self.palette, legend=legend)
 
 
 def gen_palette(avoid):
@@ -202,23 +183,9 @@ class FocusLatent:
         
         
     def plot(self, dimensions=[0, 1], legend=True):
+        """Plot embedding scatter. Delegates to castle.visualization."""
         assert hasattr(self, 'embedding')
-        assert len(dimensions) == 2
-        if hasattr(self, 'cluster'):
-            for it in range(0, self.cluster.max()+1):
-                plt.scatter(x=self.embedding[self.cluster == it, dimensions[0]], 
-                            y=self.embedding[self.cluster == it, dimensions[1]], 
-                            c=self.palette(it), 
-                            label=f'{it}')
-            if -1 in self.cluster:
-                
-                plt.scatter(x=self.embedding[self.cluster == -1, dimensions[0]], 
-                            y=self.embedding[self.cluster == -1, dimensions[1]], 
-                            c='grey',
-                            label=f'-1')
-            if legend:
-                plt.legend()
-        else:
-            plt.scatter(x=self.embedding[:, dimensions[0]], 
-                        y=self.embedding[:, dimensions[1]], 
-                        c='grey')
+        from castle.visualization.embedding_plots import plot_focus_embedding as _plot_focus
+        cluster = self.cluster if hasattr(self, 'cluster') else None
+        _plot_focus(self.embedding, self.focus, cluster=cluster, 
+                    palette_fn=self.palette, dims=dimensions, legend=legend)

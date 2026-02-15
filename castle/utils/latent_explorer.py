@@ -92,27 +92,12 @@ class Latent:
             return 'grey'
 
     def plot_syllables(self):
+        """Plot behavioral syllables timeline. Delegates to castle.visualization."""
         if self.need_maintain_key_frames:
             self.maintain_key_frames()
-            
 
-        widths = [self.key_frames[j+1] - self.key_frames[j] for j in range(len(self.key_frames)-1)]
-        colors = [self.palette(self.cluster[self.key_frames[j]]) for j in range(len(self.key_frames)-1)]
-        lefts = self.key_frames[:-1]
-
-
-        
-        plt.bar(lefts, height=[1]*len(widths), width=widths, color=colors, align='edge', edgecolor='none')
-        plt.xlim(0, self.key_frames[-1])
-        plt.ylim(0, 1)
-        plt.yticks([])
-        unique_categories = sorted(set(self.cluster[self.key_frames[j]] for j in range(len(self.key_frames)-1)))
-        if -1 in unique_categories:
-            unique_categories.remove(-1)
-
-        legend_handles = [Patch(color=self.palette(cat), label=self.cluster_meta[cat]['name']) for cat in unique_categories]
-
-        plt.legend(handles=legend_handles, title="Categories")
+        from castle.visualization.embedding_plots import plot_syllables as _plot_syllables
+        _plot_syllables(self.cluster, self.key_frames, self.cluster_meta, palette_fn=self.palette)
 
 
 
@@ -215,59 +200,19 @@ class LocalLatent:
 
     
     def plot_embedding(self, dims=[0, 1]):
+        """Plot embedding scatter colored by cluster. Delegates to castle.visualization."""
         assert hasattr(self, 'embedding')
-        assert len(dims) == 2, 'dims should'
-        if hasattr(self, 'cluster'):
-            for it in range(0, self.cluster.max()+1):
-                plt.scatter(x=self.embedding[self.cluster == it, dims[0]], 
-                            y=self.embedding[self.cluster == it, dims[1]], 
-                            c=self.palette(it), 
-                            label=f'{it}')
-            if -1 in self.cluster:
-                plt.scatter(x=self.embedding[self.cluster == -1, dims[0]], 
-                            y=self.embedding[self.cluster == -1, dims[1]], 
-                            c='grey',
-                            label=f'-1')
-            plt.legend()
-        else:
-            plt.scatter(x=self.embedding[:, dims[0]], 
-                        y=self.embedding[:, dims[1]], 
-                        c='grey')
+        from castle.visualization.embedding_plots import plot_embedding as _plot_embedding
+        cluster = self.cluster if hasattr(self, 'cluster') else None
+        _plot_embedding(self.embedding, cluster=cluster, palette_fn=self.palette, dims=dims)
     
     def plot_name_embedding(self, dims=[0, 1]):
+        """Plot embedding scatter colored by named labels. Delegates to castle.visualization."""
         assert hasattr(self, 'embedding')
-        assert len(dims) == 2, 'dims should'
-        if hasattr(self, 'cluster'):
-            for it in range(0, self.cluster.max()+1):
-                if it in self.export:
-                    c = self.export[it]['color']
-                    label = self.export[it]['name']
-                else:
-                    c = self.palette(-1)
-                    label = it
-                plt.scatter(x=self.embedding[self.cluster == it, dims[0]], 
-                            y=self.embedding[self.cluster == it, dims[1]], 
-                            c=c,
-                            label=label)
-           
-           
-            # for key, it in self.export.items():
-            #     plt.scatter(x=self.embedding[self.cluster == key, dims[0]], 
-            #                 y=self.embedding[self.cluster == key, dims[1]], 
-            #                 c=it['color'],
-            #                 label=it['name'])
-            # for it in range(-1, self.cluster.max()+1):
-            #     if it in self.export:
-            #         continue
-            #     plt.scatter(x=self.embedding[self.cluster == -1, dims[0]], 
-            #                 y=self.embedding[self.cluster == -1, dims[1]], 
-            #                 c='grey',
-            #                 label=it)
-            plt.legend()
-        else:
-            plt.scatter(x=self.embedding[:, dims[0]], 
-                        y=self.embedding[:, dims[1]], 
-                        c='grey')
+        from castle.visualization.embedding_plots import plot_named_embedding as _plot_named
+        cluster = self.cluster if hasattr(self, 'cluster') else None
+        _plot_named(self.embedding, cluster=cluster, export=self.export, 
+                    palette_fn=self.palette, dims=dims)
 
 
 

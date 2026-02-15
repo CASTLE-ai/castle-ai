@@ -6,7 +6,6 @@ from typing import Any, List, Dict, Tuple, Optional
 import os
 
 import numpy as np
-import gradio as gr
 from natsort import natsorted
 import cv2  # Added for smart filtering
 import torch
@@ -213,7 +212,7 @@ class ROITracker:
                 
         return new_mask
     
-    def track(self, progress: Optional[gr.Progress] = None, skip_existing: bool = False) -> str:
+    def track(self, progress=None, skip_existing: bool = False) -> str:
         """Execute ROI tracking over specified frames using a parallelized DataLoader and batch inference."""
         time.sleep(0.5)
 

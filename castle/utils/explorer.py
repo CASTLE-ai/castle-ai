@@ -1,3 +1,10 @@
+import warnings
+warnings.warn(
+    "castle.utils.explorer is deprecated. Use castle.utils.latent_explorer instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 import numpy as np
 
 from castle.core.config import PALETTE_HEX

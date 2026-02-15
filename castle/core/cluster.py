@@ -5,6 +5,7 @@ Core clustering logic and data aggregation.
 
 import os
 import json
+import threading
 import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict, Any, Optional
@@ -12,7 +13,7 @@ from typing import List, Tuple, Dict, Any, Optional
 from castle.core.interfaces import NotificationCallback
 from castle.core.logging_config import setup_logger
 from castle.utils.video_io import VideoReader, VideoIOError
-from castle.utils.video_manager import get_project_config
+from castle.core.project import get_project_config
 from castle.utils.latent_explorer import Latent
 
 logger = setup_logger(__name__)
@@ -113,6 +114,7 @@ class LatentAggregator:
         # C-02: VideoReader LRU cache — keeps N most recently used readers open
         self._video_reader_cache: Dict[str, VideoReader] = {}
         self._cache_max_size: int = 3
+        self._cache_lock = threading.Lock()
         
         # Load project configuration
         project_path, project_config = get_project_config(storage_path, project_name)
@@ -193,25 +195,28 @@ class LatentAggregator:
         Maintains an LRU-style cache (insertion-ordered dict) of at most
         ``_cache_max_size`` open VideoReader instances so that repeated
         ``get_frame`` calls for the same video avoid re-opening the file.
+        
+        Thread-safe via ``_cache_lock``.
         """
-        if video_path in self._video_reader_cache:
-            # Move to end (most recently used)
-            reader = self._video_reader_cache.pop(video_path)
+        with self._cache_lock:
+            if video_path in self._video_reader_cache:
+                # Move to end (most recently used)
+                reader = self._video_reader_cache.pop(video_path)
+                self._video_reader_cache[video_path] = reader
+                return reader
+
+            # Evict oldest if cache is full
+            if len(self._video_reader_cache) >= self._cache_max_size:
+                oldest_key = next(iter(self._video_reader_cache))
+                old_reader = self._video_reader_cache.pop(oldest_key)
+                try:
+                    old_reader.close()
+                except Exception:
+                    pass
+
+            reader = VideoReader(video_path)
             self._video_reader_cache[video_path] = reader
             return reader
-
-        # Evict oldest if cache is full
-        if len(self._video_reader_cache) >= self._cache_max_size:
-            oldest_key = next(iter(self._video_reader_cache))
-            old_reader = self._video_reader_cache.pop(oldest_key)
-            try:
-                old_reader.close()
-            except Exception:
-                pass
-
-        reader = VideoReader(video_path)
-        self._video_reader_cache[video_path] = reader
-        return reader
 
     def get_frame(self, index: int) -> Optional[np.ndarray]:
         """

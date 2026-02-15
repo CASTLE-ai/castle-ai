@@ -81,9 +81,11 @@ class TestVideoReaderCache:
 
     def _make_aggregator(self):
         """Create a minimal LatentAggregator without triggering __init__ file I/O."""
+        import threading
         agg = object.__new__(LatentAggregator)
         agg._video_reader_cache = {}
         agg._cache_max_size = 3
+        agg._cache_lock = threading.Lock()
         agg.source_path = '/fake'
         agg.bin_size = 1
         agg.notify = lambda *a, **kw: None

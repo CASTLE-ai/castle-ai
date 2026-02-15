@@ -8,7 +8,7 @@ from typing import Optional, Tuple, Any
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from castle.utils.video_io import ReadArray
+from castle.utils.video_io import VideoReader
 from castle.utils.h5_io import H5IO
 import cv2  # Added for interpolation flags
 import logging
@@ -23,8 +23,10 @@ logger = logging.getLogger(__name__)
 # 預處理類別 (Moved from castle/ui/extract_ui.py)
 # ---------------------------
 class Preprocess:
-    def __init__(self, center_roi_switch: bool, center_roi_id: int, center_roi_crop_width: int, center_roi_crop_height: int, 
-                 rotate_roi_tail_switch: bool, rotate_roi_tail_id: int, remove_background_switch: bool = False):
+    def __init__(self, center_roi_switch: bool = False, center_roi_id: int = 1,
+                 center_roi_crop_width: int = 300, center_roi_crop_height: int = 300,
+                 rotate_roi_tail_switch: bool = False, rotate_roi_tail_id: int = 2,
+                 remove_background_switch: bool = False):
         # M-01 Fix: Core layer should not handle UI string conversion
         # Strict type checking instead
         if not isinstance(center_roi_switch, bool):
@@ -106,7 +108,7 @@ class VideoDataset(Dataset):
         self.interpolated_points = interpolated_points  # {frame_idx: (x, y)} or None
         
         # 初始化設為 None，等 Worker 自己打開
-        self.reader: Optional[ReadArray] = None 
+        self.reader: Optional[VideoReader] = None 
         self.tracker: Optional[H5IO] = None
 
     def __len__(self) -> int:
@@ -115,7 +117,7 @@ class VideoDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
         # Worker 第一次工作時，才打開自己的檔案
         if self.reader is None:
-            self.reader = ReadArray(self.video_path)
+            self.reader = VideoReader(self.video_path)
             
         if self.tracker is None:
             # 重新開啟 H5 檔案讀取 Mask

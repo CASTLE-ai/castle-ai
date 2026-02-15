@@ -1,6 +1,7 @@
 """ROI tracking management utilities for Castle AI."""
 
 import time
+import logging
 from pathlib import Path
 from typing import Any, List, Dict, Tuple, Optional
 import os
@@ -14,6 +15,9 @@ from tqdm import tqdm # 新增：匯入 tqdm
 
 from .video_object_segment import generate_aot
 from .h5_io import H5IO
+from castle.core.mask_filter import filter_by_reference
+
+logger = logging.getLogger(__name__)
 
 
 def read_roi_labels(storage_path: str, project_name: str, video_name: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -120,6 +124,7 @@ class ROITracker:
         start_frame: int,
         stop_frame: int,
         model_type: str = "r50_deaotl",
+        smart_filter_ratio: float = 0.1,
     ) -> None:
         """Initialize the ROI tracker.
         
@@ -130,6 +135,7 @@ class ROITracker:
             start_frame: Starting frame index
             stop_frame: Stopping frame index
             model_type: Tracking model type (e.g., 'r50_deaotl', 'swinb_deaotl')
+            smart_filter_ratio: Ratio of median reference area used as smart filter threshold (default 0.1 = 10%)
         """
         self.cancel = False
         self.show_middle_result = False
@@ -162,55 +168,39 @@ class ROITracker:
         self.current_frame = None
         self.current_mask = None
 
-        # --- Smart Filtering Initialization ---
-        self.smart_thresholds = {}
+        # --- Smart Filtering Initialization (A-03) ---
+        # Collect all areas per obj_id across reference frames, then take median
+        self.smart_filter_ratio = smart_filter_ratio
+        _smart_areas: Dict[int, List[float]] = {}  # {obj_id: [area1, area2, ...]}
         for (_, mask) in self.reference_frames:
             obj_ids = np.unique(mask)
             for obj_id in obj_ids:
-                if obj_id == 0: continue
-                area = np.sum(mask == obj_id)
-                # If multiple references, we take the one that gives us a reasonable baseline.
-                # Here we just blindly set/overwrite, assuming references are consistent.
-                # A safer bet is 10% of the reference area.
-                self.smart_thresholds[obj_id] = area * 0.1
-        print(f"Smart Filtering Thresholds: {self.smart_thresholds}")
+                if obj_id == 0:
+                    continue
+                area = float(np.sum(mask == obj_id))
+                _smart_areas.setdefault(int(obj_id), []).append(area)
+        
+        # Compute threshold from median area per ROI
+        self.smart_thresholds: Dict[int, float] = {}
+        self.reference_areas: Dict[int, float] = {}  # Exposed for standalone mask_filter API
+        for obj_id, areas in _smart_areas.items():
+            median_area = float(np.median(areas))
+            self.reference_areas[obj_id] = median_area
+            self.smart_thresholds[obj_id] = median_area * self.smart_filter_ratio
+        
+        logger.info(f"Smart Filtering Thresholds (ratio={self.smart_filter_ratio}): {self.smart_thresholds}")
 
     def _smart_filter(self, mask: np.ndarray) -> np.ndarray:
-        """Apply automated smart filtering: Keep Largest Component (> threshold)."""
-        if mask.max() == 0: return mask
+        """Apply automated smart filtering: Keep Largest Component (> threshold).
         
-        new_mask = np.zeros_like(mask)
-        obj_ids = np.unique(mask)
-        
-        for obj_id in obj_ids:
-            if obj_id == 0: continue
-            
-            # Binary mask for this object
-            binary_mask = (mask == obj_id).astype(np.uint8)
-            
-            # Connectivity Analysis
-            # num_labels includes background (0)
-            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
-            
-            if num_labels <= 1: continue 
-            
-            threshold = self.smart_thresholds.get(obj_id, 50) # Default 50 pixels if untracked
-            
-            # Find largest component that meets threshold
-            largest_area = -1
-            largest_label = -1
-            
-            for i in range(1, num_labels):
-                area = stats[i, cv2.CC_STAT_AREA]
-                if area > threshold and area > largest_area:
-                    largest_area = area
-                    largest_label = i
-            
-            # If we found a valid component, keep it
-            if largest_label != -1:
-                new_mask[labels == largest_label] = obj_id
-                
-        return new_mask
+        Delegates to castle.core.mask_filter.filter_by_reference for the actual
+        filtering logic, using the reference areas computed during __init__.
+        """
+        return filter_by_reference(
+            mask,
+            reference_areas=self.reference_areas,
+            ratio=self.smart_filter_ratio,
+        )
     
     def track(self, progress=None, skip_existing: bool = False) -> str:
         """Execute ROI tracking over specified frames using a parallelized DataLoader and batch inference."""

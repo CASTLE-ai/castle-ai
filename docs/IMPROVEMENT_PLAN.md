@@ -1,8 +1,8 @@
 # CASTLE Improvement Plan
 
 > 本文件記錄所有待改進項目，含深度程式碼審計結果、最佳實踐研究、及具體改進方案。
-> 最後更新：2026-02-15 v3.0
-> 狀態：**規劃階段 — 待 IsonaEi 確認後實作**
+> 最後更新：2026-02-15 v4.0
+> 狀態：**大部分完成 — A-06 待討論，B-04/A-05 實作中**
 
 ---
 
@@ -10,26 +10,29 @@
 
 | # | 項目 | 重要性 | 工作量 | 狀態 |
 |---|------|--------|--------|------|
-| **C-01** | **Service Layer 抽象** | 🔴 High | Large | 📋 待實作（所有前端的前提） |
-| **A-06** | **Latent 抽取方式改進** | 🔴 High | Medium | 📋 待討論方案 |
-| **A-07** | **深度模型效能優化** | 🔴 High | Medium | 📋 待實作 |
-| **A-03** | **Tracking Mask 後處理改善** | 🟡 Medium | Small | 📋 待實作 |
-| **A-01** | **CLI 前端** | 🔴 High | Medium | 📋 待 C-01 完成後實作 |
-| **A-04** | **Cluster Annotator（Stage 4 延伸）** | 🔴 High | Large | 📋 待討論 |
-| **B-01** | **Latent/LocalLatent 資料視覺化分離** | 🟡 Medium | Medium | 📋 隨 C-01 一起做 |
-| **A-02** | **資料處理管線效能優化** | 🟡 Medium | Medium | 📋 部分已完成 |
-| **B-02** | **階層式聚類 UI + Tree View** | 🟡 Medium | Medium | 📋 |
-| **B-03** | **Session 完整恢復** | 🟡 Medium | Medium | 📋 |
-| **B-05** | **統一配置管理** | 🟡 Medium | Medium | 📋 |
-| **C-02** | **VideoReader LRU cache** | 🟡 Medium | Small | 📋 |
-| **C-04** | **測試覆蓋補強** | 🟡 Medium | Medium | 📋 |
-| **C-05** | **UMAP 異步執行** | 🟡 Medium | Medium | 📋 |
-| **C-06** | **Device 偵測統一** | 🟢 Low | Small | 📋 |
-| **C-07** | **post_track / batch_track 重複碼** | 🟢 Low | Small | 📋 |
-| **C-03** | **NUM_WORKERS 智慧設定** | 🟢 Low | Small | 📋 |
-| **B-04** | **Undo/Redo 機制** | 🟢 Low | Large | 📋 |
-| **A-05** | **PyQt Desktop 前端** | 🟢 Low | Large | ⏸️ 暫停（CLI > Web > Desktop） |
+| **C-01** | **Service Layer 抽象** | 🔴 High | Large | ✅ 完成 (`2aa6fd7`) |
+| **A-06** | **Latent 抽取方式改進** | 🔴 High | Medium | 📋 方案已提出，待 IsonaEi 決定 |
+| **A-07** | **深度模型效能優化** | 🔴 High | Medium | ✅ 完成 (`df14069`) — inference_mode, float16, square resize, singleton cache |
+| **A-03** | **Tracking Mask 後處理改善** | 🟡 Medium | Small | ✅ 完成 (`e8b1f68`) — configurable threshold, median ref, standalone API |
+| **A-01** | **CLI 前端** | 🔴 High | Medium | ✅ 完成 (`0e8371b`) — typer CLI, 5 subcommand groups |
+| **A-04** | **Cluster Annotator（Stage 4 延伸）** | 🔴 High | Large | ✅ 完成 (`41438de`) — GIF grid, behavior labeling, classification schemes |
+| **B-01** | **Latent/LocalLatent 資料視覺化分離** | 🟡 Medium | Medium | ✅ 完成 (`4d71366`) — castle/visualization/ |
+| **A-02** | **資料處理管線效能優化** | 🟡 Medium | Medium | ✅ 部分完成 (Quick Fixes + C-02/C-03) |
+| **B-02** | **階層式聚類 UI + Tree View** | 🟡 Medium | Medium | ✅ 完成 (`2306c51`) — gr.Markdown cluster tree |
+| **B-03** | **Session 完整恢復** | 🟡 Medium | Medium | ✅ 完成 (`9630b84`) — restore UMAP from .npz |
+| **B-05** | **統一配置管理** | 🟡 Medium | Medium | ✅ 完成 (`9160145`) — ProjectConfig dataclass |
+| **C-02** | **VideoReader LRU cache** | 🟡 Medium | Small | ✅ 完成 (`850b4f5`) — LatentAggregator + VideoReader |
+| **C-04** | **測試覆蓋補強** | 🟡 Medium | Medium | ✅ 完成 (`425e80c`) — 102 unit tests, 3.1s |
+| **C-05** | **UMAP 異步執行** | 🟡 Medium | Medium | ✅ 完成 (`f21b5cb`) — gr.Progress() for UMAP/DBSCAN |
+| **C-06** | **Device 偵測統一** | 🟢 Low | Small | ✅ 完成 (`1a01ca4`) |
+| **C-07** | **post_track / batch_track 重複碼** | 🟢 Low | Small | ✅ 完成 (`6cd3af6`) |
+| **C-03** | **NUM_WORKERS 智慧設定** | 🟢 Low | Small | ✅ 完成 (`5237260`) — centralized in environment.py |
+| **B-04** | **Undo/Redo 機制** | 🟢 Low | Large | 🔄 實作中 |
+| **A-05** | **PyQt Desktop 前端** | 🟢 Low | Large | 🔄 實作中 |
 | F-01~F-09 | Quick Fixes（9 項） | — | — | ✅ 全部完成 |
+| **審計修復** | Thread safety, H5IO, imports, deprecation | 🔴 High | Medium | ✅ 完成 (3 commits) |
+| **架構清理** | cluster_page 拆分, lazy imports, dedup | 🟡 Medium | Medium | ✅ 完成 (4 commits) |
+| **資源管理** | GPU cache eviction, SAM cache, frame cache | 🟡 Medium | Small | ✅ 完成 (3 commits) |
 
 ---
 

@@ -195,9 +195,15 @@ class DINOv2Encoder(VisualEncoder):
          # Directly create binary mask on GPU from the tensor
          masks_t = (mask_batch.to(self.device) == roi_id).to(dtype=torch.float32)
          
-         with torch.no_grad():
-             feats = self.extract_features(x) # (B, 1369, C)
-             latents = self._weighted_pooling(feats, masks_t, self.resolution, 14)
+         # A-07: Use inference_mode (faster than no_grad) + float16 autocast on CUDA
+         with torch.inference_mode():
+             if self.device == 'cuda':
+                 with torch.autocast(device_type='cuda', dtype=torch.float16):
+                     feats = self.extract_features(x) # (B, 1369, C)
+                     latents = self._weighted_pooling(feats, masks_t, self.resolution, 14)
+             else:
+                 feats = self.extract_features(x) # (B, 1369, C)
+                 latents = self._weighted_pooling(feats, masks_t, self.resolution, 14)
              
          return latents.cpu().numpy()
 
@@ -274,25 +280,29 @@ class DINOv3Encoder(VisualEncoder):
         if isinstance(frame_list, torch.Tensor):
              # (B, H, W, 3)
              img_t = frame_list.permute(0, 3, 1, 2).float().div(255.0) # B, C, H, W (0-1)
-             # Resize transform logic is slightly complex: Resize -> CenterCrop -> Resize
-             # Implementing this on batch tensor is faster than PIL loop
              
-             # batch resize 1
              B, C, H, W = img_t.shape
              target_size = self.image_size
-             scale = target_size / max(H, W)
-             new_h, new_w = int(H * scale), int(W * scale)
              
-             img_t = F.interpolate(img_t, size=(new_h, new_w), mode='bicubic', align_corners=False)
-             
-             # Center crop
-             min_s = min(new_h, new_w)
-             start_h = (new_h - min_s) // 2
-             start_w = (new_w - min_s) // 2
-             img_t = img_t[:, :, start_h:start_h+min_s, start_w:start_w+min_s]
-             
-             # Resize 2
-             img_t = F.interpolate(img_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
+             # A-07: If input is already square (common case after center_roi + crop),
+             # skip center_crop and do a single resize directly to target_size.
+             if H == W:
+                 img_t = F.interpolate(img_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
+             else:
+                 # Non-square: keep full resize → center_crop → resize pipeline
+                 scale = target_size / max(H, W)
+                 new_h, new_w = int(H * scale), int(W * scale)
+                 
+                 img_t = F.interpolate(img_t, size=(new_h, new_w), mode='bicubic', align_corners=False)
+                 
+                 # Center crop to square
+                 min_s = min(new_h, new_w)
+                 start_h = (new_h - min_s) // 2
+                 start_w = (new_w - min_s) // 2
+                 img_t = img_t[:, :, start_h:start_h+min_s, start_w:start_w+min_s]
+                 
+                 # Resize to target
+                 img_t = F.interpolate(img_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
              
              # Normalize
              img_t = TF.normalize(img_t, mean=self.mean, std=self.std)
@@ -351,10 +361,21 @@ class DINOv3Encoder(VisualEncoder):
 
 
 
-# Factory
+# A-07: Model singleton cache — avoid reloading the same model
+_model_cache: dict = {}
+
 def get_visual_encoder(model_name: str) -> VisualEncoder:
-    if 'dinov3' in model_name:
-         encoder = DINOv3Encoder(model_name)
-    else:
-         encoder = DINOv2Encoder(model_name)
-    return encoder
+    """Get or create a visual encoder, with singleton caching."""
+    if model_name not in _model_cache:
+        if 'dinov3' in model_name:
+            encoder = DINOv3Encoder(model_name)
+        else:
+            encoder = DINOv2Encoder(model_name)
+        _model_cache[model_name] = encoder
+        logger.info(f"Created and cached encoder: {model_name}")
+    return _model_cache[model_name]
+
+
+def clear_model_cache():
+    """Clear the model cache (useful for freeing GPU memory)."""
+    _model_cache.clear()

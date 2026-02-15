@@ -6,7 +6,7 @@ Unified Visual Encoder Interface.
 import torch
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
-from typing import List, Any, Optional, Union
+from typing import List, Any, Optional, Union, Tuple
 import numpy as np
 import os
 from torchvision import transforms
@@ -98,6 +98,78 @@ class VisualEncoder(ABC):
         
         return latents
 
+    def _multiscale_pooling(self, features: torch.Tensor, masks: torch.Tensor,
+                            image_size: int, patch_size: int,
+                            scales: List[int] = [1, 2, 4]) -> torch.Tensor:
+        """
+        Multi-scale spatial pyramid pooling (SPP).
+
+        Divides the patch grid into s×s regions for each scale s,
+        computes mask-weighted average in each region, then concatenates.
+
+        Args:
+            features: (B, N, C) patch token features
+            masks: (B, H, W) ROI masks at input resolution
+            image_size: model input resolution
+            patch_size: patch size in pixels
+            scales: list of grid divisions [1, 2, 4] → 1×1 + 2×2 + 4×4
+
+        Returns:
+            (B, sum(s²) × C) concatenated multi-scale features
+            e.g., scales=[1,2,4] → (B, 21 × 768) = (B, 16128)
+        """
+        # 1. Resize masks to image_size, then downsample to patch grid
+        masks_resized = F.interpolate(
+            masks[:, None, ...], size=(image_size, image_size), mode='nearest'
+        )[:, 0]
+        target_patches = image_size // patch_size
+
+        # Patch-level weights: (B, target_patches, target_patches)
+        w = masks_resized.view(
+            masks.size(0), target_patches, patch_size, target_patches, patch_size
+        ).sum(dim=(2, 4)).float()
+
+        B, N, C = features.shape
+        feats = features.view(B, target_patches, target_patches, C).float()
+
+        results = []
+        for s in scales:
+            if s == 1:
+                # Global pooling — identical to _weighted_pooling
+                sum_w = w.sum(dim=(1, 2), keepdim=True).clamp_min(1e-6)
+                weighted_sum = (feats * w[..., None]).sum(dim=(1, 2))
+                results.append(weighted_sum / sum_w.view(B, 1))  # (B, C)
+            elif target_patches % s == 0:
+                # Evenly divisible: efficient reshape
+                region_h = target_patches // s
+                region_w = target_patches // s
+                feats_regions = feats.view(B, s, region_h, s, region_w, C)
+                w_regions = w.view(B, s, region_h, s, region_w)
+                weighted = (feats_regions * w_regions[..., None]).sum(dim=(2, 4))  # (B, s, s, C)
+                total = w_regions.sum(dim=(2, 4)).clamp_min(1e-6)  # (B, s, s)
+                pooled = weighted / total[..., None]  # (B, s, s, C)
+                results.append(pooled.reshape(B, s * s * C))  # (B, s²×C)
+            else:
+                # Non-divisible (e.g. 37 patches): adaptive region boundaries
+                region_vecs = []
+                for i in range(s):
+                    for j in range(s):
+                        h_start = (i * target_patches) // s
+                        h_end = ((i + 1) * target_patches) // s
+                        w_start = (j * target_patches) // s
+                        w_end = ((j + 1) * target_patches) // s
+
+                        region_feats = feats[:, h_start:h_end, w_start:w_end, :]
+                        region_w_vals = w[:, h_start:h_end, w_start:w_end]
+
+                        weighted = (region_feats * region_w_vals[..., None]).sum(dim=(1, 2))
+                        total = region_w_vals.sum(dim=(1, 2)).clamp_min(1e-6)
+                        region_vecs.append(weighted / total[:, None])  # (B, C)
+                # Stack and flatten: (B, s² * C)
+                results.append(torch.stack(region_vecs, dim=1).reshape(B, s * s * C))
+
+        return torch.cat(results, dim=1)  # (B, sum(s²)×C)
+
 
     def extract_tensor_batch(self, frame_batch: Any, mask_batch: Any, roi_id: int) -> List[np.ndarray]:
         if self.model is None:
@@ -148,10 +220,31 @@ class DINOv2Encoder(VisualEncoder):
         
         return frames_t.to(self.device)
 
-    def extract_features(self, x):
-        return self.model.forward_features(x)['x_norm_patchtokens']
+    def extract_features(self, x, layers=None):
+        """Extract features from specified layers.
 
-    def extract_tensor_batch(self, frame_batch, mask_batch, roi_id):
+        Args:
+            layers: list of layer indices (0-indexed). None = last layer only
+                    (uses forward_features for backward compatibility).
+                    e.g., [3, 7, 11] for layers 4, 8, 12.
+        """
+        if layers is None:
+            return self.model.forward_features(x)['x_norm_patchtokens']
+        else:
+            feats = self.model.get_intermediate_layers(x, n=layers, reshape=False, norm=True)
+            if len(feats) == 1:
+                return feats[0]
+            return torch.cat(feats, dim=2)  # B, N, C_total
+
+    def extract_tensor_batch(self, frame_batch, mask_batch, roi_id,
+                             pooling='weighted_average', scales=None, layers=None):
+         """Extract latent features with configurable pooling and layers.
+
+         Args:
+             pooling: 'weighted_average' (original) or 'multiscale'
+             scales: list of ints for multiscale, e.g. [1, 2, 4].
+             layers: list of layer indices. None = last layer only.
+         """
          if self.model is None: self.load_model()
          
          x = self.preprocess_batch(frame_batch, mask_batch, roi_id)
@@ -163,11 +256,17 @@ class DINOv2Encoder(VisualEncoder):
          with torch.inference_mode():
              if self.device == 'cuda':
                  with torch.autocast(device_type='cuda', dtype=torch.float16):
-                     feats = self.extract_features(x)
-                     latents = self._weighted_pooling(feats, masks_t, self.resolution, 14)
+                     feats = self.extract_features(x, layers=layers)
+                     if pooling == 'multiscale' and scales:
+                         latents = self._multiscale_pooling(feats, masks_t, self.resolution, 14, scales)
+                     else:
+                         latents = self._weighted_pooling(feats, masks_t, self.resolution, 14)
              else:
-                 feats = self.extract_features(x)
-                 latents = self._weighted_pooling(feats, masks_t, self.resolution, 14)
+                 feats = self.extract_features(x, layers=layers)
+                 if pooling == 'multiscale' and scales:
+                     latents = self._multiscale_pooling(feats, masks_t, self.resolution, 14, scales)
+                 else:
+                     latents = self._weighted_pooling(feats, masks_t, self.resolution, 14)
              
          return latents.cpu().numpy()
 
@@ -282,19 +381,46 @@ class DINOv3Encoder(VisualEncoder):
                 
             return torch.stack(processed).to(self.device)
 
-    def extract_features(self, x):
+    def extract_features(self, x, layers=None):
+        """Extract features from specified layers.
+
+        Args:
+            layers: list of layer indices (0-indexed). None = last layer only.
+                    e.g., [3, 7, 11] for layers 4, 8, 12.
+        """
+        if layers is None:
+            layer_ids = [self.n_layers - 1]
+        else:
+            layer_ids = layers
+
         with torch.inference_mode():
             if self.device == 'cuda':
                  with torch.autocast(device_type='cuda', dtype=torch.float16):
-                      feats = self.model.get_intermediate_layers(x, n=[self.n_layers - 1], reshape=True, norm=True)
+                      feats = self.model.get_intermediate_layers(x, n=layer_ids, reshape=True, norm=True)
             else:
-                 feats = self.model.get_intermediate_layers(x, n=[self.n_layers - 1], reshape=True, norm=True)
-                 
-            x_out = feats[0]  # B, C, H, W
-            B, C, H, W = x_out.shape
-            return x_out.view(B, C, -1).permute(0, 2, 1)  # B, N, C
+                 feats = self.model.get_intermediate_layers(x, n=layer_ids, reshape=True, norm=True)
 
-    def extract_tensor_batch(self, frame_batch, mask_batch, roi_id):
+            if len(feats) == 1:
+                x_out = feats[0]  # B, C, H, W
+                B, C, H, W = x_out.shape
+                return x_out.view(B, C, -1).permute(0, 2, 1)  # B, N, C
+            else:
+                # Concatenate features from multiple layers along channel dim
+                combined = []
+                for feat in feats:
+                    B, C, H, W = feat.shape
+                    combined.append(feat.view(B, C, -1).permute(0, 2, 1))  # B, N, C
+                return torch.cat(combined, dim=2)  # B, N, C_total
+
+    def extract_tensor_batch(self, frame_batch, mask_batch, roi_id,
+                             pooling='weighted_average', scales=None, layers=None):
+        """Extract latent features with configurable pooling and layers.
+
+        Args:
+            pooling: 'weighted_average' (original) or 'multiscale'
+            scales: list of ints for multiscale, e.g. [1, 2, 4].
+            layers: list of layer indices. None = last layer only.
+        """
         if self.model is None: self.load_model()
         
         x = self.preprocess_batch(frame_batch, mask_batch, roi_id)
@@ -304,8 +430,11 @@ class DINOv3Encoder(VisualEncoder):
         masks_t = (mask_batch.to(self.device) == roi_id).to(dtype=torch.float32)
         
         with torch.no_grad():
-             feats = self.extract_features(x)
-             latents = self._weighted_pooling(feats, masks_t, self.image_size, self.patch_size)
+             feats = self.extract_features(x, layers=layers)
+             if pooling == 'multiscale' and scales:
+                 latents = self._multiscale_pooling(feats, masks_t, self.image_size, self.patch_size, scales)
+             else:
+                 latents = self._weighted_pooling(feats, masks_t, self.image_size, self.patch_size)
              
         return latents.cpu().numpy()
 

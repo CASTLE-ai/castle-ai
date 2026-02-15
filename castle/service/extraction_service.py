@@ -60,6 +60,9 @@ def extract_latent(
     preprocess_config: Optional[Preprocess] = None,
     skip_existing: bool = True,
     progress_callback: Optional[Callable] = None,
+    pooling_method: str = 'weighted_average',
+    pooling_scales: Optional[list] = None,
+    feature_layers: Optional[list] = None,
 ) -> str:
     """
     Extract latent features from a tracked video ROI.
@@ -74,6 +77,9 @@ def extract_latent(
         preprocess_config: Preprocess configuration. If None, uses defaults.
         skip_existing: Skip if latent file already exists
         progress_callback: Optional progress callback(fraction, description)
+        pooling_method: 'weighted_average' (default) or 'multiscale'
+        pooling_scales: Grid scales for multiscale pooling, e.g. [1, 2, 4]
+        feature_layers: Layer indices for multi-layer extraction. None = last only.
     
     Returns:
         Path to saved latent file, or empty string on failure.
@@ -99,6 +105,9 @@ def extract_latent(
                 preprocess_config=preprocess_config,
                 skip_existing=skip_existing,
                 progress_callback=progress_callback,
+                pooling_method=pooling_method,
+                pooling_scales=pooling_scales,
+                feature_layers=feature_layers,
             )
             if path:
                 paths.append(path)

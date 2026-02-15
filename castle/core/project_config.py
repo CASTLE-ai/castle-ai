@@ -69,6 +69,11 @@ class ExtractionConfig:
     batch_size: int = 32
     bin_size: int = 1
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
+    # A-06: Multi-scale pooling
+    pooling_method: str = 'weighted_average'  # 'weighted_average' or 'multiscale'
+    pooling_scales: List[int] = field(default_factory=lambda: [1, 2, 4])
+    # A-06: Multi-layer extraction
+    feature_layers: Optional[List[int]] = None  # None = last layer only; e.g. [3, 7, 11]
 
 
 @dataclass

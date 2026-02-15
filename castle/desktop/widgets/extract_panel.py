@@ -130,6 +130,45 @@ class ExtractPanel(QWidget):
 
         layout.addWidget(preprocess_group)
 
+        # === Advanced Extraction Options (A-06) ===
+        adv_group = QGroupBox("Advanced Extraction Options (A-06)")
+        adv_layout = QVBoxLayout(adv_group)
+
+        adv_row1 = QHBoxLayout()
+        adv_row1.addWidget(QLabel("Pooling:"))
+        self._pooling_combo = QComboBox()
+        self._pooling_combo.addItems(["weighted_average", "multiscale"])
+        adv_row1.addWidget(self._pooling_combo)
+        adv_row1.addStretch()
+        adv_layout.addLayout(adv_row1)
+
+        adv_row2 = QHBoxLayout()
+        adv_row2.addWidget(QLabel("Scales:"))
+        self._scale_1_cb = QCheckBox("1 (global)")
+        self._scale_1_cb.setChecked(True)
+        adv_row2.addWidget(self._scale_1_cb)
+        self._scale_2_cb = QCheckBox("2 (2×2)")
+        self._scale_2_cb.setChecked(True)
+        adv_row2.addWidget(self._scale_2_cb)
+        self._scale_4_cb = QCheckBox("4 (4×4)")
+        self._scale_4_cb.setChecked(True)
+        adv_row2.addWidget(self._scale_4_cb)
+        self._scale_8_cb = QCheckBox("8 (8×8)")
+        adv_row2.addWidget(self._scale_8_cb)
+        adv_row2.addStretch()
+        adv_layout.addLayout(adv_row2)
+
+        adv_row3 = QHBoxLayout()
+        adv_row3.addWidget(QLabel("Feature Layers:"))
+        from PyQt6.QtWidgets import QLineEdit
+        self._layers_edit = QLineEdit()
+        self._layers_edit.setPlaceholderText("e.g. 3,7,11 (empty=last only)")
+        adv_row3.addWidget(self._layers_edit)
+        adv_row3.addStretch()
+        adv_layout.addLayout(adv_row3)
+
+        layout.addWidget(adv_group)
+
         # === Action buttons ===
         btn_layout = QHBoxLayout()
 
@@ -204,6 +243,22 @@ class ExtractPanel(QWidget):
 
         preprocess = self._build_preprocess()
 
+        # A-06: Collect advanced extraction options
+        pooling_method = self._pooling_combo.currentText()
+        pooling_scales = []
+        if self._scale_1_cb.isChecked(): pooling_scales.append(1)
+        if self._scale_2_cb.isChecked(): pooling_scales.append(2)
+        if self._scale_4_cb.isChecked(): pooling_scales.append(4)
+        if self._scale_8_cb.isChecked(): pooling_scales.append(8)
+        feature_layers = None
+        layers_text = self._layers_edit.text().strip()
+        if layers_text:
+            try:
+                feature_layers = [int(x.strip()) for x in layers_text.split(',') if x.strip()]
+            except ValueError:
+                QMessageBox.warning(self, "Error", f"Invalid layer format: '{layers_text}'")
+                return
+
         self._worker = ExtractionWorker(
             self._storage_path, self._project_name, video_name,
             model=self._model_combo.currentText(),
@@ -211,6 +266,9 @@ class ExtractPanel(QWidget):
             batch_size=self._batch_spin.value(),
             preprocess_config=preprocess,
             skip_existing=self._skip_cb.isChecked(),
+            pooling_method=pooling_method,
+            pooling_scales=pooling_scales if pooling_method == 'multiscale' else None,
+            feature_layers=feature_layers,
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)

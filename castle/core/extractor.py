@@ -89,7 +89,10 @@ def extract_roi_latent_from_video(
     batch_size: int, 
     preprocess_config: Preprocess, 
     skip_existing: bool,
-    progress_callback: Optional[ProgressCallback] = None
+    progress_callback: Optional[ProgressCallback] = None,
+    pooling_method: str = 'weighted_average',
+    pooling_scales: Optional[list] = None,
+    feature_layers: Optional[list] = None,
 ) -> str:
     """
     Extracts latent features from a specific video ROI.
@@ -111,6 +114,13 @@ def extract_roi_latent_from_video(
     tags = []
     if preprocess_config.center_roi_switch: tags.append("ctr")
     if preprocess_config.remove_background_switch: tags.append("rmbg")
+    # A-06: Add pooling/layer tags to filename
+    if pooling_method == 'multiscale' and pooling_scales:
+        scales_str = "x".join(str(s) for s in sorted(pooling_scales))
+        tags.append(f"spp{scales_str}")
+    if feature_layers:
+        layers_str = "x".join(str(l) for l in sorted(feature_layers))
+        tags.append(f"L{layers_str}")
     
     suffix = "_".join([model_name] + tags)
     latent_filename = f'{base_name}_ROI_{roi_id}_{suffix}.npz'
@@ -198,7 +208,12 @@ def extract_roi_latent_from_video(
             
         try:
             if hasattr(observer, 'extract_tensor_batch'):
-                 latent_batch = observer.extract_tensor_batch(frames, masks, roi_id)
+                 latent_batch = observer.extract_tensor_batch(
+                     frames, masks, roi_id,
+                     pooling=pooling_method,
+                     scales=pooling_scales,
+                     layers=feature_layers,
+                 )
             else:
                  latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
                  

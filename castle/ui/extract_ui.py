@@ -54,6 +54,7 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False), # remove_background_switch
         gr.update(visible=False), # apply_preprocess
         gr.update(visible=False), # display
+        gr.update(visible=False), # adv_accordion
         gr.update(visible=False), # extract_btn
         gr.update(visible=False), # extract_crop_video_btn
         gr.update(visible=False), # extract_rotation_latent_btn
@@ -95,10 +96,11 @@ def init_select_video_list(storage_path, project_name):
             updates[12] = gr.update(visible=True) # remove_background_switch
             updates[13] = gr.update(visible=True) # apply_preprocess
             updates[14] = gr.update(visible=True) # display
-            updates[15] = gr.update(visible=True) # extract_btn
-            updates[16] = gr.update(visible=True) # extract_crop_video_btn
-            updates[17] = gr.update(visible=True) # extract_rotation_latent_btn
-            updates[18] = gr.update(visible=True) # latent_file_list
+            updates[15] = gr.update(visible=True) # adv_accordion
+            updates[16] = gr.update(visible=True) # extract_btn
+            updates[17] = gr.update(visible=True) # extract_crop_video_btn
+            updates[18] = gr.update(visible=True) # extract_rotation_latent_btn
+            updates[19] = gr.update(visible=True) # latent_file_list
         else:
             gr.Warning("No videos found in the selected project.")
             # updates 已經是預設的隱藏狀態，無需額外操作
@@ -123,12 +125,24 @@ def ui_extract_roi_latent(
     batch_size: str, 
     preprocess_args: Preprocess, 
     skip_existing: bool, 
+    pooling_method: str = 'weighted_average',
+    pooling_scales_list: list = None,
+    feature_layers_str: str = '',
     progress=gr.Progress()
 ) -> str:
     
     messages = []
     if not preprocess_args:
         raise ValueError("Please click Apply on Preprocess settings first.")
+
+    # A-06: Parse advanced extraction options
+    parsed_scales = [int(s) for s in pooling_scales_list] if pooling_scales_list else [1, 2, 4]
+    parsed_layers = None
+    if feature_layers_str and feature_layers_str.strip():
+        try:
+            parsed_layers = [int(x.strip()) for x in feature_layers_str.split(',') if x.strip()]
+        except ValueError:
+            raise ValueError(f"Invalid feature layers format: '{feature_layers_str}'. Use comma-separated integers.")
         
     _, config = get_project_config(storage_path, project_name)
     video_list = sorted(config['source']) if select_video == "All" else [select_video]
@@ -136,12 +150,23 @@ def ui_extract_roi_latent(
     # --- Pre-flight Check ---
     videos_to_process = []
     messages.append(f"Starting pre-flight check for {len(video_list)} videos...")
+    if pooling_method == 'multiscale':
+        messages.append(f"  Pooling: multiscale (scales={parsed_scales})")
+    if parsed_layers:
+        messages.append(f"  Feature layers: {parsed_layers}")
     for video_name in video_list:
         # Construct the expected output path
         # Replicate valid tag logic from extractor.py
         tags = []
         if preprocess_args.center_roi_switch: tags.append("ctr")
         if preprocess_args.remove_background_switch: tags.append("rmbg")
+        # A-06: replicate tag logic
+        if pooling_method == 'multiscale' and parsed_scales:
+            scales_str = "x".join(str(s) for s in sorted(parsed_scales))
+            tags.append(f"spp{scales_str}")
+        if parsed_layers:
+            layers_str = "x".join(str(l) for l in sorted(parsed_layers))
+            tags.append(f"L{layers_str}")
         
         suffix = "_".join([select_model] + tags)
         
@@ -184,7 +209,10 @@ def ui_extract_roi_latent(
                 batch_size=int(batch_size),
                 preprocess_config=preprocess_args,
                 skip_existing=skip_existing, # The core function handles this, but we pre-check
-                progress_callback=update_progress
+                progress_callback=update_progress,
+                pooling_method=pooling_method,
+                pooling_scales=parsed_scales if pooling_method == 'multiscale' else None,
+                feature_layers=parsed_layers,
             )
             if path:
                 messages.append(f"  ✅ Success: Latent file saved to {os.path.basename(path)}")
@@ -438,6 +466,28 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             
         with gr.Column(scale=4):
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)
+            
+            with gr.Accordion("Advanced Extraction Options (A-06)", open=False, visible=False) as adv_accordion:
+                ui['pooling_method'] = gr.Radio(
+                    choices=['weighted_average', 'multiscale'],
+                    value='weighted_average',
+                    label='Pooling Method',
+                    info='weighted_average=original single-vector; multiscale=spatial pyramid pooling'
+                )
+                ui['pooling_scales'] = gr.CheckboxGroup(
+                    choices=['1', '2', '4', '8'],
+                    value=['1', '2', '4'],
+                    label='Multiscale Grid Sizes (only for multiscale pooling)',
+                    info='1=global, 2=2×2 grid, 4=4×4 grid, 8=8×8 grid'
+                )
+                ui['feature_layers'] = gr.Textbox(
+                    value='',
+                    label='Feature Layers (comma-separated, empty=last only)',
+                    info='e.g. "3,7,11" for DINOv2/v3 layers 4, 8, 12',
+                    placeholder='Leave empty for default (last layer)'
+                )
+            ui['adv_accordion'] = adv_accordion
+            
             ui['extract_btn'] = gr.Button("Extract", visible=False)
             ui['extract_crop_video_btn'] = gr.Button("Extract Crop Video", visible=False)
             ui['extract_rotation_latent_btn'] = gr.Button("Extract Rotation Latent", visible=False) 
@@ -466,6 +516,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['remove_background_switch'],
         ui['apply_preprocess'],
         ui['display'],
+        ui['adv_accordion'],  # A-06
         ui['extract_btn'],
         ui['extract_crop_video_btn'],
         ui['extract_rotation_latent_btn'],
@@ -486,7 +537,8 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     ui['extract_btn'].click(
         ui_extract_roi_latent,
         inputs=[storage_path, project_name, ui['select_model'], ui['select_roi_id'],
-                ui['select_video'], ui['batch_size'], preprocess_state, ui['skip_existing']],
+                ui['select_video'], ui['batch_size'], preprocess_state, ui['skip_existing'],
+                ui['pooling_method'], ui['pooling_scales'], ui['feature_layers']],
         outputs=ui['latent_file_list']
     )
     

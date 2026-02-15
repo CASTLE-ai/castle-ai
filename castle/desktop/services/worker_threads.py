@@ -74,7 +74,8 @@ class ExtractionWorker(QThread):
 
     def __init__(self, storage_path, project_name, video_name, model,
                  roi, batch_size=32, preprocess_config=None,
-                 skip_existing=True):
+                 skip_existing=True, pooling_method='weighted_average',
+                 pooling_scales=None, feature_layers=None):
         super().__init__()
         self._storage = storage_path
         self._project = project_name
@@ -84,6 +85,9 @@ class ExtractionWorker(QThread):
         self._batch = batch_size
         self._preprocess = preprocess_config
         self._skip = skip_existing
+        self._pooling_method = pooling_method
+        self._pooling_scales = pooling_scales
+        self._feature_layers = feature_layers
 
     def run(self):
         try:
@@ -101,6 +105,9 @@ class ExtractionWorker(QThread):
                 preprocess_config=self._preprocess,
                 skip_existing=self._skip,
                 progress_callback=_progress,
+                pooling_method=self._pooling_method,
+                pooling_scales=self._pooling_scales,
+                feature_layers=self._feature_layers,
             )
             self.finished.emit(result)
         except Exception as e:

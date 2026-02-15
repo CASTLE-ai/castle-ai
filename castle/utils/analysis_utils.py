@@ -14,7 +14,6 @@ from typing import List, Dict, Tuple, Optional
 from castle.utils.h5_io import H5IO
 from castle.utils.plot import generate_mix_image, generate_mask_image
 from castle.utils.video_io import ReadArray, WriteArray
-from castle.ui.plot_mask_info import Plotter
 
 
 def compute_roi_info(rois_results: H5IO, n_rois: int, total_frames: int,
@@ -87,6 +86,9 @@ def save_kinematic_csv(track_dir_path: str, video_name: str,
     Returns:
         Path to the generated CSV file.
     """
+    # Lazy import to avoid circular dependency (Plotter is in castle.ui)
+    from castle.ui.plot_mask_info import Plotter
+    
     video_name_wo_extension = video_name.split('.')[0]
     csv_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-basic-information.csv')
     df = Plotter.create_pandas(roi_info_list)

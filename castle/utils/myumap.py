@@ -9,6 +9,20 @@ try:
     import numpy as np
 
     class UMAP:
+        """GPU-accelerated UMAP using RAPIDS cuML with spectral initialization.
+
+        Combines cuML's fuzzy simplicial set and embedding optimization with
+        CPU-side spectral layout from ``umap.spectral``. Falls back to PCA
+        initialization when spectral layout is not available.
+
+        Args:
+            n_neighbors: Number of nearest neighbors for graph construction.
+            n_components: Dimensionality of the output embedding.
+            min_dist: Minimum distance between embedded points.
+            n_epochs: Number of optimization epochs (default 20000).
+            init: Initialization method ('spectral' or 'pca').
+        """
+
         def __init__(self,  n_neighbors, n_components, min_dist=0.1, n_epochs=20000, init='spectral', random_state=np.random.randint(1, 1000), verbose=False):
             self.n_epochs = n_epochs
             self.n_neighbors = n_neighbors

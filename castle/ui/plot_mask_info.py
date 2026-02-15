@@ -6,6 +6,12 @@ import numpy as np
 
 
 class Plotter:
+    """Static plotting utilities for ROI mask kinematics (position, speed, area).
+
+    All methods are ``@staticmethod`` and return Plotly figures built from
+    per-ROI result dicts containing 'x', 'y', and 'area' time series.
+    """
+
     @staticmethod
     def plot_position(results):
         num = len(results)

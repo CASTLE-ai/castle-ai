@@ -3,65 +3,97 @@
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      app.py (Entry)                     │
-│                    Gradio Application                    │
-└──────────────────────────┬──────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────┐
-│                     castle/ui/                          │
-│  main_ui ─┬─ project_ui    (0. Project)                │
-│           ├─ source_ui     (1. Upload Videos)           │
-│           ├─ edit_ui       (2. Tracking ROIs)           │
-│           │   ├─ view_ui        View frames             │
-│           │   ├─ label_ui       Label ROIs (SAM)        │
-│           │   ├─ knowledge_ui   ROI prompt gallery      │
-│           │   ├─ track_ui       Run tracking (DeAOT)    │
-│           │   ├─ post_track_ui  Post-process results    │
-│           │   └─ batch_track_ui Batch processing        │
-│           ├─ extract_ui    (3. Extract Latent)          │
-│           └─ cluster_page_ui (4. Behavior Microscope)   │
-└──────────────────────────┬──────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                        Frontend Layer                          │
+│                                                                │
+│  castle/cli/          castle/ui/           castle/desktop/     │
+│  (typer CLI)          (Gradio Web UI)      (PyQt6 App)        │
+└────────────┬───────────────┬───────────────────┬──────────────┘
+             │               │                   │
+             ▼               ▼                   ▼
+┌────────────────────────────────────────────────────────────────┐
+│                      castle/service/                           │
+│                      (Service Layer)                           │
+│                                                                │
+│  project_service.py      — Project CRUD via service layer      │
+│  extraction_service.py   — Feature extraction orchestration    │
+│  clustering_service.py   — UMAP + DBSCAN management           │
+│  tracking_service.py     — Tracking pipeline orchestration     │
+│  annotation_service.py   — Classification scheme management    │
+│  bout_service.py         — Behavioral bout analysis            │
+│  history_service.py      — Undo/Redo (Command Pattern)         │
+└──────────────────────────┬─────────────────────────────────────┘
                            │ calls
-┌──────────────────────────▼──────────────────────────────┐
-│                   castle/core/                          │
-│  extractor.py   ─ Feature extraction engine             │
-│  cluster.py     ─ LatentAggregator, clustering logic    │
-│  data.py        ─ Preprocess, VideoDataset              │
-│  models.py      ─ Visual encoder abstraction            │
-│  config.py      ─ Constants, model paths                │
-│  project.py     ─ Project config I/O                    │
-└──────────────────────────┬──────────────────────────────┘
+┌──────────────────────────▼─────────────────────────────────────┐
+│                      castle/core/                              │
+│                   (Core Business Logic)                        │
+│                                                                │
+│  extractor.py        — Feature extraction engine               │
+│  cluster.py          — LatentAggregator, clustering logic      │
+│  data.py             — Preprocess, VideoDataset                │
+│  models.py           — VisualEncoder abstraction (DINOv2/v3)   │
+│  config.py           — Constants, model paths                  │
+│  project.py          — Project config I/O (file inventory)     │
+│  project_config.py   — ProjectConfig dataclass (B-05)          │
+│  environment.py      — Device detection, worker count          │
+│  mask_filter.py      — Post-tracking mask filtering (A-03)     │
+│  logging_config.py   — Centralized logging setup               │
+└──────────────────────────┬─────────────────────────────────────┘
                            │ uses
-┌──────────────────────────▼──────────────────────────────┐
-│                   castle/utils/                         │
-│  project_manager.py      Project CRUD operations        │
-│  video_manager.py        Video import/scan              │
-│  video_io.py             Video read/write (PyAV)        │
-│  video_align.py          Center, rotate, crop frames    │
-│  image_segment.py        SAM wrapper (Segmentor)        │
-│  video_object_segment.py DeAOT wrapper                  │
-│  tracking_manager.py     ROI tracking orchestration     │
-│  visual_latent_extract.py DINOv2/v3 wrapper             │
-│  latent_explorer.py      Latent class, UMAP, clustering │
-│  myumap.py               Custom UMAP (cuml + spectral)  │
-│  h5_io.py                HDF5 mask storage              │
-│  plot.py                 Visualization helpers           │
-│  roi_manager.py          ROI utilities                   │
-│  download.py             Checkpoint download (gdown)     │
-└──────────────────────────┬──────────────────────────────┘
-                           │ wraps
-┌──────────────────────────▼──────────────────────────────┐
-│              Vendored / External Models                  │
-│  castle/sam/    ─ Segment Anything Model (Meta)          │
-│  castle/aot/    ─ DeAOT video object segmentation        │
-│  castle/configs/─ model_config.json                      │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────▼─────────────────────────────────────┐
+│                      castle/utils/                             │
+│                    (Utility Layer)                              │
+│                                                                │
+│  project_manager.py       — Project CRUD operations            │
+│  video_manager.py         — Video import/scan                  │
+│  video_io.py              — Video read/write (PyAV)            │
+│  video_align.py           — Center, rotate, crop frames        │
+│  image_segment.py         — SAM wrapper (Segmentor)            │
+│  video_object_segment.py  — DeAOT wrapper                      │
+│  tracking_manager.py      — ROI tracking orchestration         │
+│  latent_explorer.py       — Latent/LocalLatent classes         │
+│  myumap.py                — Custom UMAP (cuml + spectral)      │
+│  h5_io.py                 — HDF5 mask storage                  │
+│  analysis_utils.py        — Kinematic DataFrame utilities      │
+│  roi_manager.py           — ROI utilities                      │
+│  download.py              — Checkpoint download (gdown)        │
+│  profiler.py              — GPU/CPU performance profiling      │
+└──────────────────────────┬─────────────────────────────────────┘
+                           │
+┌──────────────────────────▼─────────────────────────────────────┐
+│                castle/visualization/                           │
+│              (Visualization Layer — B-01)                       │
+│                                                                │
+│  embedding_plots.py  — UMAP scatter, syllable bar,             │
+│                        focus embedding, named embedding         │
+└────────────────────────────────────────────────────────────────┘
+                           │
+┌──────────────────────────▼─────────────────────────────────────┐
+│                 Vendored / External Models                      │
+│  castle/sam/     — Segment Anything Model (Meta)               │
+│  castle/aot/     — DeAOT video object segmentation             │
+│  castle/dinov2/  — DINOv2 vendored components                  │
+│  castle/dinov3/  — DINOv3 vendored components                  │
+│  castle/configs/ — model_config.json                           │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Module Map
 
-### `castle/ui/` — User Interface
+### `castle/cli/` — Command-Line Interface
+
+Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for headless pipeline execution.
+
+| Module | Purpose |
+|--------|---------|
+| `main.py` | Typer app entry point, registers all subcommand groups |
+| `project_cmd.py` | `castle project create/list/info/delete` |
+| `cluster_cmd.py` | `castle cluster run/list` |
+| `extract_cmd.py` | `castle extract run` |
+| `track_cmd.py` | `castle track run` |
+| `info_cmd.py` | `castle info status/devices` |
+
+### `castle/ui/` — Gradio Web Interface
 
 Built on [Gradio](https://gradio.app/). Each tab has its own module:
 
@@ -79,6 +111,38 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module:
 | `batch_track_ui.py` | └─ Batch | Process multiple videos |
 | `extract_ui.py` | 3. Extract Latent | Configure and run feature extraction |
 | `cluster_page_ui.py` | 4. Behavior Microscope | UMAP + DBSCAN analysis |
+| `embedding_scatter.py` | └─ (component) | Plotly embedding scatter widget |
+| `cluster_handlers.py` | └─ (component) | Cluster operation callbacks |
+| `cluster_tree.py` | └─ (component) | Hierarchical cluster tree view |
+
+### `castle/desktop/` — PyQt6 Desktop Application
+
+Native desktop GUI using [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) and [pyqtgraph](https://pyqtgraph.readthedocs.io/).
+
+| Module | Purpose |
+|--------|---------|
+| `main_window.py` | Main window with 5 tabs |
+| `workers.py` | QThread workers for background tasks |
+| `components/syllable_bar.py` | pyqtgraph-based syllable bar widget |
+| `widgets/project_panel.py` | Project management panel |
+| `widgets/source_panel.py` | Video source panel |
+| `widgets/tracking_panel.py` | ROI tracking panel |
+| `widgets/extract_panel.py` | Feature extraction panel |
+| `widgets/cluster_panel.py` | Behavior clustering panel |
+
+### `castle/service/` — Service Layer
+
+Clean separation between frontends and business logic. All three frontends (CLI, Gradio, Desktop) call these services.
+
+| Module | Purpose |
+|--------|---------|
+| `project_service.py` | Project CRUD (create, list, info, delete) |
+| `extraction_service.py` | Feature extraction orchestration |
+| `clustering_service.py` | UMAP + DBSCAN session management |
+| `tracking_service.py` | Tracking pipeline orchestration |
+| `annotation_service.py` | Classification scheme management |
+| `bout_service.py` | Behavioral bout analysis and export |
+| `history_service.py` | Undo/Redo via Command Pattern |
 
 ### `castle/core/` — Core Business Logic
 
@@ -86,10 +150,14 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module:
 |--------|---------|
 | `extractor.py` | Feature extraction execution engine |
 | `cluster.py` | `LatentAggregator` — multi-video latent loading and frame retrieval |
-| `data.py` | `Preprocess` dataclass, `VideoDataset` for batched extraction |
-| `models.py` | `VisualEncoder` abstraction, model registry |
+| `data.py` | `Preprocess` pipeline, `VideoDataset` for batched extraction |
+| `models.py` | `VisualEncoder` abstraction: DINOv2, DINOv3, multi-scale pooling |
 | `config.py` | Constants: checkpoint paths, model IDs, supported models |
-| `project.py` | Project config read/write |
+| `project.py` | Project config read/write (file inventory) |
+| `project_config.py` | `ProjectConfig` dataclass — typed processing parameters (B-05) |
+| `environment.py` | Device detection (`cuda`/`mps`/`cpu`), worker count |
+| `mask_filter.py` | Post-tracking mask filtering — largest component, configurable threshold (A-03) |
+| `logging_config.py` | Centralized logging setup |
 
 ### `castle/utils/` — Utility Layer
 
@@ -99,16 +167,24 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module:
 | `video_manager.py` | Video import, directory scanning, format detection |
 | `video_io.py` | Video read/write using PyAV, subtitle generation |
 | `video_align.py` | Frame alignment: center, rotate, crop |
-| `image_segment.py` | SAM wrapper (`Segmentor` class) |
-| `video_object_segment.py` | DeAOT wrapper (model loading) |
+| `image_segment.py` | SAM wrapper (`Segmentor`, `MultiObjectSegmentor`) |
+| `video_object_segment.py` | DeAOT wrapper (`AOTTracker`, model loading) |
 | `tracking_manager.py` | `ROITracker` — orchestrates multi-frame tracking |
-| `visual_latent_extract.py` | DINOv2/v3 wrapper functions |
-| `latent_explorer.py` | `Latent` class — embedding, clustering, visualization |
-| `myumap.py` | Custom UMAP using cuml + spectral layout |
+| `latent_explorer.py` | `Latent`, `LocalLatent` — embedding, clustering, visualization |
+| `myumap.py` | GPU-accelerated UMAP using cuml + spectral layout |
 | `h5_io.py` | `H5IO` — HDF5 file I/O for mask storage |
-| `plot.py` | Visualization: frame+mask overlay, dot annotations |
+| `analysis_utils.py` | Kinematic DataFrame construction |
 | `roi_manager.py` | ROI color management and utilities |
 | `download.py` | Checkpoint download via gdown |
+| `profiler.py` | `Profiler`, `TimeBlock`, `SystemMonitor` for performance monitoring |
+
+### `castle/visualization/` — Visualization Layer
+
+Separated from utils (B-01) so data classes don't depend on matplotlib/plotly:
+
+| Module | Purpose |
+|--------|---------|
+| `embedding_plots.py` | UMAP scatter, syllable bar, focus embedding, named embedding |
 
 ### `castle/sam/` — SAM (Vendored)
 
@@ -140,6 +216,11 @@ Video File (.mp4)
     │
     ▼
 [4. DINOv2/v3] Extract features → latent vectors (.npz)
+    │         ├─ weighted_average pooling (default) → 768-dim
+    │         └─ multiscale SPP (A-06) → e.g. 21×768 = 16128-dim
+    │              (spatial pyramid: 1×1 + 2×2 + 4×4 grids)
+    │         ├─ single layer (default) → last layer features
+    │         └─ multi-layer (A-06) → concat e.g. layers [3,7,11]
     │
     ▼
 [5. UMAP] Dimensionality reduction → 2D embedding
@@ -159,7 +240,8 @@ After a complete analysis run:
 
 ```
 projects/my-project/
-├── config.json                              # Project metadata
+├── config.json                              # Project metadata (file inventory)
+├── castle_config.json                       # ProjectConfig (processing parameters)
 ├── sources/                                 # Video files
 │   ├── video1.mp4
 │   └── video2.mp4
@@ -174,8 +256,10 @@ projects/my-project/
 │   └── video1.mp4/
 │       └── video1_ROI_1_crop.mp4
 ├── latent/                                  # Extracted features
-│   └── dinov2_vitb14_reg4_pretrain/
-│       └── video1_ROI_1_dinov2_vitb14_reg4_pretrain.npz
+│   └── dinov2_vitb14_reg/
+│       ├── video1_ROI_1_dinov2_vitb14_reg_ctr_rmbg.npz        # default pooling
+│       ├── video1_ROI_1_dinov2_vitb14_reg_ctr_spp1x2x4.npz    # A-06 multiscale
+│       └── video1_ROI_1_dinov2_vitb14_reg_ctr_L3x7x11.npz     # A-06 multi-layer
 └── cluster/                                 # Analysis results
     ├── id.csv                               # Cluster ID → name mapping
     ├── time_series.csv                      # Frame-by-frame assignments

@@ -25,6 +25,17 @@ DEFAULT_DEVICE = get_device()
 torch.backends.cudnn.benchmark = True
 
 class AOTTracker(object):
+    """DeAOT-based video object segmentation tracker.
+
+    Loads an AOT/DeAOT model from a checkpoint, manages reference frames
+    and long-term memory, and propagates masks across video frames.
+    Supports both single-frame and batch tracking.
+
+    Args:
+        cfg: Engine config with model architecture, checkpoint path, and memory settings.
+        device: Torch device string ('cuda', 'cpu', etc.).
+    """
+
     def __init__(self, cfg, device):
         self.device = device
         self.model = build_vos_model(cfg.MODEL_VOS, cfg)
@@ -149,6 +160,12 @@ class AOTTracker(object):
 
 
 class AOTTrackerInferEngine(AOTInferEngine):
+    """AOT inference engine with incremental reference frame support.
+
+    Extends ``AOTInferEngine`` to allow adding new reference frames after
+    initial tracking has started, enabling interactive ROI refinement.
+    """
+
     def __init__(self, aot_model, device, long_term_mem_gap=9999, short_term_mem_skip=1, max_aot_obj_num=None):
         super().__init__(aot_model, device, long_term_mem_gap, short_term_mem_skip, max_aot_obj_num)
     def add_reference_frame_incremental(self, img, mask, obj_nums, frame_step=-1):
@@ -185,6 +202,12 @@ class AOTTrackerInferEngine(AOTInferEngine):
 
 
 class DeAOTTrackerInferEngine(DeAOTInferEngine):
+    """DeAOT inference engine with incremental reference frame support.
+
+    Extends ``DeAOTInferEngine`` with the same incremental reference frame
+    capability as ``AOTTrackerInferEngine``, using the decoupled AOT architecture.
+    """
+
     def __init__(self, aot_model, device, long_term_mem_gap=9999, short_term_mem_skip=1, max_aot_obj_num=None):
         super().__init__(aot_model, device, long_term_mem_gap, short_term_mem_skip, max_aot_obj_num)
     def add_reference_frame_incremental(self, img, mask, obj_nums, frame_step=-1):

@@ -9,6 +9,19 @@ import platform
 import torch
 
 class Environment:
+    """Runtime environment detector for CASTLE.
+
+    Detects the operating system, whether running in Google Colab, and the
+    best available compute device (CUDA, MPS, or CPU). A global singleton
+    ``env`` is created at module level.
+
+    Attributes:
+        os_sys: Operating system name (e.g. 'Linux', 'Darwin').
+        is_colab: True if running inside Google Colab.
+        device: Best available device string ('cuda', 'mps', or 'cpu').
+        allowed_paths: Paths whitelisted for Colab file access.
+    """
+
     def __init__(self):
         self.os_sys = platform.uname().system
         self.is_colab = 'google.colab' in sys.modules

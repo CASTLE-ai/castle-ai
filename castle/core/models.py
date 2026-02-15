@@ -186,6 +186,13 @@ class VisualEncoder(ABC):
 
 
 class DINOv2Encoder(VisualEncoder):
+    """DINOv2 visual encoder using ViT-B/14 (or ViT-L/S variants).
+
+    Loads the model from ``facebookresearch/dinov2`` via torch.hub and
+    extracts patch token features at 518×518 resolution with 14×14 patches.
+    Supports weighted-average and multi-scale spatial pyramid pooling.
+    """
+
     def __init__(self, model_type: str = 'dinov2_vitb14', device: Optional[str] = None):
         super().__init__(device)
         self.model_name = 'dinov2_vitb14_reg' if 'reg' in model_type else model_type
@@ -274,6 +281,13 @@ class DINOv2Encoder(VisualEncoder):
 
 
 class DINOv3Encoder(VisualEncoder):
+    """DINOv3 visual encoder using ViT-B/16 (or ViT-L variant).
+
+    Loads a custom checkpoint from Google Drive and uses 592×592 input
+    resolution with 16×16 patches (37×37 patch grid). Supports weighted-average
+    and multi-scale spatial pyramid pooling.
+    """
+
     def __init__(self, model_type: str = 'dinov3_vitb16', device: Optional[str] = None):
         super().__init__(device)
         self.model_type = model_type

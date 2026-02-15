@@ -7,7 +7,142 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## Project Management
+## Service Layer
+
+### Project Service
+
+::: castle.service.project_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Extraction Service
+
+::: castle.service.extraction_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Clustering Service
+
+::: castle.service.clustering_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Tracking Service
+
+::: castle.service.tracking_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Annotation Service
+
+::: castle.service.annotation_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Bout Service
+
+::: castle.service.bout_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### History Service (Undo/Redo)
+
+::: castle.service.history_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+## CLI
+
+::: castle.cli.main
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+## Core
+
+### Project Configuration
+
+::: castle.core.project_config
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Environment
+
+::: castle.core.environment
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Mask Filter
+
+::: castle.core.mask_filter
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Extractor
+
+<!-- mkdocstrings fails on castle.core.extractor due to import dependencies (torch, cuml, etc.) -->
+<!-- ::: castle.core.extractor -->
+
+!!! note "Build Note"
+    Auto-documentation for `castle.core.extractor` is unavailable due to import dependencies that are not installed in the docs build environment. See source code directly: [`castle/core/extractor.py`](https://github.com/CASTLE-ai/castle-ai/blob/main/castle/core/extractor.py)
+
+---
+
+### Data
+
+<!-- mkdocstrings fails on castle.core.data due to import dependencies -->
+<!-- ::: castle.core.data -->
+
+!!! note "Build Note"
+    Auto-documentation for `castle.core.data` is unavailable due to import dependencies. See source: [`castle/core/data.py`](https://github.com/CASTLE-ai/castle-ai/blob/main/castle/core/data.py)
+
+---
+
+### Models
+
+<!-- mkdocstrings fails on castle.core.models due to import dependencies -->
+<!-- ::: castle.core.models -->
+
+!!! note "Build Note"
+    Auto-documentation for `castle.core.models` is unavailable due to import dependencies. See source: [`castle/core/models.py`](https://github.com/CASTLE-ai/castle-ai/blob/main/castle/core/models.py)
+
+---
+
+## Utils
+
+### Project Management
 
 ::: castle.utils.project_manager
     options:
@@ -16,7 +151,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## Video I/O
+### Video I/O
 
 ::: castle.utils.video_io
     options:
@@ -25,7 +160,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## Video Management
+### Video Management
 
 ::: castle.utils.video_manager
     options:
@@ -34,7 +169,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## Image Segmentation (SAM)
+### Image Segmentation (SAM)
 
 ::: castle.utils.image_segment
     options:
@@ -43,7 +178,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## ROI Tracking
+### ROI Tracking
 
 ::: castle.utils.tracking_manager
     options:
@@ -52,7 +187,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## Feature Extraction
+### Feature Extraction
 
 ::: castle.utils.visual_latent_extract
     options:
@@ -61,7 +196,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## Latent Explorer
+### Latent Explorer
 
 ::: castle.utils.latent_explorer
     options:
@@ -70,7 +205,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## Video Alignment
+### Video Alignment
 
 ::: castle.utils.video_align
     options:
@@ -79,7 +214,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
-## HDF5 I/O
+### HDF5 I/O
 
 ::: castle.utils.h5_io
     options:
@@ -90,37 +225,20 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ## Visualization
 
-::: castle.utils.plot
+### Embedding Plots
+
+::: castle.visualization.embedding_plots
     options:
       show_root_heading: true
       show_source: true
 
 ---
 
-## Core — Extractor
+## Legacy Utils
 
-<!-- mkdocstrings fails on castle.core.extractor due to import dependencies (torch, cuml, etc.) -->
-<!-- ::: castle.core.extractor -->
+### Plot
 
-!!! note "Build Note"
-    Auto-documentation for `castle.core.extractor` is unavailable due to import dependencies that are not installed in the docs build environment. See source code directly: [`castle/core/extractor.py`](https://github.com/CASTLE-ai/castle-ai/blob/main/castle/core/extractor.py)
-
----
-
-## Core — Data
-
-<!-- mkdocstrings fails on castle.core.data due to import dependencies -->
-<!-- ::: castle.core.data -->
-
-!!! note "Build Note"
-    Auto-documentation for `castle.core.data` is unavailable due to import dependencies. See source: [`castle/core/data.py`](https://github.com/CASTLE-ai/castle-ai/blob/main/castle/core/data.py)
-
----
-
-## Core — Models
-
-<!-- mkdocstrings fails on castle.core.models due to import dependencies -->
-<!-- ::: castle.core.models -->
-
-!!! note "Build Note"
-    Auto-documentation for `castle.core.models` is unavailable due to import dependencies. See source: [`castle/core/models.py`](https://github.com/CASTLE-ai/castle-ai/blob/main/castle/core/models.py)
+::: castle.utils.plot
+    options:
+      show_root_heading: true
+      show_source: true

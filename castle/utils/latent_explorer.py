@@ -30,6 +30,19 @@ def generate_palette(avoid):
 
 
 class Latent:
+    """Top-level latent space manager for behavioral clustering.
+
+    Holds temporally-windowed latent data, cluster assignments, and metadata.
+    Supports hierarchical split/merge via LocalLatent and visualization
+    delegation to ``castle.visualization.embedding_plots``.
+
+    Attributes:
+        data: (T, F) array of latent features after temporal windowing.
+        cluster: (T,) integer array of cluster IDs (-1 = NaN/invalid).
+        cluster_meta: Dict mapping cluster ID to {name, color}.
+        time_window: Number of consecutive frames concatenated per sample.
+    """
+
     def __init__(self, raw, time_window=1, device=''):
         if not device:
             device = DEFAULT_DEVICE
@@ -123,6 +136,20 @@ class Latent:
 
 
 class LocalLatent:
+    """Focused latent subset for one cluster, supporting UMAP + DBSCAN sub-clustering.
+
+    Created by ``Latent.select()`` with the data and boolean index mask for a
+    single cluster. Provides multi-stage UMAP embedding, DBSCAN clustering,
+    cluster labeling, and visualization.
+
+    Attributes:
+        data: (N, F) latent features for the selected cluster.
+        index_mask: (T,) boolean mask into the parent Latent's data array.
+        embedding: (N, D) UMAP embedding (set after ``build_embedding()``).
+        cluster: (N,) DBSCAN labels (set after ``build_cluster()``).
+        export: Dict mapping cluster_id to {name, color} for labeled clusters.
+    """
+
     def __init__(self, data, index_mask, color_avoid, device):
         self.data = data
         self.index_mask = index_mask

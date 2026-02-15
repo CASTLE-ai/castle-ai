@@ -9,6 +9,16 @@ DEFAULT_DEVICE = get_device()
 
 
 class Segmentor:
+    """SAM-based interactive image segmentor.
+
+    Wraps the Segment Anything Model for point-and-click ROI segmentation.
+    Supports both automatic mask generation and interactive point/mask prompts.
+
+    Args:
+        sam_args: Dict with 'sam_checkpoint', 'model_type', 'generator_args', 'device'.
+        sam_model: Optional pre-loaded SAM model to reuse (avoids reloading weights).
+    """
+
     def __init__(self, sam_args, sam_model=None):
         """
         sam_args:
@@ -80,6 +90,13 @@ class Segmentor:
 
 
 class MultiObjectSegmentor():
+    """Multi-ROI segmentor that accumulates clicks across multiple objects.
+
+    Manages sequential point-and-click segmentation for multiple ROIs,
+    assigning incrementing ROI IDs and compositing masks. Reuses a single
+    SAM model instance across all clicks.
+    """
+
     def __init__(self, sam_args, sam_model=None) -> None:
         self.sam_args = sam_args
         self.click_points = []

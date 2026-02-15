@@ -26,6 +26,12 @@ from castle.core.models import get_visual_encoder
 
 # --- Protocol Definition ---
 class ProgressCallback(Protocol):
+    """Callback protocol for reporting extraction progress.
+
+    Implementations receive a float in [0, 1] and an optional description
+    string, enabling progress bars in any frontend (Gradio, CLI, Desktop).
+    """
+
     def __call__(self, progress: float, desc: str = None) -> None: ...
 
 # --- Helper Logic ---

@@ -30,6 +30,15 @@
 - [API Reference](https://castle-ai.github.io/castle-ai/reference/api/)
 
 ## Latest Updates
+- **2026-02: Developer Branch - Major Architecture Overhaul**
+  - **Service Layer**: Clean separation between UI and business logic
+  - **CLI Frontend**: Full command-line interface via `castle` command
+  - **Desktop App**: PyQt6 native application with pyqtgraph visualization
+  - **Multi-scale Pooling (A-06)**: Spatial pyramid pooling for richer latent representations
+  - **Undo/Redo**: Command Pattern history for clustering operations
+  - **134 Unit Tests**: Comprehensive test coverage
+  - **Code Quality**: Zero ruff warnings in non-vendored code
+
 - **2025-12: Performance & Stability Update**
   - **High-Performance Pipeline**: Optimized CPU/GPU batch processing for both Tracking and Extraction.
 

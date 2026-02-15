@@ -18,6 +18,12 @@ _palette = PALETTE_HEX * 5
 
     
 class Latent:
+    """Deprecated latent space manager — use ``castle.utils.latent_explorer.Latent`` instead.
+
+    Manages behavioral syllable assignments, cluster metadata, and palette
+    allocation over temporally-windowed latent data.
+    """
+
     def __init__(self, data, window=1):
         assert data.ndim == 2, 'Only design for (T x num_feats)'
         
@@ -113,6 +119,12 @@ def gen_palette(avoid):
 
         
 class FocusLatent:
+    """Deprecated focused latent subset — use ``castle.utils.latent_explorer.LocalLatent`` instead.
+
+    Holds a subset of latent data selected from a single cluster, supporting
+    UMAP embedding generation, DBSCAN clustering, and merge operations.
+    """
+
     def __init__(self, data, color_avoid):
         self.data = data
         self.focus = (~np.isnan(self.data.sum(axis=1)))

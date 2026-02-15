@@ -159,6 +159,64 @@ Smaller eps → more clusters. Larger eps → fewer clusters.
 
 ---
 
+## ProjectConfig (B-05)
+
+The `ProjectConfig` dataclass (`castle/core/project_config.py`) provides typed, serializable configuration for the entire CASTLE processing pipeline. It is stored as `castle_config.json` in the project directory.
+
+```python
+from castle.core.project_config import ProjectConfig
+
+cfg = ProjectConfig()                    # defaults
+cfg = ProjectConfig.load('castle_config.json')  # from file
+cfg.save('castle_config.json')           # to file
+```
+
+### Extraction Parameters (A-06)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `extraction.model` | `str` | `'dinov3_vitb16'` | Visual encoder model name |
+| `extraction.roi_ids` | `List[int]` | `[1]` | ROI IDs to extract |
+| `extraction.batch_size` | `int` | `32` | Frames per GPU batch |
+| `extraction.bin_size` | `int` | `1` | Temporal binning (frames per sample) |
+| `extraction.pooling_method` | `str` | `'weighted_average'` | `'weighted_average'` or `'multiscale'` |
+| `extraction.pooling_scales` | `List[int]` | `[1, 2, 4]` | Grid divisions for multi-scale SPP (only used when `pooling_method='multiscale'`) |
+| `extraction.feature_layers` | `Optional[List[int]]` | `None` | Layer indices for multi-layer extraction (e.g. `[3, 7, 11]`). `None` = last layer only. |
+
+**Multi-scale pooling (A-06)** divides the patch grid into s×s regions for each scale s, computes mask-weighted average in each region, then concatenates. For example, `pooling_scales=[1, 2, 4]` produces a `(1 + 4 + 16) × 768 = 16128`-dim vector.
+
+**Multi-layer extraction (A-06)** concatenates features from multiple transformer layers (e.g. shallow layers capture texture/edges, deep layers capture semantics). For example, `feature_layers=[3, 7, 11]` on DINOv2-ViT-B/14 produces `3 × 768 = 2304`-dim features per patch.
+
+### Preprocessing Parameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `extraction.preprocess.center_roi` | `bool` | `False` | Center crop on ROI centroid |
+| `extraction.preprocess.center_roi_id` | `int` | `1` | ROI to center on |
+| `extraction.preprocess.crop_width` | `int` | `300` | Crop width (px) |
+| `extraction.preprocess.crop_height` | `int` | `300` | Crop height (px) |
+| `extraction.preprocess.rotate_roi_tail` | `bool` | `False` | Normalize orientation via tail ROI |
+| `extraction.preprocess.rotate_roi_tail_id` | `int` | `2` | Tail ROI ID |
+| `extraction.preprocess.remove_background` | `bool` | `False` | Zero out non-ROI pixels |
+
+### Tracking Parameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tracking.model` | `str` | `'r50_deaotl'` | DeAOT model variant |
+| `tracking.smart_filter_ratio` | `float` | `0.1` | Mask area filter threshold |
+| `tracking.batch_size` | `int` | `16` | Tracking batch size |
+
+### Clustering Parameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `clustering.method` | `str` | `'dbscan'` | Clustering algorithm |
+| `clustering.eps` | `float` | `1.0` | DBSCAN epsilon |
+| `clustering.umap_stages` | `List[UMAPConfig]` | `[{n_neighbors:100, ...}]` | Multi-stage UMAP configs |
+
+---
+
 ## Device Selection
 
 CASTLE auto-detects the compute device:

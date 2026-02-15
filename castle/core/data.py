@@ -22,6 +22,21 @@ logger = logging.getLogger(__name__)
 # 預處理類別 (Moved from castle/ui/extract_ui.py)
 # ---------------------------
 class Preprocess:
+    """Frame preprocessing pipeline for ROI-centered extraction.
+
+    Applies optional centering, rotation, cropping, and background removal
+    to a video frame and its corresponding mask before feature extraction.
+
+    Attributes:
+        center_roi_switch: Whether to center the crop on a specific ROI.
+        center_roi_id: ROI ID to center on.
+        center_roi_crop_width: Crop width in pixels after centering.
+        center_roi_crop_height: Crop height in pixels after centering.
+        rotate_roi_tail_switch: Whether to normalize orientation using a tail ROI.
+        rotate_roi_tail_id: ROI ID that defines the tail direction.
+        remove_background_switch: Whether to zero out non-ROI pixels.
+    """
+
     def __init__(self, center_roi_switch: bool = False, center_roi_id: int = 1,
                  center_roi_crop_width: int = 300, center_roi_crop_height: int = 300,
                  rotate_roi_tail_switch: bool = False, rotate_roi_tail_id: int = 2,
@@ -95,6 +110,21 @@ class Preprocess:
 # 核心類別：支援多核心的 Dataset (Moved from castle/ui/extract_ui.py)
 # ---------------------------
 class VideoDataset(Dataset):
+    """PyTorch Dataset that yields preprocessed (frame, mask) pairs from a video.
+
+    Lazily opens the video file and HDF5 mask store per-worker to support
+    multi-process DataLoader without file handle conflicts.
+
+    Args:
+        video_path: Path to the source video file.
+        video_len: Total number of frames in the video.
+        mask_path: Path to the HDF5 mask file (mask_list.h5).
+        preprocess: Preprocess instance defining the transform pipeline.
+        select_roi: ROI ID to extract.
+        rotate_deg: Optional fixed rotation degree for rotation-invariant extraction.
+        interpolated_points: Optional dict mapping frame index to (x, y) tail points.
+    """
+
     def __init__(self, video_path: str, video_len: int, mask_path: str, preprocess: Preprocess, select_roi: int, 
                  rotate_deg: Optional[int] = None, interpolated_points: Optional[dict] = None):
         # 我們只存「路徑」，不存物件，避免多行程打架

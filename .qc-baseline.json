@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-02-15T16:40:00+08:00",
+  "version": "v2",
+  "phases": {
+    "1_test_suite": {
+      "total": 134,
+      "passed": 134,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_s": 10.83
+    },
+    "2_import_integrity": {
+      "total": 71,
+      "passed": 70,
+      "failed": 1,
+      "failures": ["castle.utils.myumap (ImportError: requires RAPIDS cuML)"],
+      "skipped_vendored": ["aot", "sam", "dinov2", "dinov3"],
+      "duration_s": 11.96
+    },
+    "3_static_analysis": {
+      "tool": "ruff 0.15.1",
+      "rules_checked": ["E722", "T201", "B006", "F401", "F841"],
+      "findings": {
+        "E722_bare_except": 0,
+        "T201_print_statements": 0,
+        "B006_mutable_defaults": 7,
+        "F401_unused_imports": 78,
+        "F841_unused_variables": 9
+      },
+      "total_findings": 94,
+      "fixable": 67
+    },
+    "4_smoke_tests": {
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "tests": [
+        "Project service (create, list, info)",
+        "Annotation service (schemes, save/load)",
+        "History service (undo/redo)",
+        "ProjectConfig (round-trip, A-06 fields)",
+        "Multi-scale pooling backward compat (scales=[1])",
+        "Multi-scale output shapes ([1]→768, [1,2]→3840, [1,2,4]→16128)",
+        "CLI (all subcommand --help)",
+        "Bout service (find_bouts)",
+        "Mask filter (filter_largest_component)",
+        "Environment (get_device, get_num_workers)",
+        "Cluster tree markdown",
+        "Lazy import speed (<0.5s)",
+        "EmbeddingScatterPlot import",
+        "H5IO context manager"
+      ]
+    },
+    "5_ui_frontend": {
+      "gradio_ui": "PASS",
+      "desktop_modules": "PASS",
+      "cli_subcommands": "PASS"
+    },
+    "6_file_consistency": {
+      "syntax_check": {
+        "total": 83,
+        "passed": 83,
+        "errors": 0
+      },
+      "git_status": "clean",
+      "git_diff_check": "clean"
+    },
+    "7_documentation": {
+      "module_docstrings_missing": 0,
+      "class_docstrings_missing": 20,
+      "missing_classes": [
+        "core/data.py::Preprocess",
+        "core/data.py::VideoDataset",
+        "core/environment.py::Environment",
+        "core/extractor.py::ProgressCallback",
+        "core/models.py::DINOv2Encoder",
+        "core/models.py::DINOv3Encoder",
+        "ui/plot_mask_info.py::Plotter",
+        "utils/explorer.py::Latent",
+        "utils/explorer.py::FocusLatent",
+        "utils/image_segment.py::Segmentor",
+        "utils/image_segment.py::MultiObjectSegmentor",
+        "utils/latent_explorer.py::Latent",
+        "utils/latent_explorer.py::LocalLatent",
+        "utils/myumap.py::UMAP",
+        "utils/profiler.py::Profiler",
+        "utils/profiler.py::TimeBlock",
+        "utils/profiler.py::SystemMonitor",
+        "utils/video_object_segment.py::AOTTracker",
+        "utils/video_object_segment.py::AOTTrackerInferEngine",
+        "utils/video_object_segment.py::DeAOTTrackerInferEngine"
+      ],
+      "readme_exists": true,
+      "improvement_plan_notes": "B-04 and A-05 show 🔄 but are actually implemented per git log"
+    }
+  }
+}

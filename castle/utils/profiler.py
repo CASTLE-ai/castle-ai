@@ -10,6 +10,13 @@ from castle.core.logging_config import setup_logger
 logger = setup_logger(__name__)
 
 class Profiler:
+    """Thread-safe singleton performance profiler.
+
+    Collects named timing records and produces summary statistics
+    (count, total, mean, min, max, stdev) via ``get_report()``.
+    Use with ``TimeBlock`` as a context manager.
+    """
+
     _instance = None
     _lock = threading.Lock()
 
@@ -59,6 +66,14 @@ class Profiler:
             self.timings.clear()
 
 class TimeBlock:
+    """Context manager that records elapsed time to the global Profiler.
+
+    Usage::
+
+        with TimeBlock('my_operation'):
+            do_work()
+    """
+
     def __init__(self, name):
         self.name = name
         self.profiler = Profiler()
@@ -74,6 +89,16 @@ class TimeBlock:
         self.profiler.add_record(self.name, duration_ms)
 
 class SystemMonitor:
+    """Background thread that samples CPU and GPU utilization at fixed intervals.
+
+    Reads ``/proc/stat`` for CPU usage and ``nvidia-smi`` for GPU metrics.
+    Call ``start()`` / ``stop()`` to control monitoring, and ``print_stats()``
+    to log average and peak resource usage.
+
+    Args:
+        interval: Sampling interval in seconds (default 0.5).
+    """
+
     def __init__(self, interval=0.5):
         self.interval = interval
         self.running = False

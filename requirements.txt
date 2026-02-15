@@ -1,24 +1,45 @@
-matplotlib
-tqdm
-av
-numpy
-opencv-python-headless
-umap-learn
-plotly
-gradio
-h5py
-natsort
-gdown
-termcolor
-xFormers
+# Core ML
+torch>=2.0,<3.0
+torchvision>=0.15,<1.0
+torchmetrics>=1.0,<2.0
 
+# Data & Numerics
+numpy>=1.24,<3.0
+scipy>=1.10,<2.0
+scikit-learn>=1.3,<2.0
+h5py>=3.8,<4.0
+
+# Visualization
+matplotlib>=3.7,<4.0
+plotly>=5.0,<7.0
+
+# Video / Image
+av>=10.0,<17.0
+opencv-python-headless>=4.7,<5.0
+Pillow>=9.0,<13.0
+
+# Dimensionality Reduction & Clustering
+umap-learn>=0.5,<1.0
+
+# UI
+gradio>=4.0,<7.0
+
+# CLI & Utilities
+typer>=0.9,<1.0
+rich>=13.0,<15.0
+tqdm>=4.60,<5.0
+natsort>=8.0,<9.0
+termcolor>=2.0,<4.0
+
+# Download
+gdown>=4.6,<6.0
+
+# GPU Acceleration
+xformers>=0.0.20,<1.0
 
 # NVIDIA packages
 --extra-index-url https://pypi.nvidia.com
 cuml-cu12
 
-# PyTorch packages (使用 --extra-index-url 而不是 --index-url)
+# PyTorch packages
 --extra-index-url https://download.pytorch.org/whl/cu126
-torch 
-torchvision
-torchmetrics

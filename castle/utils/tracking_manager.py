@@ -20,19 +20,27 @@ from castle.core.mask_filter import filter_by_reference
 logger = logging.getLogger(__name__)
 
 
-def read_roi_labels(storage_path: str, project_name: str, video_name: Optional[str] = None) -> List[Dict[str, Any]]:
+def read_roi_labels(storage_path: str, project_name: str,
+                    video_name: Optional[str] = None,
+                    include_metadata: bool = False) -> List[Dict[str, Any]]:
     """Read all ROI label files for the given project.
     
     Args:
         storage_path: Base storage directory
         project_name: Name of the project
         video_name: Optional specific video name to filter labels
+        include_metadata: If True, include extra keys: video_name, frame_index, file_path
         
     Returns:
         List of dictionaries containing label information with keys:
             - index: String identifier combining file index and video basename
             - frame: Frame data
             - mask: Corresponding mask
+            
+        When include_metadata=True, also includes:
+            - video_name: Video basename (folder name)
+            - frame_index: Frame index string (npz stem)
+            - file_path: Full path to the npz file
     """
     project_path = Path(storage_path) / project_name
     label_dir = project_path / "label"
@@ -64,11 +72,18 @@ def read_roi_labels(storage_path: str, project_name: str, video_name: Optional[s
                 frame = data["frame"]
                 mask = data["mask"]
                 
-                label_list.append({
+                entry = {
                     "index": f"{index}, {video_basename}",
                     "frame": frame,
                     "mask": mask,
-                })
+                }
+                
+                if include_metadata:
+                    entry["video_name"] = video_basename
+                    entry["frame_index"] = index
+                    entry["file_path"] = str(npz_file)
+                
+                label_list.append(entry)
             except Exception as e:
                 logger.error(f"Error loading label file {npz_file}: {e}")
                 continue

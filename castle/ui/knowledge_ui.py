@@ -1,61 +1,12 @@
-import time
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Generator
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import gradio as gr
-from natsort import natsorted
 
-from castle import generate_aot
-from castle.utils.h5_io import H5IO
 from castle.utils.plot import generate_mix_image
-
-
-def read_label(
-    storage_path: str, project_name: str
-) -> List[Dict[str, Any]]:
-    """
-    Read all label files for the given project and return a list of labels.
-
-    Each label is a dict with keys:
-        - index: a string identifier combining file index and video basename.
-        - frame: the frame data.
-        - mask: the corresponding mask.
-
-    Args:
-        storage_path: Base storage directory.
-        project_name: Name of the project.
-        
-
-    Returns:
-        A list of dictionaries containing label information.
-    """
-    
-
-    project_path = Path(storage_path) / project_name
-    label_dir = project_path / "label"
-
-    label_list = []
-    # Iterate through all subdirectories in natural sorted order
-    for label_folder in natsorted([p for p in label_dir.iterdir() if p.is_dir()]):
-        video_basename = label_folder.name
-        # Iterate through all .npz files in the folder
-        for npz_file in natsorted(list(label_folder.glob("*.npz"))):
-            index = npz_file.stem
-            data = np.load(npz_file)
-            # Expect keys 'frame' and 'mask'
-            if "frame" not in data or "mask" not in data:
-                continue
-            frame = data["frame"]
-            mask = data["mask"]
-            label_list.append(
-                {
-                    "index": f"{index}, {video_basename}", # this is display name, not index
-                    "frame": frame,
-                    "mask": mask,
-                }
-            )
-    return label_list
+from castle.utils.tracking_manager import read_roi_labels
 
 
 def read_label_to_gallery(
@@ -73,7 +24,7 @@ def read_label_to_gallery(
     Returns:
         A tuple containing the original label list and a gallery list.
     """
-    label_list = read_label(storage_path, project_name)
+    label_list = read_roi_labels(storage_path, project_name)
     gallery_list = [
         (generate_mix_image(label["frame"], label["mask"]), label["index"])
         for label in label_list

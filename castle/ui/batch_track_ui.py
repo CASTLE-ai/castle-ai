@@ -1,22 +1,17 @@
 import os
 import json
-import time
-import cv2
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import gradio as gr
-from natsort import natsorted
-from tqdm import tqdm # Import tqdm
+from tqdm import tqdm
 
-from castle import generate_aot
 from ..utils.h5_io import H5IO
-from ..utils.plot import generate_mix_image, generate_mask_image
+from ..utils.plot import generate_mix_image
 from ..utils.video_io import ReadArray, WriteArray
 from ..utils.tracking_manager import ROITracker, read_roi_labels
 from ..utils.analysis_utils import compute_roi_info, save_kinematic_csv
-from .plot_mask_info import Plotter
 
 
 def update_video_count(storage_path_val, project_name_val):
@@ -35,44 +30,12 @@ def read_all_labels_without_video_filter(storage_path: str, project_name: str) -
     """
     Read all label data in the project without video filtering.
     
-    This function uses the core logic from tracking_manager.read_roi_labels but without video filtering.
+    Delegates to tracking_manager.read_roi_labels with include_metadata=True
+    to get video_name, frame_index, and file_path for each label.
     """
     if not project_name:
         return []
-
-    project_path = Path(storage_path) / project_name
-    label_dir = project_path / "label"
-    
-    if not label_dir.exists():
-        return []
-
-    label_list = []
-    # Iterate through all label folders (same logic as read_roi_labels)
-    for label_folder in natsorted([p for p in label_dir.iterdir() if p.is_dir()]):
-        video_basename = label_folder.name
-        # Iterate through all .npz files in the folder
-        for npz_file in natsorted(list(label_folder.glob("*.npz"))):
-            index = npz_file.stem
-            try:
-                data = np.load(npz_file)
-                # Check if 'frame' and 'mask' keys are present
-                if "frame" not in data or "mask" not in data:
-                    continue
-                frame = data["frame"]
-                mask = data["mask"]
-                label_list.append({
-                    "index": f"{index}, {video_basename}",  # Same format as track_ui
-                    "frame": frame,
-                    "mask": mask,
-                    "video_name": video_basename,
-                    "frame_index": index,
-                    "file_path": str(npz_file)
-                })
-            except Exception as e:
-                print(f"Error reading label file {npz_file}: {e}")
-                continue
-    
-    return label_list
+    return read_roi_labels(storage_path, project_name, include_metadata=True)
 
 
 def read_all_labels_to_gallery(storage_path: str, project_name: str) -> Tuple[List[Dict[str, Any]], List[Tuple[Any, str]]]:

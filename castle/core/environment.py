@@ -42,3 +42,12 @@ class Environment:
 
 # Global instance
 env = Environment()
+
+
+def get_device() -> str:
+    """Return the detected device string ('cuda', 'mps', or 'cpu').
+    
+    This is the single canonical source for device detection across CASTLE.
+    All modules should use this instead of implementing their own detection.
+    """
+    return env.device

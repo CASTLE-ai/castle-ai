@@ -15,6 +15,7 @@ from PIL import Image
 import torchvision.transforms.functional as TF
 
 from castle.core.config import CKPT_DINO_IDS, DINOV3_CONSTANTS, DEFAULT_CKPT_DIR
+from castle.core.environment import get_device
 from castle.core.logging_config import setup_logger
 from castle.utils.download import download_with_gdown
 from castle.utils.video_align import get_mask
@@ -25,7 +26,7 @@ class VisualEncoder(ABC):
     """Base class for all visual encoders (DINOv2, DINOv3)."""
     
     def __init__(self, device: Optional[str] = None):
-        self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = device if device else get_device()
         self.model = None 
         self.n_feature = 768 
         self.normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])

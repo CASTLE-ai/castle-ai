@@ -20,14 +20,8 @@ from castle.aot.networks.models import build_vos_model
 from castle.aot.networks.engines import build_engine
 from .download import download_with_gdown
 from torchvision import transforms
-import platform
-OS_SYS = platform.uname().system
-if OS_SYS == 'Darwin':
-    DEFAULT_DEVICE = 'mps'
-elif torch.cuda.is_available():
-    DEFAULT_DEVICE = 'cuda'
-else:
-    DEFAULT_DEVICE = 'cpu'
+from castle.core.environment import get_device
+DEFAULT_DEVICE = get_device()
 
 
 

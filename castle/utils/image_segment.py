@@ -5,14 +5,8 @@ import numpy as np
 from PIL import Image
 from .download import download_file
 from castle.sam.segment_anything import sam_model_registry, SamAutomaticMaskGenerator
-import platform
-OS_SYS = platform.uname().system
-if OS_SYS == 'Darwin':
-    DEFAULT_DEVICE = 'mps'
-elif torch.cuda.is_available():
-    DEFAULT_DEVICE = 'cuda'
-else:
-    DEFAULT_DEVICE = 'cpu'
+from castle.core.environment import get_device
+DEFAULT_DEVICE = get_device()
 
 
 class Segmentor:

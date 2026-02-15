@@ -1,306 +1,341 @@
 # CASTLE Improvement Plan
 
 > 本文件記錄所有待改進項目，含深度程式碼審計結果、最佳實踐研究、及具體改進方案。
-> 最後更新：2026-02-15
-> 版本：v2.0（Deep Audit Edition）
+> 最後更新：2026-02-15 v3.0
+> 狀態：**規劃階段 — 待 IsonaEi 確認後實作**
 
 ---
 
 ## 優先順序矩陣
 
-| 項目 | 重要性 | 工作量 | 分類 | 狀態 |
-|------|--------|--------|------|------|
-| F-01 KDTree 快取 | High | Small | [Quick Fix] | ✅ Done |
-| F-02 interpolate_missing_points 向量化 | High | Small | [Quick Fix] | ✅ Done |
-| F-03 H5IO 資源管理改進 | High | Small | [Quick Fix] | ✅ Done |
-| F-04 video_io_old.py 死碼清理 | Medium | Small | [Quick Fix] | ✅ Done |
-| F-05 explorer.py / latent_explorer.py 調色盤重複 | Medium | Small | [Quick Fix] | ✅ Done |
-| F-06 型別提示補充 | Medium | Small | [Quick Fix] | ✅ Done |
-| F-07 config.py 格式錯誤修正 | High | Small | [Quick Fix] | ✅ Done |
-| F-08 find_closest_point 向量化 | Medium | Small | [Quick Fix] | ✅ Done |
-| F-09 merge() 方法 bug 修正 | High | Small | [Quick Fix] | ✅ Done |
-| A-01 多前端架構（CLI/Web/Desktop） | High | Large | [Epic] | 🔄 進行中 |
-| A-02 資料處理管線效能優化 | High | Medium | [Medium] | 📋 規劃中 |
-| A-03 Tracking Mask 後處理 | Medium | Medium | [Medium] | ✅ 已實作於 tracking_manager |
-| A-04 Cluster Annotator | High | Large | [Large] | 📋 規劃中 |
-| A-05 PyQt Desktop 前端 | High | Large | [Epic] | 🔄 進行中 |
-| B-01 Latent/LocalLatent 資料視覺化分離 | Medium | Medium | [Medium] | 📋 規劃中 |
-| B-02 階層式聚類 UI 改善 | Medium | Medium | [Medium] | 📋 規劃中 |
-| B-03 Session 完整恢復 | Medium | Medium | [Medium] | 📋 規劃中 |
-| B-04 Undo/Redo 機制 | Low | Large | [Large] | 📋 規劃中 |
-| B-05 統一配置管理 | Medium | Medium | [Medium] | 📋 規劃中 |
-| C-01 Service Layer 抽象 | High | Large | [Large] | 📋 規劃中 |
-| C-02 VideoReader 快取策略改善 | Medium | Small | [Quick Fix] | 📋 規劃中 |
-| C-03 NUM_WORKERS 智慧設定 | Low | Small | [Quick Fix] | 📋 規劃中 |
-| C-04 test coverage 補強 | Medium | Medium | [Medium] | 📋 規劃中 |
-| C-05 UMAP 異步執行 | Medium | Medium | [Medium] | 📋 規劃中 |
-| C-06 device 偵測統一 | Medium | Small | [Quick Fix] | 📋 規劃中 |
-| C-07 post_track_ui 重複碼消除 | Low | Small | [Quick Fix] | 📋 規劃中 |
-| C-08 H5IO print 改 logging | Low | Small | [Quick Fix] | ✅ Done |
+| # | 項目 | 重要性 | 工作量 | 狀態 |
+|---|------|--------|--------|------|
+| **C-01** | **Service Layer 抽象** | 🔴 High | Large | 📋 待實作（所有前端的前提） |
+| **A-06** | **Latent 抽取方式改進** | 🔴 High | Medium | 📋 待討論方案 |
+| **A-07** | **深度模型效能優化** | 🔴 High | Medium | 📋 待實作 |
+| **A-03** | **Tracking Mask 後處理改善** | 🟡 Medium | Small | 📋 待實作 |
+| **A-01** | **CLI 前端** | 🔴 High | Medium | 📋 待 C-01 完成後實作 |
+| **A-04** | **Cluster Annotator（Stage 4 延伸）** | 🔴 High | Large | 📋 待討論 |
+| **B-01** | **Latent/LocalLatent 資料視覺化分離** | 🟡 Medium | Medium | 📋 隨 C-01 一起做 |
+| **A-02** | **資料處理管線效能優化** | 🟡 Medium | Medium | 📋 部分已完成 |
+| **B-02** | **階層式聚類 UI + Tree View** | 🟡 Medium | Medium | 📋 |
+| **B-03** | **Session 完整恢復** | 🟡 Medium | Medium | 📋 |
+| **B-05** | **統一配置管理** | 🟡 Medium | Medium | 📋 |
+| **C-02** | **VideoReader LRU cache** | 🟡 Medium | Small | 📋 |
+| **C-04** | **測試覆蓋補強** | 🟡 Medium | Medium | 📋 |
+| **C-05** | **UMAP 異步執行** | 🟡 Medium | Medium | 📋 |
+| **C-06** | **Device 偵測統一** | 🟢 Low | Small | 📋 |
+| **C-07** | **post_track / batch_track 重複碼** | 🟢 Low | Small | 📋 |
+| **C-03** | **NUM_WORKERS 智慧設定** | 🟢 Low | Small | 📋 |
+| **B-04** | **Undo/Redo 機制** | 🟢 Low | Large | 📋 |
+| **A-05** | **PyQt Desktop 前端** | 🟢 Low | Large | ⏸️ 暫停（CLI > Web > Desktop） |
+| F-01~F-09 | Quick Fixes（9 項） | — | — | ✅ 全部完成 |
 
 ---
 
-## 一、原始改進項目（IsonaEi 提出）
+## 一、新增項目（IsonaEi 2/15 提出）
 
-### A-01. 多前端架構（CLI / Web / Desktop）[Epic]
+### A-06. Latent 抽取方式改進 [Medium] 🔴 High
 
-**目標**：將 CASTLE 拆分為 CLI / Web / Desktop 三種操作模式。
+#### 現狀分析
 
-**現狀問題**：
-- UI 和邏輯高度耦合：`cluster_page_ui.py`（695 行）混合 Gradio 事件處理、matplotlib 繪圖、CSV I/O、KDTree 查找
-- `Latent`/`LocalLatent` 內嵌 `plot_embedding()` 等繪圖方法
-- Preprocess 配置用 Dropdown 字串 `'True'/'False'`
-- 沒有統一 API 層
+目前 `_weighted_pooling()` 的做法（`castle/core/models.py` L85-107）：
+1. 將 ROI mask resize 到模型輸入尺寸（518×518 或 592×592）
+2. 下採樣到 patch grid（37×37）
+3. 每個 patch 的權重 = mask 在該 patch 覆蓋的像素數
+4. **所有 patch token 做 mask-weighted average → 輸出一個 768-dim 向量**
 
-**技術方向**：
-- 抽出 `castle.service` 層（function signatures，不依賴 UI）
-- CLI：`typer` 套件（比 click 更現代，自動生成 help，type hints 整合佳）
-- Web：保留 Gradio（快速迭代）或遷移 FastAPI + 前端
-- Desktop：**PySide6**（推薦，LGPL 授權，Qt 官方維護）
+```python
+# 核心邏輯（簡化）
+weighted_sum = (patch_features * mask_weights).sum(dim=spatial)
+latent = weighted_sum / total_weight  # → (768,) 單一向量
+```
 
-**研究結論**：
-- SLEAP 使用 PySide2 (legacy) → 已遷移 PySide6，架構為 MainWindow + 多 Panel
-- DeepLabCut 使用 wxPython（較老舊，但穩定）
-- napari 使用 Qt (magicgui)，是 Python 科學桌面應用的典範
-- **建議跟隨 SLEAP/napari 路線，使用 PySide6**
+#### 問題
 
-### A-02. 資料處理管線效能優化 [Medium]
+**整個 ROI 被壓縮成一個 768-dim 向量，丟失了所有空間資訊。**
 
-**現狀問題**（審計確認）：
-1. `LatentAggregator.get_frame()` 每次呼叫都開新 `VideoReader` → 應改用 LRU cache
-2. `find_nearest_embedding()` 每次都建新 KDTree → **已修復 (F-01)**
-3. `interpolate_missing_points()` O(n²) list comprehension → **已修復 (F-02)**
-4. matplotlib server-side render 到 JPEG 再傳前端
-5. `NUM_WORKERS` 硬編碼 `cpu_count() // 2`
-6. UMAP 同步阻塞
+- ROI 內不同部位（頭、身體、尾巴、四肢）的 patch token 被平均掉
+- 動物的姿態資訊（四肢的空間排列）在平均後消失
+- 小面積但重要的結構（例如尾巴末端）被大面積結構（身體）主導
+- 無法區分「頭在左邊 vs 頭在右邊」的差異（除非用 rotation alignment）
 
-**改善方向**：
-- `get_frame()` 加入 LRU cached VideoReader pool（C-02）
-- UMAP 放入 background thread + progress callback（C-05）
-- 前端互動改用 client-side rendering（pyqtgraph/vispy）
+#### 可能的改進方案（待討論）
 
-### A-03. Tracking Mask 後處理：最大連通區域過濾 [Medium]
+**方案 A：保留空間 patch tokens（不做 pooling）**
+- 直接使用 37×37 的 patch grid，只取 mask 覆蓋的 patches
+- Latent 維度變高（N_patches × 768），但保留完整空間資訊
+- 問題：不同幀的 ROI 位置不同 → patch 數量不一致 → 需要 padding 或 adaptive pooling
+- 適用場景：需要精細姿態區分的行為
 
-**現狀**：已在 `ROITracker._smart_filter()` 中實作。
-- 使用 `cv2.connectedComponentsWithStats()` per-object filtering
-- 基於 reference frame 面積的 10% 作為閾值
-- 此實作看起來合理，但僅在 tracking 時啟用
+**方案 B：區域分割 pooling（Regional Pooling）**
+- 將 ROI 分成 K 個子區域（例如上/中/下，或用 mask 的幾何中心做放射狀分割）
+- 每個子區域做獨立 weighted average → K × 768-dim 向量
+- 保留粗略空間結構，且維度固定
+- 問題：K 怎麼定義？固定分區 vs 動態分區？
 
-**待改進**：
-- 提供獨立的 post-processing API（讓 Extract 階段也可用）
-- 支援配置閾值（而非寫死 10%）
+**方案 C：多尺度 pooling（Multi-scale）**
+- 同時計算 global average + 2×2 grid average + 4×4 grid average
+- 拼接成 (1 + 4 + 16) × 768 = 21 × 768 的向量
+- SPPNet 式的空間金字塔策略
+- 優點：固定維度、保留多尺度空間資訊
 
-### A-04. Cluster Annotator [Large]
+**方案 D：Generalized Mean Pooling (GeM)**
+- `GeM(x, p) = (mean(x^p))^(1/p)`，p=1 等於 average，p→∞ 等於 max
+- p 可學習或設為超參數
+- 比 average pooling 更強調顯著特徵
+- 論文參考：Group Generalized Mean Pooling for ViT (CVPR 2023)
 
-**目標**：讓使用者在聚類後審閱、標註行為語義。
+**方案 E：保留 top-K 顯著 patch tokens**
+- 對 mask 內的 patch tokens 按 L2 norm 排序，取 top-K
+- 拼接或做 attention pooling
+- 保留最「特殊」的 patches，忽略平淡的背景
 
-**現狀**：命名流程簡陋，一次一個 cluster → 輸入 name → Enter。
+**方案 F：多層特徵融合**
+- 目前只取最後一層的 patch tokens
+- DINOv2 的淺層 → 紋理/邊緣，深層 → 語義
+- 取多層（例如 layer 4, 8, 12）做拼接，增加特徵豐富度
 
-**建議**：
-- Gallery view：grid layout 顯示每個 cluster 的 N 個代表幀
-- 影片片段預覽：每 cluster 的 top-K bout
-- 批次標註表格（DataGrid）
+**我的建議**：先試 **方案 C（多尺度 pooling）** 或 **方案 D（GeM）**——改動最小，效果可量化。如果需要更精細的姿態區分，再考慮方案 A 或 B。
+
+#### 實驗設計（驗證改進是否有效）
+- 對照組：現有 weighted average
+- 指標：下游聚類的 silhouette score、同一行為 cluster 的 intra-class variance
+- 資料：CTRL30 OFT 資料集
+
+---
+
+### A-07. 深度模型效能優化 [Medium] 🔴 High
+
+#### 目前使用深度模型的階段
+
+| 階段 | 模型 | 用途 | 效能現狀 |
+|------|------|------|----------|
+| Stage 2 Tracking | DeAOT (r50/swinb) | 逐幀 ROI 追蹤 | batch=16, `track_batch()` 有做 batch encoding |
+| Stage 2 Label | SAM (vit_b) | 點擊分割 ROI | 單幀推理，即時互動 |
+| Stage 3 Extract | DINOv2/v3 (vitb/vitl) | 提取 latent | batch processing, DataLoader 多線程 |
+
+#### 發現的效能問題
+
+**1. AOT Tracker — batch encoding 但 sequential propagation**
+- `track_batch()` 在 `video_object_segment.py` L117-145：
+  - ✅ `self.model.encode_image(image_batch_tensor)` 是 batch 操作
+  - ❌ 但 propagation（記憶體匹配 + 解碼）是逐幀循序的 → batch encoding 的好處有限
+  - 這是 AOT 架構的根本限制（tracking 需要前一幀的 mask 作為 memory）
+
+**2. DINOv2/v3 — 沒有用 `torch.inference_mode()` 一致**
+- `DINOv3Encoder.extract_features()` 用了 `torch.inference_mode()` + `torch.autocast(float16)` ✅
+- `DINOv2Encoder.extract_tensor_batch()` 只用了 `torch.no_grad()` ❌
+- `torch.inference_mode()` 比 `no_grad()` 更快（不保留 version counter）
+- DINOv2 也沒有用 `float16 autocast` → 效能損失
+
+**3. DINOv3 預處理 — 三次 resize 操作**
+- `preprocess_batch()` 做了：resize → center_crop → resize
+- 這是兩次 bicubic interpolation + 一次 crop，可以合併
+
+**4. 模型載入 — 每次 extraction 都可能重新載入**
+- `extract_tensor_batch()` 檢查 `self.model is None` → lazy load
+- 但如果 LatentAggregator 為每個影片建新 encoder，就會重複載入
+- 目前看起來 UI 層會持有同一個 encoder 實例 → 不一定重複，但沒有保證
+
+**5. SAM — 使用 `vit_b` 固定**
+- `generate_sa(model_type='vit_b')` 硬編碼在 `label_ui.py`
+- SAM2 已經出了，效能和精度都更好
+- 但 SAM 只用於互動式標註（偶爾使用），優先級不高
+
+#### 改善方案
+
+| 問題 | 方案 | 預估提升 | 工作量 |
+|------|------|----------|--------|
+| DINOv2 沒用 inference_mode + float16 | 加入 `torch.inference_mode()` + `torch.autocast` | 10-30% 推理加速 | Small |
+| DINOv3 三次 resize | 合併成一次（計算最終尺寸直接 resize） | ~5% preprocessing 加速 | Small |
+| 模型載入沒有 singleton 保證 | 加入 model registry / singleton pattern | 避免重複載入 | Small |
+| AOT sequential propagation | 結構限制，無法根本改變 | — | — |
+| SAM → SAM2 | 替換分割模型 | 更好的分割品質 | Medium |
+
+---
+
+## 二、原始項目（IsonaEi 提出，更新版）
+
+### A-01. CLI 前端 [Medium] 🔴 High
+
+**前提**：需先完成 C-01（Service Layer）
+
+**CLI 定位**：自動化 pipeline 工具，不是互動式介面。
+
+**子命令設計**（typer-based）：
+```
+castle init <project_name> --storage <path>
+castle add-videos <project> --source <dir_or_files>
+castle track <project> --model r50_deaotl [--skip-existing]
+castle extract <project> --model dinov3_vitb16 --roi 1 [--batch-size 32]
+castle cluster <project> --umap-preset high-100-50 --eps 1.0
+castle export <project> --format csv,srt
+castle info <project>    # 顯示專案狀態
+```
+
+**不適合 CLI 的操作**：
+- SAM 點擊標註 ROI（需要視覺互動）
+- UMAP 結果視覺確認（需要人看圖）
+- 手動調 epsilon（需要反覆嘗試）
+
+### A-03. Tracking Mask 後處理改善 [Small] 🟡 Medium
+
+**現狀問題**（code review 結果）：
+1. 閾值硬編碼 `area * 0.1`，不可配置
+2. 多個 reference frame 時，閾值被最後一個覆蓋（應取 mean/max/median）
+3. 只在 tracking 時使用，Extract 階段沒有 post-filter 選項
+4. `print()` 而非 `logging`
+
+**改善方案**：
+- 閾值策略改為可配置：`{method: 'relative', ratio: 0.1}` 或 `{method: 'absolute', min_area: 50}`
+- 多 reference frame 取 median area 作為基準
+- 提供獨立 API：`castle.core.mask_filter.filter_largest_component(mask, threshold)`
+- 讓 Extract 階段也可選擇性啟用
+
+**多 ROI 設計考量**：
+- 每個 ROI ID 獨立做 largest component（目前已是如此 ✅）
+- 但多個 ROI 之間可能重疊 → 過濾後需要處理衝突（取 ROI priority 或面積大者）
+
+### A-04. Cluster Annotator [Large] 🔴 High
+
+**定位**：Stage 4 延伸 tab
+
+**核心功能**：
+- Gallery view：每個 cluster 顯示 N 個代表幀（隨機抽樣或按 distance-to-centroid 排序）
+- 影片片段預覽：每個 cluster 的 top-K bout 自動剪成短片
+- 批次標註表格：一次看所有 cluster，直接編輯名稱和描述
 - 標註 schema：`{cluster_id, behavior_name, description, confidence, annotator, timestamp}`
-- **PyQt Desktop 版本最適合做此功能**
+- 與現有 `id.csv` 整合或擴展
 
 ---
 
-## 二、深度程式碼審計發現
+## 三、架構問題（B 系列）
 
-### 架構層級問題
+### B-01. Latent/LocalLatent 資料視覺化分離 [Medium]
+- 把 `plot_embedding()`, `plot_name_embedding()`, `plot_syllables()` 移到 `castle.visualization` 模組
+- 隨 C-01 Service Layer 一起重構
 
-#### B-01. Latent/LocalLatent 資料視覺化耦合 [Medium]
-- `latent_explorer.py` 的 `Latent.plot_syllables()`, `LocalLatent.plot_embedding()`, `plot_name_embedding()` 都在資料類別內
-- `explorer.py` 的 `Latent.plot()`, `FocusLatent.plot()` 同樣問題
-- **建議**：抽出到 `castle.visualization` 模組
+### B-02. 階層式聚類 UI + Tree View [Medium]
+- 加入 tree widget 顯示 `root → root_a0 → root_a0_b1` 的層級
+- 點擊 tree node 跳到對應的 UMAP view
 
-#### B-02. 階層式聚類 UI 不直觀 [Medium]
-- Stage 4 核心操作是遞迴的（選 cluster → UMAP → DBSCAN → 命名 → submit → 再選子 cluster）
-- UI 是線性佈局，沒有樹狀結構視覺化
-- **建議**：加入 tree widget 顯示聚類層級
+### B-03. Session 完整恢復 [Medium]
+- 保存 UMAP embedding 結果（目前 `cluster_{name}.npz` 有存，但 restore 沒有讀回）
+- 恢復時重建 `LocalLatent` 和 `EmbeddingScatterPlot`，不需重跑 UMAP
 
-#### B-03. Session 恢復不完整 [Medium]
-- `restore_session()` 可讀回 cluster assignment，但不能恢復 embedding
-- 使用者重新開啟需重跑 UMAP
+### B-05. 統一配置管理 [Medium]
+- UMAP/DBSCAN 參數寫入 `config.json` 或獨立 `cluster_config.json`
+- 方便 CLI 和 Session restore 讀取
 
-#### B-04. 沒有 Undo/Redo [Large]
-- 所有操作不可逆，沒有操作歷史
-- **建議**：Command Pattern
-
-#### B-05. 配置管理分散 [Medium]
-- `config.json` 管專案設定，UMAP/DBSCAN 參數在 UI 層字串裡
-- 沒有統一的配置序列化/反序列化
-
-### 程式碼品質問題
-
-#### C-01. Service Layer 缺失 [Large]
-- 現有的 `core/extractor.py` 是部分 service layer，但不完整
-- `cluster_page_ui.py` 直接操作 `Latent`/`LocalLatent` 物件
-- 需要定義 `castle.service.clustering_service`, `castle.service.extraction_service` 等
-
-#### C-02. LatentAggregator.get_frame() 效能問題 [Quick Fix]
-- 每次呼叫開新 `VideoReader` context manager
-- **建議**：維護 VideoReader pool with LRU eviction
-
-#### C-03. NUM_WORKERS 硬編碼 [Quick Fix]
-- `extractor.py`: `NUM_WORKERS = os.cpu_count() // 2`
-- `tracking_manager.py`: `num_workers = max(1, int(os.cpu_count() * 0.2))`
-- 不一致且不考慮 GPU memory
-- **建議**：移到 config.py 或 environment.py
-
-#### C-04. 測試覆蓋不足 [Medium]
-- 現有 12 個測試檔案，但多為 integration tests
-- 缺少 unit tests for：Preprocess, LatentAggregator, Latent/LocalLatent, H5IO
-- 無 UI 測試
-
-#### C-05. UMAP 異步執行 [Medium]
-- 大資料量時 UI 完全卡住
-- **建議**：QThread (PyQt) 或 ThreadPoolExecutor
-
-#### C-06. Device 偵測重複 [Quick Fix]
-- `environment.py` 有 `Environment._detect_device()`
-- `image_segment.py`, `video_object_segment.py`, `latent_explorer.py`, `myumap.py` 各自偵測
-- **建議**：統一使用 `castle.core.environment.env.device`
-
-#### C-07. post_track_ui / batch_track_ui 重複碼 [Quick Fix]
-- `plot_basic_mask_info()` 和 `generate_csv_analysis()` 有近乎相同的邏輯
-- `read_label()` 和 `read_roi_labels()` 功能重複
-- **建議**：統一到一個模組
-
-#### C-08. H5IO 使用 print 而非 logging [Quick Fix] ✅ Done
-- `read_config()` 和 `write_config()` 使用 `print()`
-- **修復**：改為 `logger.debug()`
-
-### Bug 修正
-
-#### F-07. config.py SUPPORTED_MODELS 格式錯誤 [Quick Fix] ✅ Done
-- 第 36 行存在明顯的字串格式問題：
-  ```python
-  'dinov2_vitb1ain',                                                                                                      'dinov2_vitb14_reg4_pretrain',
-  ```
-- `'dinov2_vitb1ain'` 應該是 `'dinov2_vitb14'`，且 `reg4_pretrain` 被空白和換行分隔到另一行
-
-#### F-09. explorer.py merge() 方法 bug [Quick Fix] ✅ Done
-- `Latent.merge()` 引用了 `cid2` 而非 `cids`，是明顯的拼字錯誤：
-  ```python
-  def merge(self, cids):
-      self.syllables[self.syllables == cid2] = cid1  # ← BUG: cid2, cid1 未定義
-  ```
-
-### 效能問題
-
-#### F-01. KDTree 每次重建 [Quick Fix] ✅ Done
-- `find_nearest_embedding()` 每次呼叫都 `KDTree(data)`
-- **修復**：改為在 `EmbeddingScatterPlot.__init__` 建一次，後續重用
-
-#### F-02. interpolate_missing_points O(n²) [Quick Fix] ✅ Done
-- 用 list comprehension 找前後最近點
-- **修復**：numpy 向量化，使用 `np.searchsorted`
-
-#### F-08. find_closest_point 線性搜尋 [Quick Fix] ✅ Done
-- `video_align.py` 中 `find_closest_point()` 用 Python for-loop 遍歷 contour
-- **修復**：改用 numpy 向量化運算
-
-### 資源管理問題
-
-#### F-03. H5IO 資源管理不完善 [Quick Fix] ✅ Done
-- `reset_count > 5000` 才重新開啟檔案，邏輯不直觀
-- `__del__` 中的 `f.id.valid` 檢查可能在程式結束時失敗
-- **修復**：加入 context manager 支援
-
-#### F-04. video_io_old.py 死碼 [Quick Fix] ✅ Done
-- 整個檔案是 `video_io.py` 的舊版本，`ReadArray` 和 `WriteArray` 已有新實作
-- **修復**：標記為 deprecated，加入棄用警告
-
-### 程式碼重複
-
-#### F-05. 調色盤定義重複 [Quick Fix] ✅ Done
-- `explorer.py` 和 `latent_explorer.py` 各自定義了相同的 `_palette`
-- `plot.py` 也有 `_palette_hex`
-- **修復**：統一到 `castle.core.config` 或專門的 palette 模組
+### B-04. Undo/Redo 機制 [Large] 🟢 Low priority
+- Command Pattern：每個操作封裝成 Command 物件
+- 操作歷史 stack
+- 暫不需要——先做好 Session restore 更實際
 
 ---
 
-## 三、最佳實踐研究結論
+## 四、程式碼品質（C 系列）
 
-### 3.1 Desktop Framework 選擇
-- **推薦：PySide6**
-  - LGPL 授權（PyQt6 是 GPL，對學術開源限制較大）
-  - Qt 官方維護，API 一致
-  - 與 pyqtgraph、vispy 完全相容
-  - napari、SLEAP 等科學工具都使用 Qt 生態
+### C-01. Service Layer 抽象 [Large] 🔴 **最高優先**
 
-### 3.2 UMAP 視覺化最佳實踐
-- **pyqtgraph ScatterPlotItem**：適合 <100K 點，Qt 原生整合
-- **vispy SceneCanvas**：OpenGL 加速，適合 >100K 點
-- **建議**：先用 pyqtgraph（簡單整合），必要時切換 vispy
-- 互動功能：lasso selection, hover tooltip, click-to-inspect
+**這是所有前端（CLI/Web/Desktop）的前提。**
 
-### 3.3 CLI 設計模式
-- **typer** > **click**（2025+ 推薦）
-  - 自動型別推斷、自動 --help 生成
-  - 支援 rich 整合、progress bars
-  - Snakemake/Nextflow 風格的 pipeline 定義
-- 子命令結構：`castle track`, `castle extract`, `castle cluster`, `castle annotate`
+**設計草案**：
+```python
+# castle/service/project_service.py
+class ProjectService:
+    def create_project(name, storage_path) -> ProjectInfo
+    def add_videos(project, video_paths) -> List[str]
+    def get_project_info(project) -> ProjectInfo
 
-### 3.4 SLEAP 架構參考
-- SLEAP 使用 sleap-io（資料 I/O 層）+ sleap-nn（模型層）+ sleap label（GUI）
-- 清楚的 CLI subcommands：`sleap label`, `sleap nn-train`, `sleap nn-track`
-- **CASTLE 可以參考此架構**：castle-core + castle-desktop + castle-cli
+# castle/service/tracking_service.py  
+class TrackingService:
+    def track(project, video, model, start, stop, ...) -> TrackingResult
+    def get_tracking_status(project, video) -> TrackingStatus
 
----
+# castle/service/extraction_service.py
+class ExtractionService:
+    def extract_latent(project, video, model, roi, preprocess, ...) -> str
+    def extract_crop_video(project, video, roi, preprocess, ...) -> str
 
-## 四、PyQt Desktop 前端規劃 [Epic]
-
-### 4.1 架構設計
-```
-castle/desktop/
-├── __init__.py
-├── __main__.py          # Entry point: python -m castle.desktop
-├── app.py               # QApplication setup
-├── main_window.py       # Main window with tab navigation
-├── widgets/
-│   ├── __init__.py
-│   ├── project_panel.py     # Stage 0: Project management
-│   ├── source_panel.py      # Stage 1: Video upload
-│   ├── tracking_panel.py    # Stage 2: ROI tracking
-│   ├── extract_panel.py     # Stage 3: Latent extraction
-│   ├── microscope_panel.py  # Stage 4: Behavior Microscope (priority)
-│   └── annotator_panel.py   # Stage 4b: Cluster Annotator
-├── components/
-│   ├── __init__.py
-│   ├── embedding_view.py    # pyqtgraph scatter plot
-│   ├── video_player.py      # Video frame viewer
-│   ├── cluster_tree.py      # Hierarchical cluster tree
-│   └── syllable_bar.py      # Behavior timeline bar
-└── services/
-    ├── __init__.py
-    └── worker_threads.py    # QThread wrappers for UMAP, extraction
+# castle/service/clustering_service.py
+class ClusteringService:
+    def initialize(project, roi, bin_size, model) -> SessionState
+    def run_umap(session, cluster_name, umap_config) -> EmbeddingResult
+    def run_dbscan(session, eps) -> ClusterResult
+    def label_cluster(session, cluster_id, name) -> None
+    def submit(session) -> ExportResult
+    def restore_session(project) -> SessionState
 ```
 
-### 4.2 Stage 4 Behavior Microscope（優先）
-- **pyqtgraph ScatterPlotItem** for embedding visualization
-  - Click → nearest point → show frame
-  - Lasso selection for manual cluster editing
-  - Color by cluster assignment
-- **QTreeWidget** for hierarchical cluster navigation
-- **QThread** for async UMAP computation
-- 即時互動（無需 matplotlib render → JPEG → 傳送循環）
+**原則**：
+- Service Layer 只依賴 Core（不依賴 UI）
+- 返回值是 dataclass / dict，不是 Gradio update 物件
+- 狀態管理在 Service 內，UI 只負責呈現
 
-### 4.3 啟動方式
-```bash
-python -m castle.desktop              # 啟動桌面版
-python -m castle.desktop --project X  # 直接開啟專案
+### C-02 ~ C-07：其他程式碼品質項目
+
+（與之前版本相同，此處省略。詳見 git history `261f0d8`。）
+
+- C-02: VideoReader LRU cache
+- C-03: NUM_WORKERS 智慧設定
+- C-04: 測試覆蓋補強
+- C-05: UMAP 異步執行
+- C-06: Device 偵測統一
+- C-07: 重複碼消除
+
+---
+
+## 五、已完成的 Quick Fixes（v2.0 完成）
+
+| # | 項目 | Commit |
+|---|------|--------|
+| F-01 | KDTree 快取 | `0d0bcb3` |
+| F-02 | interpolate_missing_points 向量化 | `ad42804` |
+| F-03 | H5IO context manager + logging | `b12d7dc` |
+| F-04 | video_io_old deprecated | `e075d94` |
+| F-05 | 調色盤統一到 config.py | — |
+| F-07 | config.py SUPPORTED_MODELS typo | `078df85` |
+| F-08 | find_closest_point 向量化 | `c2e9c66` |
+| F-09 | explorer.py merge() bug | `591ec25` |
+| C-08 | H5IO print → logging | `b12d7dc` |
+
+---
+
+## 六、建議實作順序
+
+```
+Phase 1: 基礎架構（先做這些，其他都依賴它們）
+  ├── C-01 Service Layer
+  ├── B-01 Latent/LocalLatent 資料視覺化分離
+  ├── C-06 Device 偵測統一
+  └── C-07 重複碼消除
+
+Phase 2: 功能改進
+  ├── A-06 Latent 抽取方式改進（實驗 + 整合）
+  ├── A-07 深度模型效能優化（inference_mode, float16, resize 合併）
+  ├── A-03 Tracking Mask 後處理改善
+  └── B-05 統一配置管理
+
+Phase 3: CLI + 聚類改進
+  ├── A-01 CLI 前端（基於 Service Layer）
+  ├── A-04 Cluster Annotator（Stage 4 延伸 tab）
+  ├── B-02 階層式聚類 Tree View
+  └── B-03 Session 完整恢復
+
+Phase 4: 進階優化
+  ├── A-02 資料處理管線效能（C-02, C-03, C-05）
+  ├── C-04 測試覆蓋補強
+  └── A-05 Desktop 前端（如果需要）
 ```
 
 ---
 
-## 五、下一步行動
+## 七、下一步
 
-1. ✅ 深度程式碼審計完成
-2. ✅ 最佳實踐研究完成
-3. ✅ Quick Fixes 實作完成（F-01 ~ F-09）
-4. 🔄 PyQt Desktop 前端 shell 建立中（A-05）
-5. 📋 Service Layer 設計與實作（C-01）
-6. 📋 CLI 建立（typer-based）
-7. 📋 Test coverage 補強（C-04）
+**等待 IsonaEi 確認**：
+1. A-06 Latent 抽取方式：選哪個方案？還是先做實驗比較？
+2. A-07 的 small fixes（inference_mode, float16）可以直接做嗎？
+3. 建議的 Phase 1-4 順序是否同意？
+4. Service Layer 的 API 設計草案需要更細化嗎？

@@ -3,16 +3,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
-import platform
-OS_SYS = platform.uname().system
-import torch
 
-if OS_SYS == 'Darwin':
-    DEFAULT_DEVICE = 'mps'
-elif torch.cuda.is_available():
-    DEFAULT_DEVICE = 'cuda'
-else:
-    DEFAULT_DEVICE = 'cpu'
+from castle.core.environment import get_device
+DEFAULT_DEVICE = get_device()
 
 _palette = ['#7AE4F0', '#FFD0EC', '#6EE368', '#C1B5EA',  '#A7CCED', '#FBC471', '#9E83E3']
 _palette += ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']

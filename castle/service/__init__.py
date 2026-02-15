@@ -11,4 +11,10 @@ Service functions:
 - Manage state (project lifecycle, model lifetime, etc.)
 """
 
-from castle.service import project_service, extraction_service, clustering_service
+from castle.service import (
+    project_service,
+    extraction_service,
+    clustering_service,
+    bout_service,
+    annotation_service,
+)

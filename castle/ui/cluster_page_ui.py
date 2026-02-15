@@ -847,10 +847,18 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=ui['select_cluster']
     )
 
-    return {
+    # Expose shared state for Annotator tab (A-04)
+    shared_states = {
+        'latents': latents,
+        'mulvideo': mulvideo,
+    }
+
+    visibility_components = {
         'cluster_input_accordion': ui['cluster_input_accordion'],
         'cluster_tree': ui['cluster_tree'],
         'cluster_row_main': ui['cluster_row_main'],
         'syllables_plot': ui['syllables_plot'],
-        'cluster_row_files': ui['cluster_row_files']
+        'cluster_row_files': ui['cluster_row_files'],
     }
+
+    return visibility_components, shared_states

@@ -7,6 +7,7 @@ from .source_ui import create_source_ui
 from .edit_ui import create_edit_ui
 from .extract_ui import create_extract_ui
 from .cluster_page_ui import create_cluster_page_ui
+from .annotator_ui import create_annotator_ui
 
 
 def toggle_tab_visibility(project_name, object_count):
@@ -59,9 +60,23 @@ def create_ui(OS_SYS, root=''):
             # The UI update logic is handled within create_extract_ui
             extract_ui = create_extract_ui(storage_path, project_name, extract_tab)
 
-        # Behavior analysis tab
+        # Behavior analysis tab (Stage 4)
         with gr.Tab(label='4. Behavior Microscope') as cluster_page_tab:
-            cluster_ui = create_cluster_page_ui(storage_path, project_name, cluster_page_tab)
+            with gr.Tabs():
+                # Sub-tab: Clustering workspace
+                with gr.Tab(label='Clustering'):
+                    cluster_ui, shared_states = create_cluster_page_ui(
+                        storage_path, project_name, cluster_page_tab
+                    )
+
+                # Sub-tab: Cluster Annotator (A-04)
+                with gr.Tab(label='Cluster Annotator'):
+                    annotator_ui = create_annotator_ui(
+                        storage_path, project_name,
+                        shared_states['latents'],
+                        shared_states['mulvideo'],
+                    )
+
             cluster_ui_object_count = gr.State(len(cluster_ui))
             cluster_page_tab.select(
                 fn=toggle_tab_visibility,

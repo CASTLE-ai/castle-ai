@@ -147,6 +147,54 @@ def padding(mi, mx, scale=1.05):
     return (mid - (d / 2) * scale), (mid + (d / 2) * scale)
 
 # ---------------------------
+# Cluster Tree (B-02)
+# ---------------------------
+
+def build_cluster_tree_markdown(cluster_meta, cluster_array):
+    """Build a markdown tree from cluster metadata.
+
+    Parses hierarchical cluster names (root → root_a0 → root_a0_b1)
+    and renders them as an indented tree with bin counts.
+
+    Args:
+        cluster_meta: dict {id: {name, color}}
+        cluster_array: numpy array of cluster assignments
+
+    Returns:
+        Markdown string with tree visualization
+    """
+    from collections import Counter
+    counts = Counter(cluster_array.tolist())
+
+    # Sort by name
+    items = sorted(cluster_meta.items(), key=lambda x: x[1]['name'])
+
+    lines = []
+    for cid, meta in items:
+        name = meta['name']
+        count = counts.get(cid, 0)
+
+        # Skip the init cluster
+        if name == 'init':
+            continue
+
+        # Determine depth from name parts
+        parts = name.split('_')
+        depth = len(parts) - 1  # 'root' = 0, 'root_a0' = 1, etc.
+        indent = '\u00a0\u00a0\u00a0\u00a0' * depth  # Non-breaking spaces for indent
+
+        color = meta.get('color', 'grey')
+        prefix = '├── ' if depth > 0 else ''
+        line = f"{indent}{prefix}🔸 **{name}** ({count} bins)"
+        lines.append(line)
+
+    if not lines:
+        return "*No clusters yet*"
+
+    return "### 📊 Cluster Tree\n\n" + "\n\n".join(lines)
+
+
+# ---------------------------
 # UI Components
 # ---------------------------
 
@@ -666,6 +714,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     mulvideo = gr.State(None)  # Holds LatentAggregator instance
     session_info = gr.State(None)
 
+    ui['cluster_tree'] = gr.Markdown("*No clusters yet*", visible=True)
+
     with gr.Row(visible=True) as ui['cluster_row_main']:
         with gr.Column(scale=2):
             ui['select_cluster'] = gr.Dropdown(label="Select Cluster", visible=True, interactive=True)
@@ -719,6 +769,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=lambda: (gr.update(visible=False), gr.update(visible=False)),
         outputs=[ui['restore_btn'], ui['session_status']]
+    ).then(
+        fn=lambda lat: build_cluster_tree_markdown(lat.cluster_meta, lat.cluster) if lat else "*No clusters yet*",
+        inputs=latents,
+        outputs=ui['cluster_tree']
     )
 
     ui['select_cluster'].focus(
@@ -769,6 +823,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=import_info_from_local_latent,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo],
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
+    ).then(
+        fn=lambda lat: build_cluster_tree_markdown(lat.cluster_meta, lat.cluster) if lat else "*No clusters yet*",
+        inputs=latents,
+        outputs=ui['cluster_tree']
     )
 
     # Enter & Submit all: auto-label all clusters and submit
@@ -776,6 +834,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=label_all_and_submit,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster']],
         outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
+    ).then(
+        fn=lambda lat: build_cluster_tree_markdown(lat.cluster_meta, lat.cluster) if lat else "*No clusters yet*",
+        inputs=latents,
+        outputs=ui['cluster_tree']
     )
 
     # Auto-update cluster list when tab is selected
@@ -787,6 +849,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
     return {
         'cluster_input_accordion': ui['cluster_input_accordion'],
+        'cluster_tree': ui['cluster_tree'],
         'cluster_row_main': ui['cluster_row_main'],
         'syllables_plot': ui['syllables_plot'],
         'cluster_row_files': ui['cluster_row_files']

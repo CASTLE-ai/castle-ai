@@ -12,10 +12,11 @@ app = typer.Typer(
 )
 
 # Register subcommands
-from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd
+from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd, mcp_cmd
 
 app.add_typer(project_cmd.app, name="project", help="Project management")
 app.add_typer(cluster_cmd.app, name="cluster", help="Clustering operations")
+app.add_typer(mcp_cmd.app, name="mcp", help="MCP (Model Context Protocol) server")
 app.registered_commands += track_cmd.app.registered_commands
 app.registered_commands += extract_cmd.app.registered_commands
 

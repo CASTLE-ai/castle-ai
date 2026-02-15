@@ -34,6 +34,9 @@ termcolor>=2.0,<4.0
 # Download
 gdown>=4.6,<6.0
 
+# MCP (Model Context Protocol)
+mcp>=1.0,<2.0
+
 # GPU Acceleration
 xformers>=0.0.20,<1.0
 

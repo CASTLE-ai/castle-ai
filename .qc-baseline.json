@@ -1,81 +1,49 @@
 {
-  "timestamp": "2026-02-16T20:10:00+08:00",
-  "version": "v5",
-  "commit": "139d649",
+  "timestamp": "2026-02-16T21:30:00+08:00",
+  "version": "v5.1",
+  "commit": "82dcfc8",
   "verdict": "PASS",
   "phases": {
     "1_test_suite": {
-      "total": 335,
-      "passed": 335,
+      "total": 364,
+      "passed": 364,
       "failed": 0,
-      "errors": 0,
-      "skipped": 0,
-      "duration_s": 14.34,
-      "delta": "+75 tests since v4"
+      "duration_s": 24.63,
+      "delta": "+29 tests since v5"
     },
     "2_import_integrity": {
       "total": 82,
       "passed": 81,
       "failed": 1,
-      "failures": ["castle.utils.myumap (ImportError: requires RAPIDS cuML — optional)"],
-      "skipped_vendored": ["aot", "sam", "dinov2", "dinov3"],
+      "failures": ["castle.utils.myumap (optional: cuML)"],
       "critical_failures": 0
     },
     "3_static_analysis": {
       "tool": "ruff",
       "rules_checked": ["E722", "T201", "B006", "F401", "F841"],
-      "total_findings": 0,
-      "delta": "-7 since v4 (all F401 fixed)"
+      "total_findings": 0
     },
     "4_smoke_tests": {
-      "total": 26,
-      "passed": 26,
-      "failed": 0,
-      "tests": [
-        "temporal_smooth round-trip",
-        "cluster_transfer save/load/apply",
-        "auto_cluster scoring + presets",
-        "CASTLE_STORAGE env var",
-        "NWB export round-trip",
-        "CLI project --help",
-        "CLI track --help",
-        "CLI extract --help",
-        "CLI cluster --help",
-        "CLI ethogram --help",
-        "CLI compare --help",
-        "CLI info --help",
-        "CLI cluster auto --help",
-        "CLI cluster save-model --help",
-        "CLI cluster apply-model --help",
-        "CLI ethogram export-nwb --help",
-        "CLI compare --paired flag present",
-        "All 6 new module imports OK",
-        "Ethogram service import",
-        "Comparison service import",
-        "Metrics service import",
-        "MCP server import",
-        "ClusteringService import",
-        "score_clustering returns quality_score",
-        "MICROSCOPE_PRESETS has 4 presets",
-        "Docstrings: 23/23 for new modules"
+      "total": 29,
+      "passed": 29,
+      "new_tests": [
+        "select_umap_config depth 0 returns Low",
+        "select_umap_config depth 1+ returns Intermediate",
+        "TreeNode hierarchy"
       ]
     },
     "5_ui_frontend": {
-      "cli_subcommands": "PASS (7: project, track, extract, cluster, ethogram, compare, info)",
-      "new_cli_commands": "PASS (cluster auto/save-model/apply-model, ethogram export-nwb, compare --paired)",
-      "mcp_server": "PASS (21+ tools/resources)"
+      "cli_cluster_auto": "PASS (--max-depth, --min-frames, recursive)",
+      "cli_all_help": "PASS (7 top-level + 5 subcommands)",
+      "mcp": "PASS (cluster_auto updated for recursive)"
     },
     "6_file_consistency": {
-      "doc_placeholders": 0,
-      "HUMAN_TO_CONFIRM": 0,
-      "git_status": "clean"
+      "git_status": "clean",
+      "lint_errors": 0
     },
     "7_documentation": {
-      "new_module_docstrings": "23/23 present (0 missing)",
-      "concepts_page": "docs/getting-started/concepts.md (new)",
-      "gpu_requirements": "docs/getting-started/gpu-requirements.md (filled with benchmarks)",
-      "tutorial_placeholders_fixed": true,
-      "readme_exists": true
+      "api_reference": "updated with 5 new module entries",
+      "docstring_coverage_new": "23/23 (100%)"
     }
   }
 }

@@ -245,6 +245,84 @@ def compute_project_fingerprints(
     }
 
 
+def compare_projects_paired(
+    project_before_path: str,
+    project_after_path: str,
+    group_before_name: str = "Before",
+    group_after_name: str = "After",
+    fps: float = 30.0,
+    n_permutations: int = 10000,
+) -> dict:
+    """Paired comparison between two projects (within-subject design).
+
+    Each video in project_before is matched to the corresponding video
+    in project_after by order. Both projects must have the same number
+    of videos.
+
+    Args:
+        project_before_path: Path to the pre-treatment project directory.
+        project_after_path: Path to the post-treatment project directory.
+        group_before_name: Display name for "before" condition.
+        group_after_name: Display name for "after" condition.
+        fps: Frames per second.
+        n_permutations: Number of permutations for statistical tests.
+
+    Returns:
+        JSON-serialisable dict with paired comparison results.
+    """
+    from castle.core.comparison import compute_fingerprint, compare_paired
+
+    project_before_path = os.path.abspath(project_before_path)
+    project_after_path = os.path.abspath(project_after_path)
+
+    data_before = _load_per_video_cluster_data(project_before_path)
+    data_after = _load_per_video_cluster_data(project_after_path)
+
+    if len(data_before["videos"]) != len(data_after["videos"]):
+        return {
+            "status": "error",
+            "message": (
+                f"Paired comparison requires the same number of videos in both "
+                f"projects. Before has {len(data_before['videos'])}, "
+                f"after has {len(data_after['videos'])}."
+            ),
+        }
+
+    cluster_names = {**data_before["cluster_names"], **data_after["cluster_names"]}
+
+    fps_before = []
+    for vid in data_before["videos"]:
+        fp = compute_fingerprint(
+            animal_id=vid["video_name"],
+            group=group_before_name,
+            cluster_labels=vid["labels"],
+            fps=fps,
+            cluster_names=cluster_names,
+        )
+        fps_before.append(fp)
+
+    fps_after = []
+    for vid in data_after["videos"]:
+        fp = compute_fingerprint(
+            animal_id=vid["video_name"],
+            group=group_after_name,
+            cluster_labels=vid["labels"],
+            fps=fps,
+            cluster_names=cluster_names,
+        )
+        fps_after.append(fp)
+
+    result = compare_paired(fps_before, fps_after, n_permutations=n_permutations)
+
+    out = _result_to_dict(result)
+    out["status"] = "success"
+    out["paired"] = True
+    out["n_pairs"] = len(fps_before)
+    out["fingerprints_before"] = [_fingerprint_to_dict(fp) for fp in fps_before]
+    out["fingerprints_after"] = [_fingerprint_to_dict(fp) for fp in fps_after]
+    return out
+
+
 def export_comparison_report(result: dict, output_dir: str) -> List[str]:
     """Export comparison results to CSV files.
 

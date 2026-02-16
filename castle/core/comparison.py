@@ -558,3 +558,233 @@ def compare_groups(
         significant_features=sig_features,
         summary="\n".join(summary_lines),
     )
+
+
+# ---------------------------------------------------------------------------
+# Paired / within-subject tests
+# ---------------------------------------------------------------------------
+
+
+def paired_hedges_g(diffs: np.ndarray) -> float:
+    """Hedges' g for paired differences (one-sample effect size).
+
+    Computes g = mean(diffs) / SD(diffs) with Hedges' bias correction.
+
+    Args:
+        diffs: Array of paired differences.
+
+    Returns:
+        Hedges' g value.
+    """
+    n = len(diffs)
+    if n < 2:
+        return 0.0
+    mean_d = float(np.mean(diffs))
+    sd_d = float(np.std(diffs, ddof=1))
+    if sd_d < 1e-12:
+        return 0.0
+    d = mean_d / sd_d
+    # Hedges' correction factor
+    correction = 1.0 - 3.0 / (4.0 * (n - 1) - 1)
+    return float(d * correction)
+
+
+def paired_permutation_test(
+    fingerprints_before: List[BehavioralFingerprint],
+    fingerprints_after: List[BehavioralFingerprint],
+    n_permutations: int = 10000,
+    alpha: float = 0.05,
+    random_state: int = 42,
+) -> dict:
+    """Paired permutation test for within-subject designs.
+
+    Each animal is measured twice (e.g., pre-drug vs post-drug).
+    Tests whether the paired differences are significantly different from zero.
+
+    For each permutation: randomly flip the sign of each animal's difference
+    (This is the paired permutation test — respects within-subject structure).
+
+    Args:
+        fingerprints_before: Pre-treatment fingerprints (one per animal).
+        fingerprints_after: Post-treatment fingerprints (same animals, same order).
+        n_permutations: Number of permutations.
+        alpha: Significance threshold for BH-FDR.
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        dict with:
+            - paired_bfa_distance: BFA distance on paired differences
+            - paired_bfa_pvalue: permutation p-value
+            - per_feature_pvalues: per-feature paired permutation tests
+            - per_feature_pvalues_adj: BH-FDR corrected
+            - per_feature_effect_sizes: paired Hedges' g
+            - feature_names: feature name list
+            - mean_diffs: mean of paired differences per feature
+    """
+    n = len(fingerprints_before)
+    if n != len(fingerprints_after):
+        raise ValueError(
+            f"Paired test requires equal number of before ({n}) and after "
+            f"({len(fingerprints_after)}) fingerprints."
+        )
+    if n == 0:
+        raise ValueError("Need at least one pair of fingerprints.")
+
+    rng = np.random.default_rng(random_state)
+
+    # --- Transition-matrix-based BFA paired test ---
+    trans_before = np.array([fp.transition_matrix for fp in fingerprints_before])
+    trans_after = np.array([fp.transition_matrix for fp in fingerprints_after])
+    trans_diffs = trans_after - trans_before  # (n, K, K)
+
+    observed_bfa = float(np.sum(np.abs(np.mean(trans_diffs, axis=0))))
+
+    null_bfa = np.empty(n_permutations)
+    for i in range(n_permutations):
+        signs = rng.choice([-1, 1], size=n)
+        flipped = trans_diffs * signs[:, None, None]
+        null_bfa[i] = float(np.sum(np.abs(np.mean(flipped, axis=0))))
+    bfa_pvalue = float(np.mean(null_bfa >= observed_bfa))
+    bfa_pvalue = max(bfa_pvalue, 1.0 / (n_permutations + 1))
+
+    # --- Per-feature paired permutation test ---
+    vecs_before = np.array([fp.to_feature_vector() for fp in fingerprints_before])
+    vecs_after = np.array([fp.to_feature_vector() for fp in fingerprints_after])
+    diffs = vecs_after - vecs_before  # (n, n_features)
+    n_features = diffs.shape[1]
+    feature_names = fingerprints_before[0].feature_names()
+
+    observed_mean_abs = np.abs(np.mean(diffs, axis=0))
+
+    count_ge = np.zeros(n_features, dtype=np.float64)
+    for _ in range(n_permutations):
+        signs = rng.choice([-1, 1], size=n)
+        flipped = diffs * signs[:, None]
+        perm_mean_abs = np.abs(np.mean(flipped, axis=0))
+        count_ge += (perm_mean_abs >= observed_mean_abs).astype(np.float64)
+
+    pvalues = count_ge / n_permutations
+    pvalues = np.maximum(pvalues, 1.0 / (n_permutations + 1))
+
+    # BH-FDR correction
+    pvalues_adj = benjamini_hochberg(pvalues, alpha=alpha)
+
+    # Paired Hedges' g per feature
+    effect_sizes = np.zeros(n_features, dtype=np.float64)
+    for j in range(n_features):
+        effect_sizes[j] = paired_hedges_g(diffs[:, j])
+
+    mean_diffs = np.mean(diffs, axis=0)
+
+    return {
+        "paired_bfa_distance": observed_bfa,
+        "paired_bfa_pvalue": bfa_pvalue,
+        "per_feature_pvalues": pvalues,
+        "per_feature_pvalues_adj": pvalues_adj,
+        "per_feature_effect_sizes": effect_sizes,
+        "feature_names": feature_names,
+        "mean_diffs": mean_diffs,
+    }
+
+
+def compare_paired(
+    fingerprints_before: List[BehavioralFingerprint],
+    fingerprints_after: List[BehavioralFingerprint],
+    n_permutations: int = 10000,
+    alpha: float = 0.05,
+    random_state: int = 42,
+) -> ComparisonResult:
+    """Complete paired comparison pipeline.
+
+    1. Paired BFA omnibus test (sign-flip on transition differences)
+    2. Per-feature paired permutation tests + BH-FDR
+    3. Paired Hedges' g effect sizes
+    4. Summary generation
+
+    Args:
+        fingerprints_before: Pre-treatment fingerprints (one per animal).
+        fingerprints_after: Post-treatment fingerprints (same animals, same order).
+        n_permutations: Number of permutations.
+        alpha: Significance threshold.
+        random_state: Random seed.
+
+    Returns:
+        ComparisonResult with all paired statistics.
+    """
+    n = len(fingerprints_before)
+    if n != len(fingerprints_after):
+        raise ValueError(
+            f"Paired test requires equal number of before ({n}) and after "
+            f"({len(fingerprints_after)}) fingerprints."
+        )
+    if n == 0:
+        raise ValueError("Need at least one pair of fingerprints.")
+
+    group_before_name = fingerprints_before[0].group
+    group_after_name = fingerprints_after[0].group
+
+    # Run paired permutation test
+    paired_result = paired_permutation_test(
+        fingerprints_before,
+        fingerprints_after,
+        n_permutations=n_permutations,
+        alpha=alpha,
+        random_state=random_state,
+    )
+
+    # Identify significant features
+    sig_mask = paired_result["per_feature_pvalues_adj"] < alpha
+    feature_names = paired_result["feature_names"]
+    sig_features = [
+        feature_names[i] for i in range(len(feature_names)) if sig_mask[i]
+    ]
+
+    # Summary
+    bfa_p = paired_result["paired_bfa_pvalue"]
+    bfa_sig = "***" if bfa_p < 0.001 else "**" if bfa_p < 0.01 else "*" if bfa_p < 0.05 else "n.s."
+
+    summary_lines = [
+        f"=== Paired Comparison: {group_before_name} vs {group_after_name} ===",
+        f"Paired samples: n={n}",
+        "",
+        "--- Omnibus Tests ---",
+        f"  Paired BFA: distance={paired_result['paired_bfa_distance']:.4f}, p={bfa_p:.4f} {bfa_sig}",
+        "",
+        f"--- Significant Features ({len(sig_features)}/{len(feature_names)}) ---",
+    ]
+
+    if sig_features:
+        sig_indices = [i for i in range(len(feature_names)) if sig_mask[i]]
+        sig_sorted = sorted(
+            sig_indices,
+            key=lambda i: abs(paired_result["per_feature_effect_sizes"][i]),
+            reverse=True,
+        )
+        for idx in sig_sorted[:15]:
+            name = feature_names[idx]
+            g = paired_result["per_feature_effect_sizes"][idx]
+            padj = paired_result["per_feature_pvalues_adj"][idx]
+            summary_lines.append(f"  {name}: g={g:+.3f}, p_adj={padj:.4f}")
+    else:
+        summary_lines.append("  (none)")
+
+    return ComparisonResult(
+        group_a_name=group_before_name,
+        group_b_name=group_after_name,
+        n_a=n,
+        n_b=n,
+        bfa_distance=paired_result["paired_bfa_distance"],
+        bfa_pvalue=bfa_p,
+        energy_distance=None,
+        energy_pvalue=None,
+        feature_names=feature_names,
+        feature_pvalues=paired_result["per_feature_pvalues"],
+        feature_pvalues_adj=paired_result["per_feature_pvalues_adj"],
+        feature_effect_sizes=paired_result["per_feature_effect_sizes"],
+        feature_ci_lower=None,
+        feature_ci_upper=None,
+        feature_means_a=None,
+        feature_means_b=None,
+        significant_features=sig_features,
+        summary="\n".join(summary_lines),
+    )

@@ -495,6 +495,169 @@ def compute_fingerprint_tool(
 
 
 @mcp.tool()
+def compare_paired_tool(
+    project_before: str,
+    project_after: str,
+    storage: str = "",
+    group_before_name: str = "Before",
+    group_after_name: str = "After",
+    fps: float = 30.0,
+) -> dict:
+    """Paired (within-subject) comparison between two groups using sign-flip permutation tests.
+
+    Each video in project_before is matched to the corresponding video
+    in project_after by order. Both projects must have the same number of videos.
+
+    Args:
+        project_before: Project name for pre-treatment
+        project_after: Project name for post-treatment
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        group_before_name: Display name for before condition
+        group_after_name: Display name for after condition
+        fps: Frames per second
+    """
+    try:
+        import os
+        from castle.service.comparison_service import compare_projects_paired
+
+        storage_dir = storage or _storage()
+        path_before = os.path.join(storage_dir, project_before)
+        path_after = os.path.join(storage_dir, project_after)
+        return compare_projects_paired(
+            path_before,
+            path_after,
+            group_before_name=group_before_name,
+            group_after_name=group_after_name,
+            fps=fps,
+        )
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def nwb_export(project: str, storage: str = "", output: str = "") -> dict:
+    """Export CASTLE results to NWB (Neurodata Without Borders) format.
+
+    Creates an NWB file containing behavioral time series (cluster labels),
+    bout intervals, and bout statistics.
+
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        output: Output .nwb file path (optional, auto-generated if empty)
+    """
+    try:
+        import os
+        from castle.service.nwb_service import export_project_nwb
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        output_path = output if output else None
+        path = export_project_nwb(project_path, output_path=output_path)
+        return {
+            "status": "success",
+            "message": f"Exported NWB file to {path}",
+            "path": path,
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def cluster_save_model(
+    project: str,
+    storage: str = "",
+    output: str = "",
+    name: str = "",
+    k: int = 5,
+) -> dict:
+    """Save clustering model for transfer to new data.
+
+    Persists the UMAP embedding, latent features, and cluster labels so
+    they can be applied to new projects without re-running clustering.
+
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        output: Output model path (.npz). Defaults to <project>/cluster/cluster_model.npz
+        name: Descriptive model name
+        k: k-NN neighbours for later application
+    """
+    try:
+        import os
+        from castle.service.clustering_service import save_project_cluster_model
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        if not os.path.isdir(project_path):
+            return {"status": "error", "message": f"Project not found: {project_path}"}
+
+        saved = save_project_cluster_model(
+            project_path=project_path,
+            output_path=output or None,
+            model_name=name,
+            k=k,
+        )
+        return {
+            "status": "success",
+            "message": f"Cluster model saved to {saved}",
+            "model_path": saved,
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def cluster_apply_model(
+    project: str,
+    model_path: str,
+    storage: str = "",
+    method: str = "knn_feature",
+) -> dict:
+    """Apply saved clustering model to new latent features.
+
+    Loads latent features from the target project, classifies each frame
+    using k-NN against the saved model, and writes results to the
+    project's cluster/ directory.
+
+    Args:
+        project: Target project name
+        model_path: Path to saved model (.npz)
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        method: "knn_feature" (recommended) or "knn_umap"
+    """
+    try:
+        import os
+        from castle.service.clustering_service import apply_cluster_model_to_project
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        if not os.path.isdir(project_path):
+            return {"status": "error", "message": f"Project not found: {project_path}"}
+
+        result = apply_cluster_model_to_project(
+            model_path=model_path,
+            project_path=project_path,
+            method=method,
+        )
+
+        return {
+            "status": "success",
+            "message": (
+                f"Applied model to {result['n_frames']} frames, "
+                f"mean confidence {result['mean_confidence']:.3f}"
+            ),
+            "n_frames": result["n_frames"],
+            "mean_confidence": result["mean_confidence"],
+            "output_csv": result["output_csv"],
+            "id_csv": result["id_csv"],
+            "cluster_names": result["cluster_names"],
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
 def device_info() -> dict:
     """Get GPU/device information for CASTLE processing."""
     try:

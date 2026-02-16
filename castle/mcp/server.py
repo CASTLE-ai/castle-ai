@@ -420,6 +420,67 @@ def ethogram_bouts(project: str, storage: str = "") -> dict:
 
 
 @mcp.tool()
+def compare_groups_tool(
+    project_a: str,
+    project_b: str,
+    storage: str = "",
+    group_a_name: str = "Control",
+    group_b_name: str = "Treatment",
+    fps: float = 30.0,
+) -> dict:
+    """Compare behavioral patterns between two groups using BFA and permutation tests.
+
+    Args:
+        project_a: Project name for group A
+        project_b: Project name for group B
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        group_a_name: Display name for group A
+        group_b_name: Display name for group B
+        fps: Frames per second
+    """
+    try:
+        import os
+        from castle.service.comparison_service import compare_projects
+
+        storage_dir = storage or _storage()
+        path_a = os.path.join(storage_dir, project_a)
+        path_b = os.path.join(storage_dir, project_b)
+        return compare_projects(
+            path_a,
+            path_b,
+            group_a_name=group_a_name,
+            group_b_name=group_b_name,
+            fps=fps,
+        )
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def compute_fingerprint_tool(
+    project: str,
+    storage: str = "",
+    fps: float = 30.0,
+) -> dict:
+    """Compute behavioral fingerprint for a project (per-animal summary).
+
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        fps: Frames per second
+    """
+    try:
+        import os
+        from castle.service.comparison_service import compute_project_fingerprints
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        return compute_project_fingerprints(project_path, group_name=project, fps=fps)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
 def device_info() -> dict:
     """Get GPU/device information for CASTLE processing."""
     try:

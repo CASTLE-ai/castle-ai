@@ -9,6 +9,8 @@ They take Gradio state values as input and return updated values.
 import os
 import json
 import glob
+import cv2
+import tempfile
 
 import gradio as gr
 import numpy as np
@@ -35,6 +37,32 @@ dbscan_config_template = '''{
 # Event Handlers
 # ---------------------------
 
+def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
+    """Generate a short MP4 clip around center_bin."""
+    half = n_frames // 2
+    start = max(0, center_bin - half)
+    end = start + n_frames
+    
+    frames = []
+    for i in range(start, end):
+        frame = aggregator.get_frame(int(i))
+        if frame is not None:
+            frames.append(frame)
+    
+    if not frames:
+        return None
+    
+    h, w = frames[0].shape[:2]
+    tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(tmp.name, fourcc, fps, (w, h))
+    for f in frames:
+        bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR) if len(f.shape) == 3 else f
+        out.write(bgr)
+    out.release()
+    return tmp.name
+
+
 def embedding_plot_click(aggregator, Z_plt, evt: gr.SelectData):
     """
     Handle click on embedding plot.
@@ -48,14 +76,14 @@ def embedding_plot_click(aggregator, Z_plt, evt: gr.SelectData):
         return None, None
         
     index = Z_plt.selected_index
-    # Use Aggregator to get frame
-    frame = aggregator.get_frame(index)
+    # Generate a short video clip around the selected bin
+    clip_path = _generate_clip(aggregator, index)
     
-    if frame is None:
-        # Return fallback blank image if frame fetch fails
+    if clip_path is None:
+        # Return fallback blank video if clip generation fails
         return emb_plot, None 
         
-    return emb_plot, frame
+    return emb_plot, clip_path
 
 
 def collapse_accordion():
@@ -464,42 +492,58 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
 # Undo / Redo Handlers
 # ---------------------------
 
-def handle_undo(local_latents, history):
+def handle_undo(local_latents, latents, history):
     """Undo the last clustering operation and redraw the plot."""
     if history is None or not history.can_undo:
         gr.Info("Nothing to undo")
-        return gr.update(), gr.update(), history, _history_status(history)
+        return gr.update(), gr.update(), history, _history_status(history), gr.update()
 
     desc = history.undo(local_latents)
     
     # Check if restored state is valid before plotting
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
         gr.Info("No previous state to restore")
-        return gr.update(), gr.update(), history, _history_status(history)
+        return gr.update(), gr.update(), history, _history_status(history), gr.update()
     
     gr.Info(f"Undone: {desc}")
 
     Z_plt = EmbeddingScatterPlot(local_latents)
-    return Z_plt, Z_plt.plot(), history, _history_status(history)
+    
+    # Refresh cluster tree from parent latents
+    from castle.ui.cluster_tree import build_cluster_tree_choices
+    tree_update = gr.update()
+    if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
+        choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
+        tree_update = gr.update(choices=choices)
+    
+    return Z_plt, Z_plt.plot(), history, _history_status(history), tree_update
 
 
-def handle_redo(local_latents, history):
+def handle_redo(local_latents, latents, history):
     """Redo the last undone clustering operation and redraw the plot."""
     if history is None or not history.can_redo:
         gr.Info("Nothing to redo")
-        return gr.update(), gr.update(), history, _history_status(history)
+        return gr.update(), gr.update(), history, _history_status(history), gr.update()
 
     desc = history.redo(local_latents)
     
     # Check if restored state is valid before plotting
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
         gr.Info("No previous state to restore")
-        return gr.update(), gr.update(), history, _history_status(history)
+        return gr.update(), gr.update(), history, _history_status(history), gr.update()
     
     gr.Info(f"Redone: {desc}")
 
     Z_plt = EmbeddingScatterPlot(local_latents)
-    return Z_plt, Z_plt.plot(), history, _history_status(history)
+    
+    # Refresh cluster tree from parent latents
+    from castle.ui.cluster_tree import build_cluster_tree_choices
+    tree_update = gr.update()
+    if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
+        choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
+        tree_update = gr.update(choices=choices)
+    
+    return Z_plt, Z_plt.plot(), history, _history_status(history), tree_update
 
 
 def _history_status(history):

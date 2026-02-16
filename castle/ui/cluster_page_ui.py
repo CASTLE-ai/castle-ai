@@ -31,6 +31,7 @@ from castle.ui.cluster_handlers import (
     handle_undo,
     handle_redo,
     update_history_buttons,
+    check_session_exists,
 )
 
 
@@ -199,7 +200,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['history_info'] = gr.Textbox(label="History", interactive=False, max_lines=1)
         with gr.Column(scale=8):
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
-            ui['display'] = gr.Image(label='Display', interactive=False, visible=True)  
+            ui['display'] = gr.Video(label='Display', interactive=False, visible=True, autoplay=True, loop=True)  
             ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
             
     ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)
@@ -212,6 +213,20 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=True)
 
     # --- Event Bindings ---
+
+    # Auto-detect previous session when entering the tab
+    cluster_page_tab.select(
+        fn=lambda sp, pn: check_session_exists(sp, pn),
+        inputs=[storage_path, project_name],
+        outputs=[session_info]
+    ).then(
+        fn=lambda info: (
+            gr.update(interactive=info is not None),
+            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters", visible=info is not None) if info else (gr.update(interactive=False), gr.update(visible=False))
+        ),
+        inputs=[session_info],
+        outputs=[ui['restore_btn'], ui['session_status']]
+    )
 
     # Initialize: create aggregator + check for previous session
     ui['reset'].click(
@@ -316,8 +331,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # Undo / Redo
     ui['undo_btn'].click(
         fn=handle_undo,
-        inputs=[local_latents, history_state],
-        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info']],
+        inputs=[local_latents, latents, history_state],
+        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'], ui['cluster_tree_radio']],
     ).then(
         fn=update_history_buttons,
         inputs=[history_state],
@@ -326,8 +341,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
     ui['redo_btn'].click(
         fn=handle_redo,
-        inputs=[local_latents, history_state],
-        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info']],
+        inputs=[local_latents, latents, history_state],
+        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'], ui['cluster_tree_radio']],
     ).then(
         fn=update_history_buttons,
         inputs=[history_state],

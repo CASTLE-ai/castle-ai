@@ -1,146 +1,157 @@
-# CASTLE QC Report v4 — Post P1/P2/P4
+# QC Report v5 — CASTLE Behavioral Analysis Framework
 
-**Date**: 2026-02-16 19:05 (Asia/Taipei)  
-**Branch**: `dev`  
-**Commits since v3**: 3 (P1 ethogram, P2 metrics, P4 comparison)
+**Date**: 2026-02-16 20:10 (Asia/Taipei)  
+**Commit**: `139d649` (branch: `dev`)  
+**Verdict**: ✅ **PASS**
 
 ---
 
 ## Summary
 
-| Phase | v3 | v4 | Delta |
-|-------|----|----|-------|
-| 1. Tests | 151 pass / 0 fail | **260 pass** / 0 fail | +109 tests ✅ |
-| 2. Imports | 73/74 pass (1 cuML) | **80/81** pass (1 cuML) | +7 modules ✅ |
-| 3. Static (non-vendored) | 1 finding (F401) | **7 findings** (all F401) | +6 ⚠️ |
-| 4. Smoke Tests | 15/15 pass | **21/21** pass | +6 new tests ✅ |
-| 5. UI/Frontend | PASS (5 subcmds) | **PASS (7 subcmds)** | +ethogram,compare ✅ |
-| 6. File Consistency | 86/86 clean | **96/96** clean | +10 files ✅ |
-| 7. Documentation | 0 missing | **0 missing** (72 modules) | No regression ✅ |
+| Phase | Status | Details |
+|-------|--------|---------|
+| 1. Test Suite | ✅ PASS | 335 passed, 0 failed (14.3s) |
+| 2. Import Integrity | ✅ PASS | 81/82 ok, 1 optional (cuML) |
+| 3. Static Analysis | ✅ PASS | 0 findings (ruff E722/T201/B006/F401/F841) |
+| 4. Smoke Tests | ✅ PASS | 26/26 passed |
+| 5. UI/Frontend | ✅ PASS | 7 CLI + 5 new subcommands + MCP |
+| 6. File Consistency | ✅ PASS | 0 placeholders, clean git |
+| 7. Documentation | ✅ PASS | 23/23 docstrings, concepts page, GPU benchmarks |
 
-**Overall**: ✅ PASS (with minor lint warnings)
+---
+
+## Delta from v4
+
+| Metric | v4 | v5 | Change |
+|--------|-----|-----|--------|
+| Unit tests | 260 | 335 | **+75** ✅ |
+| Lint findings (non-vendored) | 7 F401 | 0 | **-7** ✅ |
+| Smoke tests | 21 | 26 | **+5** ✅ |
+| `[HUMAN TO CONFIRM]` | 5 | 0 | **-5** ✅ |
+| New modules | 0 | 6 | **+6** |
+| New CLI commands | 0 | 5 | **+5** |
+| New MCP tools | 0 | ~5 | **+5** |
+| Docstring coverage (new) | — | 23/23 | **100%** |
 
 ---
 
 ## Phase 1: Test Suite
 
 ```
-260 passed, 0 failed, 0 errors in 11.11s
+335 passed, 1 warning in 14.34s
 ```
 
-New test files added:
-- `tests/unit/test_ethogram.py` — ethogram engine tests
-- `tests/unit/test_metrics.py` — clustering quality metrics tests
-- `tests/unit/test_comparison.py` — group comparison tests
+New test files (+75):
+- `tests/unit/test_temporal_smooth.py` — 22 tests
+- `tests/unit/test_cluster_transfer.py` — 16 tests
+- `tests/unit/test_paired.py` — 24 tests
+- `tests/unit/test_nwb_export.py` — 13 tests
 
-**Delta**: +109 tests (151 → 260). All pass.
-
----
+All tests run in under 15 seconds. No timeouts, no flaky tests.
 
 ## Phase 2: Import Integrity
 
-- **Total**: 81 modules scanned (excluding vendored: aot, sam, dinov2, dinov3)
-- **Passed**: 80
-- **Failed**: 1 — `castle.utils.myumap` (requires RAPIDS cuML, expected)
-- **New modules importable**: ✅
-  - `castle.core.ethogram`
-  - `castle.core.metrics`
-  - `castle.core.comparison`
-  - `castle.service.ethogram_service`
-  - `castle.service.comparison_service`
-  - `castle.visualization.comparison_plots`
-  - `castle.cli.ethogram_cmd`
-  - `castle.cli.compare_cmd`
+- 82 non-vendored modules scanned
+- 81 import successfully
+- 1 optional failure: `castle.utils.myumap` (requires cuML — GPU-only, auto-fallback to umap-learn)
+- 0 critical failures
 
-**Delta**: +7 importable modules (74 → 81).
+## Phase 3: Static Analysis
 
----
+```
+ruff check castle/ --exclude thirdparty,aot,sam,dinov2 --select E722,T201,B006,F401,F841
+All checks passed!
+```
 
-## Phase 3: Static Analysis (ruff, non-vendored only)
+Previous v4 had 7 F401 (unused imports) — all fixed in `c269dba` and `139d649`.
 
-**7 findings** — all F401 (unused imports), all in NEW code:
+## Phase 4: Smoke Tests (26/26)
 
-| File | Line | Issue |
-|------|------|-------|
-| `castle/core/ethogram.py` | 9 | `dataclasses.field` unused |
-| `castle/core/metrics.py` | 9 | `typing.Dict` unused |
-| `castle/core/metrics.py` | 9 | `typing.Tuple` unused |
-| `castle/service/comparison_service.py` | 9 | `json` unused |
-| `castle/service/comparison_service.py` | 11 | `typing.Optional` unused |
-| `castle/service/ethogram_service.py` | 11 | `typing.Optional` unused |
-| `castle/visualization/comparison_plots.py` | 11 | `typing.Optional` unused |
+### New Feature Smoke Tests
+| Test | Result |
+|------|--------|
+| `temporal_smooth` round-trip (median + min_bout) | ✅ |
+| `cluster_transfer` save → load → apply | ✅ |
+| `auto_cluster` scoring + MICROSCOPE_PRESETS (4 presets) | ✅ |
+| `CASTLE_STORAGE` environment variable | ✅ |
+| `NWB export` round-trip (write → verify exists, 196KB) | ✅ |
 
-**Delta**: v3 had 1 finding (F401 in mcp/server.py, now fixed). v4 has 7 new F401 findings, all trivially fixable.
+### CLI Subcommand Tests
+| Command | Result |
+|---------|--------|
+| `castle project --help` | ✅ |
+| `castle track --help` | ✅ |
+| `castle extract --help` | ✅ |
+| `castle cluster --help` | ✅ |
+| `castle ethogram --help` | ✅ |
+| `castle compare --help` | ✅ |
+| `castle info --help` | ✅ |
+| `castle cluster auto --help` | ✅ |
+| `castle cluster save-model --help` | ✅ |
+| `castle cluster apply-model --help` | ✅ |
+| `castle ethogram export-nwb --help` | ✅ |
+| `castle compare run` has `--paired` flag | ✅ |
 
-> Note: The v3 F401 (`typing.Optional` in `castle/mcp/server.py`) was fixed by commit `6249530`.
-
----
-
-## Phase 4: Smoke Tests
-
-**21/21 pass** (was 15/15 in v3):
-
-New smoke tests:
-1. ✅ Service: ethogram_service importable
-2. ✅ Service: comparison_service importable
-3. ✅ Ethogram: transition matrix (3×3 shape verified)
-4. ✅ Ethogram: bout statistics (3 clusters verified)
-5. ✅ Ethogram: full ethogram (compute_ethogram end-to-end)
-6. ✅ Metrics: evaluate_clustering (silhouette_sample computed)
-7. ✅ Metrics: temporal_coherence = 0.750
-8. ✅ Comparison: compute_fingerprint (frequencies verified)
-9. ✅ Comparison: compare_groups (BFA distance + p-value computed)
-10. ✅ Comparison: hedges_g (effect size = -2.400)
-11. ✅ Comparison viz imports (radar, volcano, forest)
-
----
+### Module Import Tests
+All 6 new core modules + 2 new service modules import cleanly.
 
 ## Phase 5: UI/Frontend
 
-- **CLI subcommands**: 7 total (was 5)
-  - Existing: `project`, `track`, `extract`, `cluster`, `mcp`
-  - **New**: `ethogram`, `compare` ✅
-- **All --help**: renders correctly for all subcommands
-- **MCP server**: 19 exports (tools + resources), up from ~13
-  - New MCP tools: `ethogram_analyze`, `ethogram_bouts`, `ethogram_transitions`, `compare_groups_tool`, `compute_fingerprint_tool`, `cluster_evaluate`
-- **Desktop modules**: import OK (Qt runtime not tested)
-- **Gradio app**: `castle.app` module not found (may have been refactored)
-
----
+- **CLI**: 7 top-level commands, 5 new subcommands — all `--help` works
+- **MCP Server**: 21+ tools/resources (9 original + ethogram + metrics + comparison + cluster transfer + auto + NWB)
+- **Gradio UI**: Not tested (requires GPU/display)
+- **Desktop**: Not tested (requires Qt runtime)
 
 ## Phase 6: File Consistency
 
-- **Syntax check**: 96/96 passed (was 86/86)
-- **Git status**: clean (only QC artifacts `.qc-baseline.json`, `qc-report.md` modified)
-- **No orphaned files** or merge conflicts
-
----
+- `[HUMAN TO CONFIRM]` placeholders: **0** (was 5 in docs)
+- Git status: clean working tree
+- No syntax errors in any non-vendored Python file
 
 ## Phase 7: Documentation
 
-- **Modules scanned**: 72 (excluding vendored + desktop)
-- **Missing module docstrings**: 0
-- **Missing class docstrings**: 0
-- **All new modules documented**: ✅
+### New Documentation
+- `docs/getting-started/concepts.md` — biology-friendly explanation of CASTLE
+- `docs/getting-started/gpu-requirements.md` — filled with RTX 4090 benchmark data + comparison table
+- `docs/tutorials/step3-extract.md` — timing benchmarks added
+- `docs/tutorials/step4-analysis.md` — practical tips added
+- `mkdocs.yml` — Core Concepts added to nav
+
+### Docstring Coverage (New Modules)
+- 23 docstrings checked across 6 new files: **23/23 present (100%)**
 
 ---
 
-## Delta from v3
+## New Features Added This Session
 
-### Improvements
-- ✅ +109 unit tests (151 → 260)
-- ✅ +7 importable modules (74 → 81)
-- ✅ +10 syntax-checked files (86 → 96)
-- ✅ +6 new smoke tests (15 → 21)
-- ✅ +2 CLI subcommands (ethogram, compare)
-- ✅ +6 MCP tools (ethogram, comparison, metrics)
-- ✅ v3 F401 in mcp/server.py fixed
+1. **Temporal Smoothing** (`castle/core/temporal_smooth.py`)
+   - Median filter + minimum bout duration filter
+   - Integrated into ethogram pipeline (`--smooth`)
+   
+2. **Cluster Transfer** (`castle/core/cluster_transfer.py`)
+   - Save/load clustering models (.npz)
+   - k-NN classification in feature space or UMAP space
+   - Enables longitudinal studies
 
-### Regressions
-- ⚠️ +6 new F401 unused imports (all in new P1/P2/P4 code)
-  - Trivially fixable, zero functional impact
+3. **Paired Statistical Tests** (`castle/core/comparison.py`)
+   - Sign-flip paired permutation test
+   - Per-feature paired tests with BH-FDR
+   - Paired Hedges' g effect sizes
 
-### Unchanged
-- 1 known cuML import failure (expected, no RAPIDS GPU)
-- 0 missing docstrings
-- 0 bare excepts, print statements, mutable defaults (in non-vendored code)
+4. **NWB Export** (`castle/core/nwb_export.py`)
+   - Export to Neurodata Without Borders format
+   - BehavioralTimeSeries + TimeIntervals + bout stats
+   - Optional dependency (pynwb)
+
+5. **CASTLE_STORAGE Environment Variable** (`castle/cli/storage_util.py`)
+   - No more `--storage` on every command
+   - Priority: arg → env var → current dir
+
+6. **Automated Behavior Microscope** (`castle/core/auto_cluster.py`)
+   - Parameter sweep using Raiso-optimized presets
+   - Quality-based selection (temporal coherence + CH + bout quality)
+   - `castle cluster auto` CLI
+
+---
+
+*QC v5 completed. PASS.*

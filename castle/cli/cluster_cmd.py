@@ -233,6 +233,61 @@ def apply_model(
         raise typer.Exit(code=1)
 
 
+@app.command("auto")
+def auto_cmd(
+    project: str = typer.Argument(..., help="Project name"),
+    storage: str = typer.Option(None, "-s", "--storage"),
+    cluster: str = typer.Option("init", "--cluster", "-c", help="Starting cluster name"),
+    presets: str = typer.Option(None, "--presets", help="Comma-separated presets: low,intermediate,high,super_high"),
+    eps: str = typer.Option(None, "--eps", help="Comma-separated eps values (default: 0.3,0.5,0.7,1.0,1.5,2.0,3.0)"),
+    roi: int = typer.Option(1, "--roi", help="ROI ID"),
+    bin_size: int = typer.Option(1, "--bin-size", help="Temporal bin size"),
+    model: str = typer.Option("dinov3_vitb16", "--model", "-m", help="Visual model name"),
+    no_label: bool = typer.Option(False, "--no-label", help="Skip auto-labeling"),
+    no_submit: bool = typer.Option(False, "--no-submit", help="Skip auto-submit"),
+):
+    """Automated Behavior Microscope — sweep presets and find best clustering."""
+    # Resolve storage with CASTLE_STORAGE fallback
+    storage = get_storage(storage)
+    if not storage:
+        console.print("[red]✗[/red] No storage path. Set CASTLE_STORAGE or use --storage/-s", err=True)
+        raise typer.Exit(1)
+    
+    preset_list = presets.split(",") if presets else None
+    eps_list = [float(e) for e in eps.split(",")] if eps else None
+    
+    def notify(msg, level="info"):
+        if level == "error":
+            console.print(f"[red]{msg}[/red]")
+        else:
+            console.print(f"  {msg}")
+    
+    session = ClusteringSession(storage, project, roi, bin_size, model, notify=notify)
+    
+    console.print("[bold]Running Automated Behavior Microscope...[/bold]")
+    result = session.auto_cluster(
+        cluster_name=cluster,
+        presets=preset_list,
+        eps_values=eps_list,
+        auto_label=not no_label,
+        auto_submit=not no_submit,
+    )
+    
+    if not result.get('success'):
+        console.print(f"[red]✗[/red] {result.get('error', 'unknown')}")
+        raise typer.Exit(1)
+    
+    console.print(f"[green]✓[/green] Best: {result['best_preset']} n={result['best_n_neighbors']} eps={result['best_eps']}")
+    console.print(f"  Clusters: {result['n_clusters']} | Quality: {result['quality_score']:.4f} | TC: {result['temporal_coherence']:.4f}")
+    console.print(f"  Candidates evaluated: {result['candidates_evaluated']}")
+    
+    if result.get('top_candidates'):
+        console.print("\n[bold]Top 5 candidates:[/bold]")
+        for i, c in enumerate(result['top_candidates'], 1):
+            console.print(f"  {i}. {c['preset']} n={c['n_neighbors']} eps={c['eps']} → "
+                       f"{c['n_clusters']} clusters, Q={c['quality_score']}, TC={c['tc']}")
+
+
 @app.command("evaluate")
 def evaluate(
     project: str = typer.Argument(..., help="Project name"),

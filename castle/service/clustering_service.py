@@ -316,6 +316,79 @@ class ClusteringSession:
             'success': True,
         }
     
+    def auto_cluster(self, cluster_name: str = "init",
+                     presets: list = None,
+                     eps_values: list = None,
+                     auto_label: bool = True,
+                     auto_submit: bool = True,
+                     progress_callback=None) -> dict:
+        """Run automated Behavior Microscope.
+        
+        Sweeps through Raiso-optimized microscope presets, tries multiple eps values,
+        scores each with quality metrics, selects the best, and optionally auto-labels
+        and submits.
+        """
+        from castle.core.auto_cluster import auto_cluster as _auto_cluster, select_best
+        
+        # Select cluster to work on
+        self._current_cluster_name = cluster_name
+        self.local_latents = self.latents.select(selected_cluster=cluster_name)
+        
+        if len(self.local_latents.data) == 0:
+            return {'success': False, 'error': 'Selected cluster is empty'}
+        
+        # Run parameter sweep
+        candidates = _auto_cluster(
+            data=self.local_latents.data,
+            presets=presets,
+            eps_values=eps_values,
+            progress_callback=progress_callback,
+            device=self.local_latents.device if hasattr(self.local_latents, 'device') else 'cpu',
+        )
+        
+        if not candidates:
+            return {'success': False, 'error': 'No valid clustering found'}
+        
+        best = select_best(candidates)
+        
+        # Apply best result
+        self.local_latents.build_embedding(best.umap_config)
+        self.local_latents.build_cluster(method='dbscan', configs={'eps': best.eps})
+        
+        result = {
+            'success': True,
+            'best_preset': best.preset_name,
+            'best_n_neighbors': best.n_neighbors,
+            'best_eps': best.eps,
+            'n_clusters': best.n_clusters,
+            'quality_score': best.quality_score,
+            'temporal_coherence': best.temporal_coherence,
+            'candidates_evaluated': len(candidates),
+        }
+        
+        if auto_label:
+            count = self.auto_label_all(parent_name=cluster_name)
+            result['clusters_labeled'] = count
+        
+        if auto_submit:
+            submit_result = self.submit()
+            result.update(submit_result)
+        
+        # Top 5 candidates summary
+        result['top_candidates'] = [
+            {
+                'preset': c.preset_name,
+                'n_neighbors': c.n_neighbors,
+                'eps': c.eps,
+                'n_clusters': c.n_clusters,
+                'quality_score': round(c.quality_score, 4),
+                'tc': round(c.temporal_coherence, 4),
+            }
+            for c in candidates[:5]
+        ]
+        
+        return result
+    
     def get_frame(self, global_bin_index: int) -> Optional[np.ndarray]:
         """
         Retrieve a representative frame for a given global bin index.

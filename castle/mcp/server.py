@@ -294,6 +294,63 @@ def cluster_run(
 
 
 @mcp.tool()
+def cluster_auto(project: str, storage: str = "", cluster: str = "init", presets: str = "",
+                 roi: int = 1, bin_size: int = 1, model: str = "dinov3_vitb16") -> dict:
+    """Automated Behavior Microscope — sweep presets and find best clustering.
+    
+    Runs through CASTLE's microscope presets, tries multiple DBSCAN eps values,
+    and selects the best clustering based on quality metrics.
+    
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        cluster: Starting cluster name (default: "init")
+        presets: Comma-separated presets (low,intermediate,high,super_high), empty = all
+        roi: ROI ID
+        bin_size: Temporal bin size
+        model: Visual model name
+    """
+    try:
+        from castle.service.clustering_service import ClusteringSession
+        
+        storage_dir = storage or _storage()
+        preset_list = presets.split(",") if presets else None
+        
+        session = ClusteringSession(
+            storage_path=storage_dir,
+            project_name=project,
+            roi=roi,
+            bin_size=bin_size,
+            model=model,
+        )
+        
+        result = session.auto_cluster(
+            cluster_name=cluster,
+            presets=preset_list,
+            auto_label=True,
+            auto_submit=True,
+        )
+        
+        if not result.get('success'):
+            return {"status": "error", "message": result.get('error', 'unknown')}
+        
+        return {
+            "status": "success",
+            "message": f"Best: {result['best_preset']} n={result['best_n_neighbors']} eps={result['best_eps']}",
+            "best_preset": result['best_preset'],
+            "best_n_neighbors": str(result['best_n_neighbors']),
+            "best_eps": result['best_eps'],
+            "n_clusters": result['n_clusters'],
+            "quality_score": result['quality_score'],
+            "temporal_coherence": result['temporal_coherence'],
+            "candidates_evaluated": result['candidates_evaluated'],
+            "top_candidates": result.get('top_candidates', []),
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
 def cluster_label(project: str, cluster_name: str, label: str, scheme: str = "") -> dict:
     """Label a behavioral cluster with a human-readable name.
 

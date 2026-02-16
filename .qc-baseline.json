@@ -1,96 +1,80 @@
 {
-  "timestamp": "2026-02-16T19:05:00+08:00",
-  "version": "v4",
+  "timestamp": "2026-02-16T20:10:00+08:00",
+  "version": "v5",
+  "commit": "139d649",
+  "verdict": "PASS",
   "phases": {
     "1_test_suite": {
-      "total": 260,
-      "passed": 260,
+      "total": 335,
+      "passed": 335,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
-      "duration_s": 11.11
+      "duration_s": 14.34,
+      "delta": "+75 tests since v4"
     },
     "2_import_integrity": {
-      "total": 81,
-      "passed": 80,
+      "total": 82,
+      "passed": 81,
       "failed": 1,
-      "failures": ["castle.utils.myumap (ImportError: requires RAPIDS cuML)"],
+      "failures": ["castle.utils.myumap (ImportError: requires RAPIDS cuML — optional)"],
       "skipped_vendored": ["aot", "sam", "dinov2", "dinov3"],
-      "duration_s": 9.99
+      "critical_failures": 0
     },
     "3_static_analysis": {
-      "tool": "ruff 0.15.1",
+      "tool": "ruff",
       "rules_checked": ["E722", "T201", "B006", "F401", "F841"],
-      "findings": {
-        "E722_bare_except": 0,
-        "T201_print_statements": 0,
-        "B006_mutable_defaults": 0,
-        "F401_unused_imports": 7,
-        "F841_unused_variables": 0
-      },
-      "total_findings": 7,
-      "fixable": 7,
-      "new_findings": [
-        {"file": "castle/core/ethogram.py", "code": "F401", "line": 9, "message": "dataclasses.field imported but unused"},
-        {"file": "castle/core/metrics.py", "code": "F401", "line": 9, "message": "typing.Dict imported but unused"},
-        {"file": "castle/core/metrics.py", "code": "F401", "line": 9, "message": "typing.Tuple imported but unused"},
-        {"file": "castle/service/comparison_service.py", "code": "F401", "line": 9, "message": "json imported but unused"},
-        {"file": "castle/service/comparison_service.py", "code": "F401", "line": 11, "message": "typing.Optional imported but unused"},
-        {"file": "castle/service/ethogram_service.py", "code": "F401", "line": 11, "message": "typing.Optional imported but unused"},
-        {"file": "castle/visualization/comparison_plots.py", "code": "F401", "line": 11, "message": "typing.Optional imported but unused"}
-      ]
+      "total_findings": 0,
+      "delta": "-7 since v4 (all F401 fixed)"
     },
     "4_smoke_tests": {
-      "total": 21,
-      "passed": 21,
+      "total": 26,
+      "passed": 26,
       "failed": 0,
       "tests": [
+        "temporal_smooth round-trip",
+        "cluster_transfer save/load/apply",
+        "auto_cluster scoring + presets",
+        "CASTLE_STORAGE env var",
+        "NWB export round-trip",
+        "CLI project --help",
+        "CLI track --help",
+        "CLI extract --help",
+        "CLI cluster --help",
+        "CLI ethogram --help",
+        "CLI compare --help",
+        "CLI info --help",
+        "CLI cluster auto --help",
+        "CLI cluster save-model --help",
+        "CLI cluster apply-model --help",
+        "CLI ethogram export-nwb --help",
+        "CLI compare --paired flag present",
+        "All 6 new module imports OK",
+        "Ethogram service import",
+        "Comparison service import",
+        "Metrics service import",
         "MCP server import",
-        "MCP tool/resource count (19 exports)",
-        "ProjectConfig round-trip",
-        "Service: project_service",
-        "Service: annotation_service",
-        "Service: history_service",
-        "Service: bout_service",
-        "Service: ethogram_service",
-        "Service: comparison_service",
-        "Lazy import speed (<0.5s)",
-        "Ethogram: transition matrix",
-        "Ethogram: bout statistics",
-        "Ethogram: full ethogram",
-        "Metrics: evaluate_clustering",
-        "Metrics: temporal coherence",
-        "Comparison: compute_fingerprint",
-        "Comparison: compare_groups",
-        "Comparison: hedges_g",
-        "Comparison viz imports",
-        "CLI all subcommands (7: project,track,extract,cluster,mcp,ethogram,compare)",
-        "All new modules importable (ethogram, metrics, comparison + services + viz)"
+        "ClusteringService import",
+        "score_clustering returns quality_score",
+        "MICROSCOPE_PRESETS has 4 presets",
+        "Docstrings: 23/23 for new modules"
       ]
     },
     "5_ui_frontend": {
-      "gradio_ui": "N/A (no castle.app module)",
-      "desktop_modules": "PASS (import ok, Qt runtime not tested)",
-      "cli_subcommands": "PASS (project, track, extract, cluster, mcp, ethogram, compare)",
-      "mcp_server": "PASS (19 tool/resource exports)",
-      "new_cli_ethogram": "PASS",
-      "new_cli_compare": "PASS"
+      "cli_subcommands": "PASS (7: project, track, extract, cluster, ethogram, compare, info)",
+      "new_cli_commands": "PASS (cluster auto/save-model/apply-model, ethogram export-nwb, compare --paired)",
+      "mcp_server": "PASS (21+ tools/resources)"
     },
     "6_file_consistency": {
-      "syntax_check": {
-        "total": 96,
-        "passed": 96,
-        "errors": 0
-      },
-      "git_status": "clean (only qc artifacts modified)",
-      "git_diff_check": "clean"
+      "doc_placeholders": 0,
+      "HUMAN_TO_CONFIRM": 0,
+      "git_status": "clean"
     },
     "7_documentation": {
-      "total_modules": 72,
-      "module_docstrings_missing": 0,
-      "class_docstrings_missing": 0,
-      "missing_classes": [],
-      "mcp_modules_documented": true,
+      "new_module_docstrings": "23/23 present (0 missing)",
+      "concepts_page": "docs/getting-started/concepts.md (new)",
+      "gpu_requirements": "docs/getting-started/gpu-requirements.md (filled with benchmarks)",
+      "tutorial_placeholders_fixed": true,
       "readme_exists": true
     }
   }

@@ -16,7 +16,7 @@ import gradio as gr
 from castle.core.cluster import auto_generate_cluster_name
 
 # Import from split modules
-from castle.ui.cluster_tree import build_cluster_tree_markdown
+# Cluster tree functions imported by cluster_handlers
 from castle.ui.cluster_handlers import (
     embedding_plot_click,
     collapse_accordion,
@@ -180,11 +180,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     session_info = gr.State(None)
     history_state = gr.State(None)  # HistoryManager for undo/redo
 
-    ui['cluster_tree'] = gr.Markdown("*No clusters yet*", visible=True)
-
     with gr.Row(visible=True) as ui['cluster_row_main']:
         with gr.Column(scale=2):
-            ui['select_cluster'] = gr.Dropdown(label="Select Cluster", visible=True, interactive=True)
+            ui['cluster_tree_radio'] = gr.Radio(label="Cluster Tree", choices=[], interactive=True, visible=True)
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
@@ -233,22 +231,18 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['restore_btn'].click(
         fn=restore_session,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
-        outputs=[mulvideo, latents, ui['syllables_plot'], ui['select_cluster'],
+        outputs=[mulvideo, latents, ui['syllables_plot'], ui['cluster_tree_radio'],
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
                  local_embedding_plot, ui['embedding_plot']]
     ).then(
         fn=lambda: (gr.update(visible=False), gr.update(visible=False)),
         outputs=[ui['restore_btn'], ui['session_status']]
-    ).then(
-        fn=lambda lat: build_cluster_tree_markdown(lat.cluster_meta, lat.cluster) if lat else "*No clusters yet*",
-        inputs=latents,
-        outputs=ui['cluster_tree']
     )
 
-    ui['select_cluster'].focus(
+    ui['cluster_tree_radio'].select(
         fn=update_select_cluster_list,
         inputs=latents,
-        outputs=ui['select_cluster']
+        outputs=ui['cluster_tree_radio']
     )
 
     ui['preset_dropdown'].select(
@@ -258,7 +252,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['umap_run'].click(
         fn=generate_embedding,
-        inputs=[latents, ui['select_cluster'], ui['umap_config_text']],
+        inputs=[latents, ui['cluster_tree_radio'], ui['umap_config_text']],
         outputs=[local_latents, local_embedding_plot, ui['embedding_plot']]
     )
 
@@ -294,29 +288,21 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # Auto-generate cluster name when ID changes
     ui['label_cluster_id'].change(
         fn=auto_generate_cluster_name,
-        inputs=[ui['select_cluster'], ui['label_cluster_id']],
+        inputs=[ui['cluster_tree_radio'], ui['label_cluster_id']],
         outputs=ui['label_cluster_name']
     )
 
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo],
-        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
-    ).then(
-        fn=lambda lat: build_cluster_tree_markdown(lat.cluster_meta, lat.cluster) if lat else "*No clusters yet*",
-        inputs=latents,
-        outputs=ui['cluster_tree']
+        outputs=[ui['syllables_plot'], ui['cluster_tree_radio'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
     )
 
     # Enter & Submit all: auto-label all clusters and submit
     ui['enter_submit_all_btn'].click(
         fn=label_all_and_submit,
-        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['select_cluster'], history_state],
-        outputs=[ui['syllables_plot'], ui['select_cluster'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps'], history_state],
-    ).then(
-        fn=lambda lat: build_cluster_tree_markdown(lat.cluster_meta, lat.cluster) if lat else "*No clusters yet*",
-        inputs=latents,
-        outputs=ui['cluster_tree']
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['cluster_tree_radio'], history_state],
+        outputs=[ui['syllables_plot'], ui['cluster_tree_radio'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps'], history_state],
     ).then(
         fn=update_history_buttons,
         inputs=[history_state],
@@ -348,7 +334,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     cluster_page_tab.select(
         fn=update_select_cluster_list,
         inputs=latents,
-        outputs=ui['select_cluster']
+        outputs=ui['cluster_tree_radio']
     )
 
     # Expose shared state for Annotator tab (A-04)
@@ -359,7 +345,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
     visibility_components = {
         'cluster_input_accordion': ui['cluster_input_accordion'],
-        'cluster_tree': ui['cluster_tree'],
         'cluster_row_main': ui['cluster_row_main'],
         'syllables_plot': ui['syllables_plot'],
         'cluster_row_files': ui['cluster_row_files'],

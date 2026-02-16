@@ -22,20 +22,20 @@ def test_build_cluster_tree_markdown():
     assert 'root_a0' in md
     assert 'root_a1' in md
     assert 'root_a0_b0' in md
-    # init should be skipped
-    assert 'init' not in md
+    assert 'init' in md  # init is now included as the root node
     # Should have header
     assert 'Cluster Tree' in md
 
 
-def test_build_cluster_tree_markdown_empty():
+def test_build_cluster_tree_markdown_init_only():
     cluster_meta = {
         0: {'name': 'init', 'color': 'grey'},
     }
     cluster_array = np.array([0] * 10)
 
     md = build_cluster_tree_markdown(cluster_meta, cluster_array)
-    assert 'No clusters yet' in md
+    assert 'init' in md
+    assert '10 bins' in md
 
 
 def test_build_cluster_tree_markdown_counts():

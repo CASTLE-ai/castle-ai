@@ -29,13 +29,9 @@ def build_cluster_tree_markdown(cluster_meta, cluster_array):
         name = meta['name']
         count = counts.get(cid, 0)
 
-        # Skip the init cluster
-        if name == 'init':
-            continue
-
         # Determine depth from name parts
         parts = name.split('_')
-        depth = len(parts) - 1  # 'root' = 0, 'root_a0' = 1, etc.
+        depth = max(len(parts) - 1, 0)
         indent = '\u00a0\u00a0\u00a0\u00a0' * depth  # Non-breaking spaces for indent
 
         _color = meta.get('color', 'grey')
@@ -71,10 +67,6 @@ def build_cluster_tree_choices(cluster_meta, cluster_array):
     for cid, meta in items:
         name = meta['name']
         count = counts.get(cid, 0)
-        
-        # Skip the init cluster
-        if name == 'init':
-            continue
         
         # Determine depth from name parts
         parts = name.split('_')

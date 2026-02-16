@@ -169,7 +169,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=True)
             ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=True)
             ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
-            ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=True, visible=False)
+            ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
             ui['session_status'] = gr.Markdown("", visible=False)
         
     # State Holders
@@ -220,11 +220,15 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[mulvideo, latents, session_info]
     ).then(
         fn=lambda info: (
-            gr.update(visible=info is not None),
+            gr.update(interactive=info is not None),
             gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters", visible=info is not None) if info else gr.update(visible=False)
         ),
         inputs=[session_info],
         outputs=[ui['restore_btn'], ui['session_status']]
+    ).then(
+        fn=update_select_cluster_list,
+        inputs=latents,
+        outputs=ui['cluster_tree_radio']
     )
 
     # Restore previous session (B-03: also restores UMAP embedding)

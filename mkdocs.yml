@@ -60,6 +60,7 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+    - Core Concepts: getting-started/concepts.md
     - GPU Requirements: getting-started/gpu-requirements.md
   - Tutorials:
     - Workflow Overview: tutorials/overview.md

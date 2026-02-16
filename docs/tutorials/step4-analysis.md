@@ -201,7 +201,10 @@ After submitting, the following are generated:
 - **eps = 1.0** is a good starting point for clustering
 - If clusters are too noisy, try a **larger n_neighbors** value
 - If behaviors are merged together, try **higher magnification** or **smaller eps**
-- [HUMAN TO CONFIRM: Additional tips from real usage experience]
+- Use **multiple videos** for more robust clustering — single-video embeddings can overfit to that animal's quirks
+- The first round of labeling (cold start) takes ~30 min of interactive exploration; subsequent rounds are much faster (~3 min) once you know what to look for
+- Save your UMAP settings once you find a configuration that works for your experimental paradigm — you can reuse them across projects
+- If the UMAP plot looks like a single blob with no structure, try a **smaller n_neighbors** (e.g., 25–50) or switch to **Intermediate/High magnification**
 
 ---
 

@@ -16,6 +16,7 @@ from castle.service.project_service import (
     add_videos_from_directory,
     list_projects,
 )
+from castle.cli.storage_util import get_storage
 
 console = Console()
 app = typer.Typer(no_args_is_help=True)
@@ -24,9 +25,10 @@ app = typer.Typer(no_args_is_help=True)
 @app.command("init")
 def init(
     name: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
 ):
     """Create a new CASTLE project."""
+    storage = get_storage(storage)
     try:
         result = create_project(storage, name)
         console.print(f"[green]✓[/green] Project [bold]{result['name']}[/bold] created at {result['path']}")
@@ -38,9 +40,10 @@ def init(
 @app.command("info")
 def info(
     name: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
 ):
     """Show project information."""
+    storage = get_storage(storage)
     result = get_project_info(storage, name)
     if 'error' in result:
         console.print(f"[red]✗[/red] {result['error']}")
@@ -66,9 +69,10 @@ def info(
 def add_videos_cmd(
     name: str = typer.Argument(..., help="Project name"),
     source: str = typer.Option(..., "--source", help="Directory or file path(s) to add"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
 ):
     """Add video files to a project from a directory or file list."""
+    storage = get_storage(storage)
     if os.path.isdir(source):
         result = add_videos_from_directory(storage, name, source)
         console.print(
@@ -88,9 +92,10 @@ def add_videos_cmd(
 
 @app.command("list")
 def list_cmd(
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
 ):
     """List all projects in storage."""
+    storage = get_storage(storage)
     projects = list_projects(storage)
     if not projects:
         console.print("[yellow]No projects found.[/yellow]")

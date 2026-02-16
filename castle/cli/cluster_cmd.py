@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from castle.service.clustering_service import ClusteringSession
+from castle.cli.storage_util import get_storage
 
 console = Console()
 app = typer.Typer(no_args_is_help=True)
@@ -18,7 +19,7 @@ app = typer.Typer(no_args_is_help=True)
 @app.command("run")
 def run(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
     roi: int = typer.Option(1, "--roi", help="ROI ID"),
     bin_size: int = typer.Option(1, "--bin-size", help="Temporal bin size (frames)"),
     model: str = typer.Option("dinov3_vitb16", "--model", "-m", help="Visual model name"),
@@ -30,6 +31,7 @@ def run(
     eps: float = typer.Option(1.0, "--eps", help="DBSCAN epsilon-neighborhood radius"),
 ):
     """Run full clustering pipeline: UMAP + DBSCAN + auto-label + submit."""
+    storage = get_storage(storage)
     console.print(f"[bold]Initializing clustering session...[/bold]")
 
     def notify(msg, level="info"):
@@ -98,13 +100,14 @@ def run(
 @app.command("export")
 def export(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
     roi: int = typer.Option(1, "--roi", help="ROI ID"),
     bin_size: int = typer.Option(1, "--bin-size", help="Temporal bin size"),
     model: str = typer.Option("dinov3_vitb16", "--model", "-m", help="Visual model name"),
     format: str = typer.Option("csv", "--format", "-f", help="Export format (csv)"),
 ):
     """Export clustering results (restore + show info)."""
+    storage = get_storage(storage)
     def notify(msg, level="info"):
         if level == "error":
             console.print(f"[red]{msg}[/red]")
@@ -143,16 +146,104 @@ def export(
         console.print(f"Time series: {p}")
 
 
+@app.command("save-model")
+def save_model(
+    project: str = typer.Argument(..., help="Project name"),
+    storage: str = typer.Option(None, "-s", "--storage", help="Storage directory"),
+    output: str = typer.Option(None, "-o", "--output", help="Output model path (.npz)"),
+    name: str = typer.Option("", "--name", help="Model name"),
+    k: int = typer.Option(5, "--k", help="k-NN neighbors"),
+):
+    """Save clustering model for transfer to new data."""
+    import os
+    from castle.service.clustering_service import save_project_cluster_model
+
+    storage = get_storage(storage)
+    project_path = os.path.join(storage, project)
+    if not os.path.isdir(project_path):
+        console.print(f"[red]✗[/red] Project directory not found: {project_path}")
+        raise typer.Exit(code=1)
+
+    try:
+        saved_path = save_project_cluster_model(
+            project_path=project_path,
+            output_path=output,
+            model_name=name,
+            k=k,
+        )
+        console.print(f"[green]✓[/green] Cluster model saved: {saved_path}")
+    except Exception as e:
+        console.print(f"[red]✗[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command("apply-model")
+def apply_model(
+    project: str = typer.Argument(..., help="Target project with new latent features"),
+    model: str = typer.Option(..., "-m", "--model", help="Path to saved model (.npz)"),
+    storage: str = typer.Option(None, "-s", "--storage", help="Storage directory"),
+    method: str = typer.Option("knn_feature", "--method", help="knn_feature or knn_umap"),
+):
+    """Apply saved clustering model to new data."""
+    import os
+    from castle.service.clustering_service import apply_cluster_model_to_project
+
+    storage = get_storage(storage)
+    project_path = os.path.join(storage, project)
+    if not os.path.isdir(project_path):
+        console.print(f"[red]✗[/red] Project directory not found: {project_path}")
+        raise typer.Exit(code=1)
+
+    if not os.path.exists(model):
+        console.print(f"[red]✗[/red] Model file not found: {model}")
+        raise typer.Exit(code=1)
+
+    try:
+        result = apply_cluster_model_to_project(
+            model_path=model,
+            project_path=project_path,
+            method=method,
+        )
+        console.print(f"[green]✓[/green] Applied model to {result['n_frames']} frames")
+        console.print(f"  Mean confidence: {result['mean_confidence']:.3f}")
+        console.print(f"  Labels CSV: {result['output_csv']}")
+        console.print(f"  ID CSV: {result['id_csv']}")
+
+        # Show cluster distribution
+        import numpy as np
+        labels = result["labels"]
+        table = Table(title="Cluster Distribution")
+        table.add_column("ID", style="dim")
+        table.add_column("Name", style="bold")
+        table.add_column("Count", justify="right")
+        table.add_column("Fraction", justify="right")
+        for cid in sorted(result["cluster_names"].keys()):
+            count = int(np.sum(labels == cid))
+            frac = count / len(labels) if len(labels) else 0
+            table.add_row(
+                str(cid),
+                result["cluster_names"][cid],
+                str(count),
+                f"{frac:.1%}",
+            )
+        console.print(table)
+
+    except Exception as e:
+        console.print(f"[red]✗[/red] {e}")
+        raise typer.Exit(code=1)
+
+
 @app.command("evaluate")
 def evaluate(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "-s", "--storage", help="Storage directory"),
+    storage: str = typer.Option(None, "-s", "--storage", help="Storage directory (or set CASTLE_STORAGE env var)"),
     ground_truth: str = typer.Option(None, "--gt", help="Ground truth CSV path"),
 ):
     """Evaluate clustering quality with automated metrics."""
     import os
     from castle.service.metrics_service import evaluate_project_clustering
 
+    storage = get_storage(storage)
     project_path = os.path.join(storage, project)
     if not os.path.isdir(project_path):
         console.print(f"[red]✗[/red] Project directory not found: {project_path}")

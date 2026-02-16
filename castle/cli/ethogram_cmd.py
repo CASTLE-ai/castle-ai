@@ -133,6 +133,40 @@ def export(
     """Export ethogram data to CSV files."""
     from castle.service.ethogram_service import export_ethogram_csv
 
+    storage = get_storage(storage)
     project_path = os.path.join(storage, project)
     out_dir = export_ethogram_csv(project_path, output)
     typer.echo(f"Exported ethogram CSV files to {out_dir}")
+
+
+@app.command("export-nwb")
+def export_nwb(
+    project: str = typer.Argument(..., help="Project name"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory path"),
+    output: str = typer.Option(None, "--output", "-o", help="Output .nwb file path"),
+    description: str = typer.Option(
+        "CASTLE behavioral analysis", "--description", help="NWB session description"
+    ),
+):
+    """Export analysis results to NWB (Neurodata Without Borders) format."""
+    try:
+        from castle.core.nwb_export import _require_pynwb
+        _require_pynwb()
+    except ImportError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    from castle.service.nwb_service import export_project_nwb
+
+    project_path = os.path.join(storage, project) if storage else project
+
+    try:
+        nwb_path = export_project_nwb(
+            project_path,
+            output_path=output,
+            session_description=description,
+        )
+        typer.echo(f"Exported NWB file to {nwb_path}")
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)

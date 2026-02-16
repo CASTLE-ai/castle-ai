@@ -5,6 +5,8 @@ Main typer application and subcommand registration.
 
 import typer
 
+from castle.cli.storage_util import get_storage
+
 app = typer.Typer(
     name="castle",
     help="CASTLE — Animal Behavior Analysis CLI",
@@ -29,9 +31,10 @@ app.registered_commands += extract_cmd.app.registered_commands
 @app.command("info")
 def info_alias(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
 ):
     """Show project info (alias for 'project info')."""
+    storage = get_storage(storage)
     project_cmd.info(project, storage)
 
 

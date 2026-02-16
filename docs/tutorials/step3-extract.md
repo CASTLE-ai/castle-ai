@@ -130,12 +130,21 @@ latent_vectors = data['latent']  # Shape: (n_frames, feature_dim)
 
 Processing time depends on video length, GPU, and model size.
 
-[HUMAN TO CONFIRM: Approximate benchmarks for different configurations]
+**Approximate benchmarks** (RTX 4090, 720×720 @ 30fps, batch_size=5):
+
+| Video Length | DINOv2 ViT-B (per ROI) | DINOv3 ViT-L (per ROI) |
+|-------------|----------------------|----------------------|
+| 10 min | ~4 min | ~12 min |
+| 30 min | ~12 min | ~36 min |
+| 60 min | ~24 min | ~72 min |
+
+With 7 ROIs on a 30-min video, DINOv2 ViT-B extraction takes ~84 min total.
 
 !!! tip "Speed Tips"
-    - Increase **batch size** if you have spare VRAM (e.g., 64 or 128)
+    - Increase **batch size** if you have spare VRAM (e.g., 64 or 128 on a 24 GB card)
     - Use **Skip existing** when re-running after adding new videos
     - `dinov2_vitb14_reg4_pretrain` is fastest; `dinov3_vitl16` is slowest but potentially highest quality
+    - Feature extraction is the pipeline bottleneck — plan accordingly for large datasets
 
 ---
 

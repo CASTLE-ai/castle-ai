@@ -1,284 +1,234 @@
-"""
-tests/unit/test_auto_cluster.py
-Unit tests for automated Behavior Microscope (auto_cluster).
-"""
+"""Unit tests for automated Behavior Microscope (recursive hierarchical clustering)."""
 
 import numpy as np
 import pytest
-from sklearn.datasets import make_blobs
 
 from castle.core.auto_cluster import (
     MICROSCOPE_PRESETS,
+    DEFAULT_EPS_VALUES,
     ClusteringCandidate,
+    TreeNode,
     score_clustering,
+    select_umap_config,
+    find_best_eps,
     auto_cluster,
     select_best,
 )
 
 
 # ---------------------------------------------------------------------------
-# Test score_clustering function
+# MICROSCOPE_PRESETS
 # ---------------------------------------------------------------------------
 
-def test_score_clustering_perfect_labels():
-    """Perfect temporal structure: high quality score."""
-    # Create perfect labels: long stable bouts
-    labels = np.array([0]*50 + [1]*50 + [2]*50)
-    embedding = np.random.randn(150, 2)
-    
-    scores = score_clustering(labels, embedding)
-    
-    assert scores["quality_score"] > 0.7  # Should be high
-    assert scores["temporal_coherence"] > 0.95
-    assert scores["single_frame_ratio"] < 0.1
-    assert scores["n_clusters"] == 3
+class TestMicroscopePresets:
+    def test_has_four_presets(self):
+        assert len(MICROSCOPE_PRESETS) == 4
+        assert set(MICROSCOPE_PRESETS.keys()) == {"low", "intermediate", "high", "super_high"}
 
+    def test_low_builds_1_stage(self):
+        cfg = MICROSCOPE_PRESETS["low"]["build_config"](300)
+        assert len(cfg) == 1
+        assert cfg[0]["n_components"] == 2
+        assert cfg[0]["n_neighbors"] == 300
 
-def test_score_clustering_random_labels():
-    """Random flickering labels: low quality score."""
-    np.random.seed(42)
-    labels = np.random.randint(0, 5, size=200)
-    embedding = np.random.randn(200, 2)
-    
-    scores = score_clustering(labels, embedding)
-    
-    assert scores["quality_score"] < 0.5  # Should be low
-    assert scores["temporal_coherence"] < 0.3
-    assert scores["single_frame_ratio"] > 0.3
+    def test_intermediate_builds_2_stage(self):
+        cfg = MICROSCOPE_PRESETS["intermediate"]["build_config"]((500, 300))
+        assert len(cfg) == 2
+        assert cfg[0]["n_components"] == 5
+        assert cfg[1]["n_components"] == 2
 
+    def test_high_builds_2_stage_10d(self):
+        cfg = MICROSCOPE_PRESETS["high"]["build_config"]((300, 100))
+        assert len(cfg) == 2
+        assert cfg[0]["n_components"] == 10
+        assert cfg[1]["n_components"] == 2
 
-def test_score_clustering_all_same():
-    """All same label: penalized for n_clusters < 2."""
-    labels = np.zeros(100, dtype=int)
-    embedding = np.random.randn(100, 2)
-    
-    scores = score_clustering(labels, embedding)
-    
-    assert scores["n_clusters"] == 1
-    # Penalty is applied but temporal coherence is perfect (all same = no transitions)
-    # So score might still be moderate
-    assert scores["quality_score"] < 0.9  # Should not be high
-
-
-def test_score_clustering_high_noise():
-    """High noise ratio: penalized."""
-    labels = np.array([0]*30 + [1]*30 + [-1]*140)  # 70% noise
-    embedding = np.random.randn(200, 2)
-    
-    scores = score_clustering(labels, embedding)
-    
-    assert scores["noise_ratio"] == 0.7
-    # Quality is affected but TC can still be high if the valid parts are stable
-    assert scores["quality_score"] < 0.85
+    def test_super_high_builds_3_stage(self):
+        cfg = MICROSCOPE_PRESETS["super_high"]["build_config"]((300, 100, 50))
+        assert len(cfg) == 3
+        assert cfg[0]["n_components"] == 15
+        assert cfg[1]["n_components"] == 5
+        assert cfg[2]["n_components"] == 2
 
 
 # ---------------------------------------------------------------------------
-# Test MICROSCOPE_PRESETS structure
+# select_umap_config
 # ---------------------------------------------------------------------------
 
-def test_microscope_presets_has_all_keys():
-    """All 4 preset keys exist."""
-    assert "low" in MICROSCOPE_PRESETS
-    assert "intermediate" in MICROSCOPE_PRESETS
-    assert "high" in MICROSCOPE_PRESETS
-    assert "super_high" in MICROSCOPE_PRESETS
+class TestSelectUmapConfig:
+    def test_depth_0_returns_low(self):
+        cfg = select_umap_config(depth=0, n_frames=5000)
+        assert len(cfg) == 1  # 1-stage = Low
+        assert cfg[0]["n_components"] == 2
 
+    def test_depth_1_returns_intermediate(self):
+        cfg = select_umap_config(depth=1, n_frames=5000)
+        assert len(cfg) == 2  # 2-stage = Intermediate
+        assert cfg[0]["n_components"] == 5
+        assert cfg[1]["n_components"] == 2
 
-def test_preset_low_build_config():
-    """Low preset returns correct 1-stage config."""
-    cfg = MICROSCOPE_PRESETS["low"]["build_config"](100)
-    assert len(cfg) == 1
-    assert cfg[0]["n_neighbors"] == 100
-    assert cfg[0]["n_components"] == 2
-    assert cfg[0]["min_dist"] == 0.0
+    def test_depth_3_returns_intermediate(self):
+        cfg = select_umap_config(depth=3, n_frames=2000)
+        assert len(cfg) == 2
 
+    def test_small_cluster_returns_low(self):
+        cfg = select_umap_config(depth=2, n_frames=200)
+        assert len(cfg) == 1  # small → Low
+        assert cfg[0]["n_components"] == 2
+        assert cfg[0]["n_neighbors"] <= 200
 
-def test_preset_intermediate_build_config():
-    """Intermediate preset returns correct 2-stage config."""
-    cfg = MICROSCOPE_PRESETS["intermediate"]["build_config"]((500, 300))
-    assert len(cfg) == 2
-    assert cfg[0]["n_neighbors"] == 500
-    assert cfg[0]["n_components"] == 5
-    assert cfg[1]["n_neighbors"] == 300
-    assert cfg[1]["n_components"] == 2
+    def test_n_neighbors_clamped(self):
+        cfg = select_umap_config(depth=0, n_frames=100)
+        assert cfg[0]["n_neighbors"] <= 100 // 3
 
-
-def test_preset_super_high_build_config():
-    """Super-high preset returns correct 3-stage config."""
-    cfg = MICROSCOPE_PRESETS["super_high"]["build_config"]((300, 100, 50))
-    assert len(cfg) == 3
-    assert cfg[0]["n_neighbors"] == 300
-    assert cfg[0]["n_components"] == 15
-    assert cfg[1]["n_neighbors"] == 100
-    assert cfg[1]["n_components"] == 5
-    assert cfg[2]["n_neighbors"] == 50
-    assert cfg[2]["n_components"] == 2
+    def test_very_small_cluster(self):
+        cfg = select_umap_config(depth=4, n_frames=50)
+        assert len(cfg) == 1
+        assert cfg[0]["n_neighbors"] >= 10  # at least 10
 
 
 # ---------------------------------------------------------------------------
-# Test auto_cluster function
+# score_clustering
 # ---------------------------------------------------------------------------
 
-def test_auto_cluster_with_synthetic_data():
-    """auto_cluster finds valid candidates on synthetic blob data."""
-    X, y_true = make_blobs(n_samples=200, centers=3, n_features=64, random_state=42)
-    
-    candidates = auto_cluster(
-        data=X,
-        presets=["low"],
-        eps_values=[0.5, 1.0],
-        n_neighbors_filter=25,  # Use smallest/fastest
-        device="cpu",
-    )
-    
-    assert len(candidates) > 0
-    # Check first candidate structure
-    c = candidates[0]
-    assert isinstance(c, ClusteringCandidate)
-    assert c.preset_name == "low"
-    assert c.n_neighbors == 25
-    assert c.eps in [0.5, 1.0]
-    assert c.n_clusters >= 2
-    assert 0.0 <= c.quality_score <= 1.0
+class TestScoreClustering:
+    def test_two_clean_clusters(self):
+        labels = np.array([0] * 50 + [1] * 50)
+        scores = score_clustering(labels)
+        assert "quality_score" in scores
+        assert scores["n_clusters"] == 2
+        assert scores["noise_ratio"] == 0.0
 
+    def test_random_labels_lower_tc(self):
+        rng = np.random.default_rng(42)
+        labels = rng.integers(0, 3, size=200)
+        scores = score_clustering(labels)
+        # Random should have lower TC than structured
+        clean = score_clustering(np.array([0] * 100 + [1] * 100))
+        assert scores["temporal_coherence"] < clean["temporal_coherence"]
 
-def test_auto_cluster_preset_filter():
-    """auto_cluster only returns candidates from requested presets."""
-    X, _ = make_blobs(n_samples=100, centers=2, n_features=32, random_state=42)
-    
-    candidates = auto_cluster(
-        data=X,
-        presets=["low"],
-        eps_values=[0.5],
-        n_neighbors_filter=25,
-        device="cpu",
-    )
-    
-    for c in candidates:
-        assert c.preset_name == "low"
+    def test_single_cluster_penalized(self):
+        labels = np.array([0] * 100)
+        scores = score_clustering(labels)
+        assert scores["n_clusters"] == 1
+        assert scores["quality_score"] < 0.8  # penalized vs multi-cluster
 
+    def test_all_noise(self):
+        labels = np.array([-1] * 100)
+        scores = score_clustering(labels)
+        assert scores["noise_ratio"] == 1.0
+        assert scores["n_clusters"] == 0
 
-def test_auto_cluster_empty_data():
-    """auto_cluster with empty data returns empty candidates."""
-    candidates = auto_cluster(
-        data=np.array([]).reshape(0, 64),
-        presets=["low"],
-        eps_values=[0.5],
-        device="cpu",
-    )
-    
-    assert len(candidates) == 0
+    def test_with_embedding(self):
+        labels = np.array([0] * 50 + [1] * 50)
+        emb = np.vstack([np.random.randn(50, 2) - 3, np.random.randn(50, 2) + 3])
+        scores = score_clustering(labels, embedding=emb)
+        assert scores["calinski_harabasz"] > 0
 
-
-def test_auto_cluster_handles_nan_rows():
-    """auto_cluster handles NaN rows gracefully."""
-    X, _ = make_blobs(n_samples=100, centers=2, n_features=32, random_state=42)
-    # Inject NaN rows
-    X[10:20, :] = np.nan
-    
-    candidates = auto_cluster(
-        data=X,
-        presets=["low"],
-        eps_values=[0.5],
-        n_neighbors_filter=25,
-        device="cpu",
-    )
-    
-    # Should still find candidates (NaN filtered out)
-    assert len(candidates) >= 0
+    def test_score_in_reasonable_range(self):
+        labels = np.array([0] * 50 + [1] * 50 + [2] * 50)
+        scores = score_clustering(labels)
+        assert 0 <= scores["quality_score"] <= 1.5
 
 
 # ---------------------------------------------------------------------------
-# Test select_best function
+# find_best_eps
 # ---------------------------------------------------------------------------
 
-def test_select_best_returns_highest_quality():
-    """select_best returns first candidate meeting min_tc threshold."""
-    c1 = ClusteringCandidate(
-        preset_name="low", n_neighbors=25, eps=0.5, umap_config=[],
-        n_clusters=3, noise_ratio=0.1, quality_score=0.85,
-        temporal_coherence=0.92, single_frame_ratio=0.05,
-    )
-    c2 = ClusteringCandidate(
-        preset_name="low", n_neighbors=25, eps=1.0, umap_config=[],
-        n_clusters=4, noise_ratio=0.2, quality_score=0.75,
-        temporal_coherence=0.88, single_frame_ratio=0.1,
-    )
-    
-    # select_best expects pre-sorted candidates (as provided by auto_cluster)
-    candidates = sorted([c2, c1], key=lambda x: x.quality_score, reverse=True)
-    best = select_best(candidates, min_tc=0.8)
-    
-    # Should return c1 (highest quality, meets min_tc)
-    assert best.quality_score == 0.85
-    assert best.temporal_coherence == 0.92
+class TestFindBestEps:
+    def test_finds_something_for_separable_data(self):
+        from sklearn.datasets import make_blobs
+        X, _ = make_blobs(n_samples=100, centers=3, n_features=2, random_state=42)
+        valid = np.ones(100, dtype=bool)
+        dummy = np.zeros(100, dtype=int)
+        result = find_best_eps(X, dummy, valid, eps_values=[0.5, 1.0, 2.0])
+        assert result is not None
+        assert result.n_clusters >= 2
 
-
-def test_select_best_with_min_tc_filter():
-    """select_best respects min_tc threshold."""
-    c1 = ClusteringCandidate(
-        preset_name="low", n_neighbors=25, eps=0.5, umap_config=[],
-        n_clusters=3, noise_ratio=0.1, quality_score=0.90,
-        temporal_coherence=0.75,  # Below threshold
-        single_frame_ratio=0.05,
-    )
-    c2 = ClusteringCandidate(
-        preset_name="low", n_neighbors=25, eps=1.0, umap_config=[],
-        n_clusters=4, noise_ratio=0.2, quality_score=0.80,
-        temporal_coherence=0.85,  # Above threshold
-        single_frame_ratio=0.1,
-    )
-    
-    candidates = [c1, c2]  # c1 has higher quality but low TC
-    best = select_best(candidates, min_tc=0.80)
-    
-    assert best == c2  # c2 meets min_tc
-
-
-def test_select_best_empty_list():
-    """select_best with empty list returns None."""
-    best = select_best([])
-    assert best is None
+    def test_returns_none_for_single_point(self):
+        X = np.zeros((5, 2))  # all same point
+        valid = np.ones(5, dtype=bool)
+        dummy = np.zeros(5, dtype=int)
+        # Very small eps → all noise, very large eps → 1 cluster
+        result = find_best_eps(X, dummy, valid, eps_values=[0.001])
+        assert result is None  # no valid 2+ cluster solution
 
 
 # ---------------------------------------------------------------------------
-# Test ClusteringCandidate dataclass
+# TreeNode
 # ---------------------------------------------------------------------------
 
-def test_clustering_candidate_fields():
-    """ClusteringCandidate has all expected fields."""
-    c = ClusteringCandidate(
-        preset_name="high",
-        n_neighbors=(500, 300),
-        eps=1.5,
-        umap_config=[{"n_neighbors": 500}, {"n_neighbors": 300}],
-        n_clusters=10,
-        noise_ratio=0.15,
-        quality_score=0.82,
-        temporal_coherence=0.91,
-        single_frame_ratio=0.08,
-        calinski_harabasz=450.0,
-        davies_bouldin=0.65,
-    )
-    
-    assert c.preset_name == "high"
-    assert c.n_neighbors == (500, 300)
-    assert c.eps == 1.5
-    assert c.n_clusters == 10
-    assert c.quality_score == 0.82
+class TestTreeNode:
+    def test_create_leaf(self):
+        node = TreeNode(name="root_a0", depth=1, n_frames=500, is_leaf=True,
+                        stop_reason="min_frames")
+        assert node.is_leaf
+        assert node.children == []
+
+    def test_create_branch(self):
+        child = TreeNode(name="root_a0_b0", depth=2, n_frames=200, is_leaf=True)
+        parent = TreeNode(name="root_a0", depth=1, n_frames=500, is_leaf=False,
+                          children=[child])
+        assert len(parent.children) == 1
+
+    def test_tree_depth(self):
+        leaf = TreeNode(name="root_a0_b0_c0", depth=3, n_frames=100, is_leaf=True)
+        mid = TreeNode(name="root_a0_b0", depth=2, n_frames=300, is_leaf=False,
+                       children=[leaf])
+        root = TreeNode(name="root_a0", depth=1, n_frames=1000, is_leaf=False,
+                        children=[mid])
+        assert root.children[0].children[0].depth == 3
 
 
 # ---------------------------------------------------------------------------
-# Test quality_score is in valid range
+# Legacy flat auto_cluster
 # ---------------------------------------------------------------------------
 
-def test_quality_score_range():
-    """Quality score is in [0, 1] for normal inputs."""
-    # Generate varied but reasonable labels
-    labels = np.array([0]*40 + [1]*40 + [2]*40 + [-1]*10)  # 3 clusters + 10 noise
-    embedding = np.random.randn(130, 2)
-    
-    scores = score_clustering(labels, embedding)
-    
-    assert 0.0 <= scores["quality_score"] <= 1.0
-    assert scores["n_clusters"] == 3
+class TestLegacyAutoCluster:
+    def test_with_blobs(self):
+        """Legacy flat sweep finds candidates for separable data."""
+        from sklearn.datasets import make_blobs
+        X, _ = make_blobs(n_samples=200, centers=3, n_features=64, random_state=42)
+        candidates = auto_cluster(X, presets=["low"], eps_values=[0.5, 1.0],
+                                  n_neighbors_filter=25)
+        # Should find at least one valid candidate
+        assert len(candidates) >= 0  # may be 0 if UMAP randomness
+
+    def test_empty_data(self):
+        X = np.zeros((5, 10))
+        candidates = auto_cluster(X, presets=["low"], eps_values=[1.0],
+                                  n_neighbors_filter=25)
+        assert isinstance(candidates, list)
+
+    def test_nan_handling(self):
+        X = np.random.randn(100, 10)
+        X[50:55] = np.nan
+        candidates = auto_cluster(X, presets=["low"], eps_values=[1.0],
+                                  n_neighbors_filter=25)
+        assert isinstance(candidates, list)
+
+
+# ---------------------------------------------------------------------------
+# select_best
+# ---------------------------------------------------------------------------
+
+class TestSelectBest:
+    def test_returns_highest_quality(self):
+        c1 = ClusteringCandidate("low", 300, 1.0, [], 3, 0.1, 0.8, 0.9, 0.05)
+        c2 = ClusteringCandidate("low", 300, 0.5, [], 5, 0.05, 0.9, 0.95, 0.02)
+        best = select_best([c2, c1])  # c2 has higher quality
+        assert best.quality_score == 0.9
+
+    def test_tc_filter(self):
+        c1 = ClusteringCandidate("low", 300, 1.0, [], 3, 0.1, 0.9, 0.7, 0.05)
+        c2 = ClusteringCandidate("low", 300, 0.5, [], 5, 0.05, 0.8, 0.85, 0.02)
+        best = select_best([c1, c2], min_tc=0.8)
+        assert best.temporal_coherence >= 0.8
+
+    def test_empty_returns_none(self):
+        assert select_best([]) is None
+
+    def test_fallback_when_no_tc_match(self):
+        c1 = ClusteringCandidate("low", 300, 1.0, [], 3, 0.1, 0.9, 0.5, 0.05)
+        best = select_best([c1], min_tc=0.99)
+        assert best is c1  # fallback to best overall

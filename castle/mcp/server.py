@@ -294,18 +294,20 @@ def cluster_run(
 
 
 @mcp.tool()
-def cluster_auto(project: str, storage: str = "", cluster: str = "init", presets: str = "",
+def cluster_auto(project: str, storage: str = "", cluster: str = "init",
+                 max_depth: int = 6, min_frames: int = 100,
                  roi: int = 1, bin_size: int = 1, model: str = "dinov3_vitb16") -> dict:
-    """Automated Behavior Microscope — sweep presets and find best clustering.
+    """Recursive hierarchical Behavior Microscope — automated multi-level clustering.
     
-    Runs through CASTLE's microscope presets, tries multiple DBSCAN eps values,
-    and selects the best clustering based on quality metrics.
+    Mirrors the manual multi-level workflow: select cluster → UMAP → DBSCAN → 
+    split → recurse. UMAP config auto-selected per depth.
     
     Args:
         project: Project name
         storage: Storage directory (defaults to CASTLE_STORAGE env var)
         cluster: Starting cluster name (default: "init")
-        presets: Comma-separated presets (low,intermediate,high,super_high), empty = all
+        max_depth: Maximum recursion depth (default 6)
+        min_frames: Minimum frames to split a cluster (default 100)
         roi: ROI ID
         bin_size: Temporal bin size
         model: Visual model name
@@ -314,7 +316,6 @@ def cluster_auto(project: str, storage: str = "", cluster: str = "init", presets
         from castle.service.clustering_service import ClusteringSession
         
         storage_dir = storage or _storage()
-        preset_list = presets.split(",") if presets else None
         
         session = ClusteringSession(
             storage_path=storage_dir,
@@ -326,9 +327,8 @@ def cluster_auto(project: str, storage: str = "", cluster: str = "init", presets
         
         result = session.auto_cluster(
             cluster_name=cluster,
-            presets=preset_list,
-            auto_label=True,
-            auto_submit=True,
+            max_depth=max_depth,
+            min_frames=min_frames,
         )
         
         if not result.get('success'):
@@ -336,15 +336,12 @@ def cluster_auto(project: str, storage: str = "", cluster: str = "init", presets
         
         return {
             "status": "success",
-            "message": f"Best: {result['best_preset']} n={result['best_n_neighbors']} eps={result['best_eps']}",
-            "best_preset": result['best_preset'],
-            "best_n_neighbors": str(result['best_n_neighbors']),
-            "best_eps": result['best_eps'],
-            "n_clusters": result['n_clusters'],
-            "quality_score": result['quality_score'],
-            "temporal_coherence": result['temporal_coherence'],
-            "candidates_evaluated": result['candidates_evaluated'],
-            "top_candidates": result.get('top_candidates', []),
+            "message": f"Recursive clustering: {result['total_leaves']} leaves, "
+                       f"{result['total_splits']} splits, max depth {result['max_depth_reached']}",
+            "total_leaves": result['total_leaves'],
+            "total_splits": result['total_splits'],
+            "max_depth_reached": result['max_depth_reached'],
+            "tree": result.get('tree', {}),
         }
     except Exception as exc:
         return {"status": "error", "message": str(exc)}

@@ -141,3 +141,61 @@ def export(
     console.print(f"\nID CSV: {result['id_csv_path']}")
     for p in result['time_series_paths']:
         console.print(f"Time series: {p}")
+
+
+@app.command("evaluate")
+def evaluate(
+    project: str = typer.Argument(..., help="Project name"),
+    storage: str = typer.Option(..., "-s", "--storage", help="Storage directory"),
+    ground_truth: str = typer.Option(None, "--gt", help="Ground truth CSV path"),
+):
+    """Evaluate clustering quality with automated metrics."""
+    import os
+    from castle.service.metrics_service import evaluate_project_clustering
+
+    project_path = os.path.join(storage, project)
+    if not os.path.isdir(project_path):
+        console.print(f"[red]✗[/red] Project directory not found: {project_path}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold]Evaluating clustering quality for '{project}'...[/bold]")
+    result = evaluate_project_clustering(project_path, ground_truth_path=ground_truth)
+
+    if "error" in result:
+        console.print(f"[red]✗[/red] {result['error']}")
+        raise typer.Exit(code=1)
+
+    # --- Formatted report ---
+    table = Table(title="Clustering Quality Report")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Verdict", f"[{'green' if result['verdict'] == 'GOOD' else 'yellow' if result['verdict'] == 'ACCEPTABLE' else 'red'}]{result['verdict']}[/]")
+    table.add_row("Temporal Coherence", f"{result['temporal_coherence']:.4f}")
+    table.add_row("Single-frame Bout Ratio", f"{result['single_frame_ratio']:.4f}")
+    table.add_row("Median Bout Duration (frames)", f"{result['median_bout_duration_frames']:.1f}")
+    table.add_row("Bout Duration CV", f"{result['bout_duration_cv']:.4f}")
+    table.add_row("Single-frame Bouts", str(result['n_single_frame_bouts']))
+
+    if result.get("silhouette_sample") is not None:
+        table.add_row("Silhouette (sampled)", f"{result['silhouette_sample']:.4f}")
+    if result.get("calinski_harabasz") is not None:
+        table.add_row("Calinski-Harabasz", f"{result['calinski_harabasz']:.2f}")
+    if result.get("davies_bouldin") is not None:
+        table.add_row("Davies-Bouldin", f"{result['davies_bouldin']:.4f}")
+
+    if result.get("nmi") is not None:
+        table.add_row("NMI", f"{result['nmi']:.4f}")
+        table.add_row("ARI", f"{result['ari']:.4f}")
+        table.add_row("V-measure", f"{result['v_measure']:.4f}")
+        table.add_row("Homogeneity", f"{result['homogeneity']:.4f}")
+        table.add_row("Completeness", f"{result['completeness']:.4f}")
+
+    console.print(table)
+
+    if result.get("warnings"):
+        console.print("\n[yellow bold]Warnings:[/yellow bold]")
+        for w in result["warnings"]:
+            console.print(f"  [yellow]⚠[/yellow] {w}")
+
+    console.print(f"\n  Frames: {result.get('n_frames', '?')} | Files: {result.get('n_time_series_files', '?')}")

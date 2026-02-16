@@ -328,6 +328,98 @@ def cluster_label(project: str, cluster_name: str, label: str, scheme: str = "")
 
 
 @mcp.tool()
+def cluster_evaluate(project: str, storage: str = "", ground_truth: str = "") -> dict:
+    """Evaluate clustering quality with automated metrics.
+
+    Returns temporal coherence, bout quality, and optionally distance-based
+    and ground-truth comparison metrics.
+
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        ground_truth: Optional path to a ground-truth CSV with a 'behavior' column
+    """
+    try:
+        import os
+        from castle.service.metrics_service import evaluate_project_clustering
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        if not os.path.isdir(project_path):
+            return {"status": "error", "message": f"Project directory not found: {project_path}"}
+
+        gt_path = ground_truth if ground_truth else None
+        result = evaluate_project_clustering(project_path, ground_truth_path=gt_path)
+
+        if "error" in result:
+            return {"status": "error", "message": result["error"]}
+
+        result["status"] = "success"
+        result["message"] = f"Clustering quality: {result.get('verdict', 'N/A')}"
+        return result
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def ethogram_analyze(project: str, storage: str = "", fps: float = 30.0) -> dict:
+    """Run ethogram analysis: transition matrix, bout stats, temporal coherence.
+
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+        fps: Frames per second
+    """
+    try:
+        import os
+        from castle.service.ethogram_service import analyze_ethogram
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        return analyze_ethogram(project_path, fps=fps)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def ethogram_transitions(project: str, storage: str = "") -> dict:
+    """Get transition probability matrix.
+
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+    """
+    try:
+        import os
+        from castle.service.ethogram_service import get_transition_matrix
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        return get_transition_matrix(project_path)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def ethogram_bouts(project: str, storage: str = "") -> dict:
+    """Get per-cluster bout statistics.
+
+    Args:
+        project: Project name
+        storage: Storage directory (defaults to CASTLE_STORAGE env var)
+    """
+    try:
+        import os
+        from castle.service.ethogram_service import get_bout_statistics
+
+        storage_dir = storage or _storage()
+        project_path = os.path.join(storage_dir, project)
+        return get_bout_statistics(project_path)
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
 def device_info() -> dict:
     """Get GPU/device information for CASTLE processing."""
     try:

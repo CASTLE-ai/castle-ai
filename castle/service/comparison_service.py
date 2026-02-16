@@ -6,9 +6,8 @@ to :mod:`castle.core.comparison`.
 
 import os
 import csv
-import json
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 

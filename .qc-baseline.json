@@ -1,22 +1,22 @@
 {
-  "timestamp": "2026-02-15T16:40:00+08:00",
-  "version": "v2",
+  "timestamp": "2026-02-16T19:05:00+08:00",
+  "version": "v4",
   "phases": {
     "1_test_suite": {
-      "total": 134,
-      "passed": 134,
+      "total": 260,
+      "passed": 260,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
-      "duration_s": 10.83
+      "duration_s": 11.11
     },
     "2_import_integrity": {
-      "total": 71,
-      "passed": 70,
+      "total": 81,
+      "passed": 80,
       "failed": 1,
       "failures": ["castle.utils.myumap (ImportError: requires RAPIDS cuML)"],
       "skipped_vendored": ["aot", "sam", "dinov2", "dinov3"],
-      "duration_s": 11.96
+      "duration_s": 9.99
     },
     "3_static_analysis": {
       "tool": "ruff 0.15.1",
@@ -24,75 +24,74 @@
       "findings": {
         "E722_bare_except": 0,
         "T201_print_statements": 0,
-        "B006_mutable_defaults": 7,
-        "F401_unused_imports": 78,
-        "F841_unused_variables": 9
+        "B006_mutable_defaults": 0,
+        "F401_unused_imports": 7,
+        "F841_unused_variables": 0
       },
-      "total_findings": 94,
-      "fixable": 67
+      "total_findings": 7,
+      "fixable": 7,
+      "new_findings": [
+        {"file": "castle/core/ethogram.py", "code": "F401", "line": 9, "message": "dataclasses.field imported but unused"},
+        {"file": "castle/core/metrics.py", "code": "F401", "line": 9, "message": "typing.Dict imported but unused"},
+        {"file": "castle/core/metrics.py", "code": "F401", "line": 9, "message": "typing.Tuple imported but unused"},
+        {"file": "castle/service/comparison_service.py", "code": "F401", "line": 9, "message": "json imported but unused"},
+        {"file": "castle/service/comparison_service.py", "code": "F401", "line": 11, "message": "typing.Optional imported but unused"},
+        {"file": "castle/service/ethogram_service.py", "code": "F401", "line": 11, "message": "typing.Optional imported but unused"},
+        {"file": "castle/visualization/comparison_plots.py", "code": "F401", "line": 11, "message": "typing.Optional imported but unused"}
+      ]
     },
     "4_smoke_tests": {
-      "total": 14,
-      "passed": 14,
+      "total": 21,
+      "passed": 21,
       "failed": 0,
       "tests": [
-        "Project service (create, list, info)",
-        "Annotation service (schemes, save/load)",
-        "History service (undo/redo)",
-        "ProjectConfig (round-trip, A-06 fields)",
-        "Multi-scale pooling backward compat (scales=[1])",
-        "Multi-scale output shapes ([1]→768, [1,2]→3840, [1,2,4]→16128)",
-        "CLI (all subcommand --help)",
-        "Bout service (find_bouts)",
-        "Mask filter (filter_largest_component)",
-        "Environment (get_device, get_num_workers)",
-        "Cluster tree markdown",
+        "MCP server import",
+        "MCP tool/resource count (19 exports)",
+        "ProjectConfig round-trip",
+        "Service: project_service",
+        "Service: annotation_service",
+        "Service: history_service",
+        "Service: bout_service",
+        "Service: ethogram_service",
+        "Service: comparison_service",
         "Lazy import speed (<0.5s)",
-        "EmbeddingScatterPlot import",
-        "H5IO context manager"
+        "Ethogram: transition matrix",
+        "Ethogram: bout statistics",
+        "Ethogram: full ethogram",
+        "Metrics: evaluate_clustering",
+        "Metrics: temporal coherence",
+        "Comparison: compute_fingerprint",
+        "Comparison: compare_groups",
+        "Comparison: hedges_g",
+        "Comparison viz imports",
+        "CLI all subcommands (7: project,track,extract,cluster,mcp,ethogram,compare)",
+        "All new modules importable (ethogram, metrics, comparison + services + viz)"
       ]
     },
     "5_ui_frontend": {
-      "gradio_ui": "PASS",
-      "desktop_modules": "PASS",
-      "cli_subcommands": "PASS"
+      "gradio_ui": "N/A (no castle.app module)",
+      "desktop_modules": "PASS (import ok, Qt runtime not tested)",
+      "cli_subcommands": "PASS (project, track, extract, cluster, mcp, ethogram, compare)",
+      "mcp_server": "PASS (19 tool/resource exports)",
+      "new_cli_ethogram": "PASS",
+      "new_cli_compare": "PASS"
     },
     "6_file_consistency": {
       "syntax_check": {
-        "total": 83,
-        "passed": 83,
+        "total": 96,
+        "passed": 96,
         "errors": 0
       },
-      "git_status": "clean",
+      "git_status": "clean (only qc artifacts modified)",
       "git_diff_check": "clean"
     },
     "7_documentation": {
+      "total_modules": 72,
       "module_docstrings_missing": 0,
-      "class_docstrings_missing": 20,
-      "missing_classes": [
-        "core/data.py::Preprocess",
-        "core/data.py::VideoDataset",
-        "core/environment.py::Environment",
-        "core/extractor.py::ProgressCallback",
-        "core/models.py::DINOv2Encoder",
-        "core/models.py::DINOv3Encoder",
-        "ui/plot_mask_info.py::Plotter",
-        "utils/explorer.py::Latent",
-        "utils/explorer.py::FocusLatent",
-        "utils/image_segment.py::Segmentor",
-        "utils/image_segment.py::MultiObjectSegmentor",
-        "utils/latent_explorer.py::Latent",
-        "utils/latent_explorer.py::LocalLatent",
-        "utils/myumap.py::UMAP",
-        "utils/profiler.py::Profiler",
-        "utils/profiler.py::TimeBlock",
-        "utils/profiler.py::SystemMonitor",
-        "utils/video_object_segment.py::AOTTracker",
-        "utils/video_object_segment.py::AOTTrackerInferEngine",
-        "utils/video_object_segment.py::DeAOTTrackerInferEngine"
-      ],
-      "readme_exists": true,
-      "improvement_plan_notes": "B-04 and A-05 show 🔄 but are actually implemented per git log"
+      "class_docstrings_missing": 0,
+      "missing_classes": [],
+      "mcp_modules_documented": true,
+      "readme_exists": true
     }
   }
 }

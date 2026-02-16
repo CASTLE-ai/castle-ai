@@ -1,222 +1,146 @@
-# CASTLE QC Audit Report
+# CASTLE QC Report v4 — Post P1/P2/P4
 
-> **Date**: 2026-02-15 16:40 (Asia/Taipei)  
-> **Branch**: `dev`  
-> **Method**: code-qc skill (7-phase structured audit)  
-> **Auditor**: Claude (READ-ONLY, no code changes)
+**Date**: 2026-02-16 19:05 (Asia/Taipei)  
+**Branch**: `dev`  
+**Commits since v3**: 3 (P1 ethogram, P2 metrics, P4 comparison)
 
 ---
 
-## Executive Summary
+## Summary
 
-| Phase | Status | Key Metric |
-|-------|--------|------------|
-| 1. Test Suite | ✅ PASS | 134/134 passed (10.83s) |
-| 2. Import Integrity | ⚠️ 1 known | 70/71 — myumap (cuML required) |
-| 3. Static Analysis | ⚠️ 94 findings | 0 bare except, 0 print; 78 F401, 9 F841, 7 B006 |
-| 4. Smoke Tests | ✅ PASS | 14/14 all green |
-| 5. UI/Frontend | ✅ PASS | Gradio + Desktop + CLI OK |
-| 6. File Consistency | ✅ PASS | 83/83 syntax OK, git clean |
-| 7. Documentation | ⚠️ 20 classes | 0 module docstrings missing, 20 class docstrings missing |
+| Phase | v3 | v4 | Delta |
+|-------|----|----|-------|
+| 1. Tests | 151 pass / 0 fail | **260 pass** / 0 fail | +109 tests ✅ |
+| 2. Imports | 73/74 pass (1 cuML) | **80/81** pass (1 cuML) | +7 modules ✅ |
+| 3. Static (non-vendored) | 1 finding (F401) | **7 findings** (all F401) | +6 ⚠️ |
+| 4. Smoke Tests | 15/15 pass | **21/21** pass | +6 new tests ✅ |
+| 5. UI/Frontend | PASS (5 subcmds) | **PASS (7 subcmds)** | +ethogram,compare ✅ |
+| 6. File Consistency | 86/86 clean | **96/96** clean | +10 files ✅ |
+| 7. Documentation | 0 missing | **0 missing** (72 modules) | No regression ✅ |
 
-**Overall Health**: 🟢 **Good** — Core functionality solid, no blockers. Hygiene issues (unused imports, class docstrings) are non-critical.
+**Overall**: ✅ PASS (with minor lint warnings)
 
 ---
 
 ## Phase 1: Test Suite
 
 ```
-PYTHONPATH=. python -m pytest tests/unit/ -v --tb=short
+260 passed, 0 failed, 0 errors in 11.11s
 ```
 
-| Metric | Value |
-|--------|-------|
-| Total | 134 |
-| Passed | 134 |
-| Failed | 0 |
-| Errors | 0 |
-| Skipped | 0 |
-| Duration | 10.83s |
+New test files added:
+- `tests/unit/test_ethogram.py` — ethogram engine tests
+- `tests/unit/test_metrics.py` — clustering quality metrics tests
+- `tests/unit/test_comparison.py` — group comparison tests
 
-All unit tests pass cleanly. Test count increased from 102 → 134 (+32 new tests) since the previous audit.
+**Delta**: +109 tests (151 → 260). All pass.
 
 ---
 
 ## Phase 2: Import Integrity
 
-```
-python import_check.py castle --exclude aot,sam,dinov2,dinov3 --json
-```
+- **Total**: 81 modules scanned (excluding vendored: aot, sam, dinov2, dinov3)
+- **Passed**: 80
+- **Failed**: 1 — `castle.utils.myumap` (requires RAPIDS cuML, expected)
+- **New modules importable**: ✅
+  - `castle.core.ethogram`
+  - `castle.core.metrics`
+  - `castle.core.comparison`
+  - `castle.service.ethogram_service`
+  - `castle.service.comparison_service`
+  - `castle.visualization.comparison_plots`
+  - `castle.cli.ethogram_cmd`
+  - `castle.cli.compare_cmd`
 
-| Metric | Value |
-|--------|-------|
-| Total modules | 71 |
-| Passed | 70 |
-| Failed | 1 |
-| Skipped (vendored) | 84 |
-| Duration | 11.96s |
-
-**Failed module:**
-- `castle.utils.myumap` — requires RAPIDS cuML (GPU-only dependency). This is expected and handled gracefully with CPU fallback.
+**Delta**: +7 importable modules (74 → 81).
 
 ---
 
-## Phase 3: Static Analysis (ruff 0.15.1)
+## Phase 3: Static Analysis (ruff, non-vendored only)
 
-```
-ruff check --select E722,T201,B006,F401,F841 --statistics castle/
-```
+**7 findings** — all F401 (unused imports), all in NEW code:
 
-| Rule | Description | Count | Status |
-|------|-------------|-------|--------|
-| E722 | Bare except | **0** | ✅ Fixed (was 2) |
-| T201 | Print statements | **0** | ✅ Fixed (was 40) |
-| B006 | Mutable argument defaults | 7 | ⚠️ New finding |
-| F401 | Unused imports | 78 | ⚠️ Hygiene |
-| F841 | Unused variables | 9 | ⚠️ Hygiene |
-| **Total** | | **94** | 67 auto-fixable |
+| File | Line | Issue |
+|------|------|-------|
+| `castle/core/ethogram.py` | 9 | `dataclasses.field` unused |
+| `castle/core/metrics.py` | 9 | `typing.Dict` unused |
+| `castle/core/metrics.py` | 9 | `typing.Tuple` unused |
+| `castle/service/comparison_service.py` | 9 | `json` unused |
+| `castle/service/comparison_service.py` | 11 | `typing.Optional` unused |
+| `castle/service/ethogram_service.py` | 11 | `typing.Optional` unused |
+| `castle/visualization/comparison_plots.py` | 11 | `typing.Optional` unused |
 
-### B006 Locations (Mutable defaults):
-- `castle/core/models.py:103` — `_multiscale_pooling(scales=[1, 2, 4])`
-- `castle/utils/explorer.py:187`
-- `castle/utils/latent_explorer.py:202, 209`
-- `castle/visualization/embedding_plots.py:21, 69, 210`
+**Delta**: v3 had 1 finding (F401 in mcp/server.py, now fixed). v4 has 7 new F401 findings, all trivially fixable.
 
-### F401 Breakdown (78 unused imports):
-- **Re-exports** (intentional, need `__all__`): `service/__init__.py` (5), `ui/__init__.py` (1), `utils/__init__.py` (2), `visualization/__init__.py` (5) — 13 total
-- **Genuine unused**: typing imports (Optional, List, Dict, Tuple, Any) — ~25
-- **Unused library imports**: pandas, torch, cv2, json, os, numpy, shutil — ~20
-- **Unused specific imports**: VideoIOError, ReadArray, etc. — ~20
-
-### F841 Locations (9 unused variables):
-- `castle/core/extractor.py:450` — `e` in except clause
-- `castle/core/project_config.py:111` — `field_types`
-- `castle/ui/cluster_handlers.py:137` — `time_window`
-- `castle/ui/cluster_handlers.py:296` — `e` in except clause
-- `castle/ui/cluster_tree.py:41` — `color`
-- `castle/ui/edit_ui.py:120` — `single_tracking_tab`
-- `castle/ui/main_ui.py:56, 61, 74` — UI component variables
+> Note: The v3 F401 (`typing.Optional` in `castle/mcp/server.py`) was fixed by commit `6249530`.
 
 ---
 
 ## Phase 4: Smoke Tests
 
-14 dynamically-generated smoke tests covering all service layer and core functionality:
+**21/21 pass** (was 15/15 in v3):
 
-| # | Test | Status |
-|---|------|--------|
-| 1 | Project service (create, list, info) | ✅ PASS |
-| 2 | Annotation service (schemes, save/load) | ✅ PASS |
-| 3 | History service (undo/redo) | ✅ PASS |
-| 4 | ProjectConfig (round-trip + A-06 fields) | ✅ PASS |
-| 5 | Multi-scale pooling backward compat (scales=[1]) | ✅ PASS |
-| 6 | Multi-scale output shapes ([1]→768, [1,2]→3840, [1,2,4]→16128) | ✅ PASS |
-| 7 | CLI (all subcommand --help) | ✅ PASS |
-| 8 | Bout service (find_bouts) | ✅ PASS |
-| 9 | Mask filter (filter_largest_component) | ✅ PASS |
-| 10 | Environment (get_device, get_num_workers) | ✅ PASS |
-| 11 | Cluster tree markdown | ✅ PASS |
-| 12 | Lazy import speed (< 0.5s) | ✅ PASS |
-| 13 | EmbeddingScatterPlot import | ✅ PASS |
-| 14 | H5IO context manager | ✅ PASS |
+New smoke tests:
+1. ✅ Service: ethogram_service importable
+2. ✅ Service: comparison_service importable
+3. ✅ Ethogram: transition matrix (3×3 shape verified)
+4. ✅ Ethogram: bout statistics (3 clusters verified)
+5. ✅ Ethogram: full ethogram (compute_ethogram end-to-end)
+6. ✅ Metrics: evaluate_clustering (silhouette_sample computed)
+7. ✅ Metrics: temporal_coherence = 0.750
+8. ✅ Comparison: compute_fingerprint (frequencies verified)
+9. ✅ Comparison: compare_groups (BFA distance + p-value computed)
+10. ✅ Comparison: hedges_g (effect size = -2.400)
+11. ✅ Comparison viz imports (radar, volcano, forest)
 
 ---
 
-## Phase 5: UI/Frontend Verification
+## Phase 5: UI/Frontend
 
-| Component | Status | Details |
-|-----------|--------|---------|
-| Gradio UI | ✅ PASS | `from castle.ui import create_ui` |
-| Desktop (PyQt6) | ✅ PASS | MainWindow, ProjectPanel, ClusterPanel, ExtractPanel, TrackingPanel |
-| CLI (typer) | ✅ PASS | project, cluster, track, extract, info — all `--help` exit 0 |
+- **CLI subcommands**: 7 total (was 5)
+  - Existing: `project`, `track`, `extract`, `cluster`, `mcp`
+  - **New**: `ethogram`, `compare` ✅
+- **All --help**: renders correctly for all subcommands
+- **MCP server**: 19 exports (tools + resources), up from ~13
+  - New MCP tools: `ethogram_analyze`, `ethogram_bouts`, `ethogram_transitions`, `compare_groups_tool`, `compute_fingerprint_tool`, `cluster_evaluate`
+- **Desktop modules**: import OK (Qt runtime not tested)
+- **Gradio app**: `castle.app` module not found (may have been refactored)
 
 ---
 
 ## Phase 6: File Consistency
 
-### Syntax Check
-```
-python syntax_check.py castle/ --exclude aot,sam,dinov2,dinov3 --json
-```
-- **83/83 files**: All pass Python syntax validation ✅
-
-### Git State
-- `git status --short`: Clean (no uncommitted changes)
-- `git diff --check`: Clean (no whitespace issues)
+- **Syntax check**: 96/96 passed (was 86/86)
+- **Git status**: clean (only QC artifacts `.qc-baseline.json`, `qc-report.md` modified)
+- **No orphaned files** or merge conflicts
 
 ---
 
 ## Phase 7: Documentation
 
-### Docstring Coverage
-- **Module docstrings**: 60/60 — all present ✅
-- **Class docstrings**: 20 missing (mostly in utils/ and core/ layers)
-
-Missing class docstrings:
-| File | Class |
-|------|-------|
-| core/data.py | Preprocess, VideoDataset |
-| core/environment.py | Environment |
-| core/extractor.py | ProgressCallback |
-| core/models.py | DINOv2Encoder, DINOv3Encoder |
-| ui/plot_mask_info.py | Plotter |
-| utils/explorer.py | Latent, FocusLatent |
-| utils/image_segment.py | Segmentor, MultiObjectSegmentor |
-| utils/latent_explorer.py | Latent, LocalLatent |
-| utils/myumap.py | UMAP |
-| utils/profiler.py | Profiler, TimeBlock, SystemMonitor |
-| utils/video_object_segment.py | AOTTracker, AOTTrackerInferEngine, DeAOTTrackerInferEngine |
-
-### README
-- ✅ Exists (`README.md`, 5871 bytes)
-
-### IMPROVEMENT_PLAN
-- ✅ Exists (`docs/IMPROVEMENT_PLAN.md`)
-- ⚠️ **Slightly outdated**: B-04 (Undo/Redo) and A-05 (Desktop) show 🔄 but are implemented per git log (`574a47f`, `161221c`)
+- **Modules scanned**: 72 (excluding vendored + desktop)
+- **Missing module docstrings**: 0
+- **Missing class docstrings**: 0
+- **All new modules documented**: ✅
 
 ---
 
-## Delta from Previous Audit
+## Delta from v3
 
-| Metric | Previous | Current | Δ |
-|--------|----------|---------|---|
-| Unit tests | 102 passed | 134 passed | **+32** ✅ |
-| Import failures | 1 (myumap) | 1 (myumap) | 0 (unchanged, expected) |
-| E722 bare except | 2 → 0 | 0 | Maintained ✅ |
-| T201 print stmts | 40 → 0 | 0 | Maintained ✅ |
-| Missing module docstrings | 17 → 0 | 0 | Maintained ✅ |
-| Missing class docstrings | N/A | 20 | New check (not in previous) |
-| F401 unused imports | N/A | 78 | New finding (ruff) |
-| F841 unused variables | N/A | 9 | New finding (ruff) |
-| B006 mutable defaults | N/A | 7 | New finding (ruff) |
+### Improvements
+- ✅ +109 unit tests (151 → 260)
+- ✅ +7 importable modules (74 → 81)
+- ✅ +10 syntax-checked files (86 → 96)
+- ✅ +6 new smoke tests (15 → 21)
+- ✅ +2 CLI subcommands (ethogram, compare)
+- ✅ +6 MCP tools (ethogram, comparison, metrics)
+- ✅ v3 F401 in mcp/server.py fixed
 
-### What improved:
-- **+32 new unit tests** covering A-06 multi-scale pooling, B-04 undo/redo, and visualization
-- **All previous fixes maintained** (bare except, print statements, module docstrings)
-- **New features verified**: Multi-scale pooling, Desktop GUI, CLI, ProjectConfig A-06 fields
+### Regressions
+- ⚠️ +6 new F401 unused imports (all in new P1/P2/P4 code)
+  - Trivially fixable, zero functional impact
 
-### What needs attention:
-- **78 unused imports** — mostly typing imports and re-exports missing `__all__`
-- **7 mutable default arguments** — should use `None` + default pattern
-- **20 class docstrings** — secondary priority (utils/low-level classes)
-- **IMPROVEMENT_PLAN** status for B-04/A-05 outdated
-
----
-
-## Recommendations
-
-### Priority 1 (Quick wins):
-1. Run `ruff check --fix --select F401` to auto-clean 67 unused imports (add `__all__` to `__init__.py` re-exports first)
-2. Fix 7 B006 mutable defaults (change `def f(x=[])` to `def f(x=None); x = x or []`)
-
-### Priority 2 (Housekeeping):
-3. Add class docstrings to the 20 missing classes
-4. Update IMPROVEMENT_PLAN.md: mark B-04 and A-05 as ✅
-
-### Priority 3 (Nice to have):
-5. Remove `castle/utils/video_io_old.py` (appears to be dead code importing from video_io)
-6. Clean up 9 unused variable assignments
-
----
-
-*Baseline saved to `.qc-baseline.json`*
+### Unchanged
+- 1 known cuML import failure (expected, no RAPIDS GPU)
+- 0 missing docstrings
+- 0 bare excepts, print statements, mutable defaults (in non-vendored code)

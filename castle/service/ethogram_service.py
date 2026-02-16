@@ -8,7 +8,6 @@ import os
 import csv
 import logging
 import numpy as np
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

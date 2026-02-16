@@ -5,7 +5,6 @@ and enforces minimum bout duration constraints.
 """
 
 import numpy as np
-from typing import Optional
 from collections import Counter
 
 

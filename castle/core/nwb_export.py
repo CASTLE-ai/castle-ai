@@ -17,7 +17,6 @@ from typing import Dict, List, Optional
 import numpy as np
 
 try:
-    import pynwb
     from pynwb import NWBFile, NWBHDF5IO
     from pynwb.behavior import BehavioralTimeSeries
     from pynwb.epoch import TimeIntervals
@@ -116,7 +115,6 @@ def export_to_nwb(
     _require_pynwb()
 
     labels = np.asarray(cluster_labels, dtype=np.int32).ravel()
-    n_frames = len(labels)
 
     if cluster_names is None:
         unique_ids = sorted(set(int(x) for x in labels))

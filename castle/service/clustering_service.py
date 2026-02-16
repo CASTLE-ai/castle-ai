@@ -327,3 +327,207 @@ class ClusteringSession:
             Frame as numpy array (H, W, 3) or None
         """
         return self.aggregator.get_frame(global_bin_index)
+
+
+# ---------------------------------------------------------------------------
+# Cluster-transfer helpers (project-level)
+# ---------------------------------------------------------------------------
+
+def save_project_cluster_model(
+    project_path: str,
+    output_path: Optional[str] = None,
+    model_name: str = "",
+    k: int = 5,
+) -> str:
+    """Save a project's clustering model for transfer.
+
+    Loads the UMAP embedding, cluster labels, and original latent features
+    from the project's ``cluster/`` directory, then persists them as a
+    ``.npz`` file that can be applied to new data.
+
+    Args:
+        project_path: Absolute path to the project directory.
+        output_path: Where to write the model file.  Defaults to
+            ``<project_path>/cluster/cluster_model.npz``.
+        model_name: Descriptive name saved in the metadata.
+        k: Number of neighbours for k-NN at apply time.
+
+    Returns:
+        Absolute path to the saved model file.
+
+    Raises:
+        FileNotFoundError: If required cluster/embedding files are missing.
+    """
+    from castle.core.cluster_transfer import save_cluster_model
+    import glob
+
+    cluster_dir = os.path.join(project_path, "cluster")
+    if not os.path.isdir(cluster_dir):
+        raise FileNotFoundError(f"No cluster directory found: {cluster_dir}")
+
+    # --- Load id.csv for cluster names ---
+    id_csv_path = os.path.join(cluster_dir, "id.csv")
+    if not os.path.exists(id_csv_path):
+        raise FileNotFoundError(f"No id.csv found: {id_csv_path}")
+
+    id_df = pd.read_csv(id_csv_path)
+    cluster_names = {int(row["Id"]): row["Name"] for _, row in id_df.iterrows()}
+
+    # --- Load embedding .npz ---
+    emb_files = glob.glob(os.path.join(cluster_dir, "cluster_*.npz"))
+    if not emb_files:
+        raise FileNotFoundError(f"No embedding .npz found in {cluster_dir}")
+    emb_path = emb_files[0]  # take the first/latest
+    emb_data = np.load(emb_path, allow_pickle=True)
+    emb_full = emb_data["emb"]        # (N, 2) with NaN for masked-out points
+    cls_full = emb_data["cls"]        # (N,) with -1 for masked-out points
+
+    # --- Load latent features from latent/ directory ---
+    latent_dir = os.path.join(project_path, "latent")
+    if not os.path.isdir(latent_dir):
+        raise FileNotFoundError(f"No latent directory found: {latent_dir}")
+
+    # Find the model sub-directory (take the first one if multiple)
+    model_dirs = [
+        d for d in os.listdir(latent_dir)
+        if os.path.isdir(os.path.join(latent_dir, d))
+    ]
+    if not model_dirs:
+        raise FileNotFoundError(f"No model sub-directories in {latent_dir}")
+    model_subdir = os.path.join(latent_dir, model_dirs[0])
+
+    # Concatenate latent files in the same order as the project config
+    latent_files = sorted(glob.glob(os.path.join(model_subdir, "*.npz")))
+    if not latent_files:
+        raise FileNotFoundError(f"No latent .npz files in {model_subdir}")
+
+    latent_chunks = []
+    for lf in latent_files:
+        loaded = np.load(lf)
+        latent_chunks.append(loaded["latent"])
+    all_features = np.concatenate(latent_chunks, axis=0)
+
+    # --- Build valid mask (non-NaN embedding rows) ---
+    valid_mask = ~np.isnan(emb_full).any(axis=1)
+    umap_embedding = emb_full[valid_mask]
+    cluster_labels = cls_full[valid_mask]
+
+    # Align features: the embedding was built from the same number of bins
+    n_emb = len(emb_full)
+    if len(all_features) > n_emb:
+        all_features = all_features[:n_emb]
+    training_features = all_features[valid_mask]
+
+    if output_path is None:
+        output_path = os.path.join(cluster_dir, "cluster_model.npz")
+
+    # Determine fps from project config if available
+    fps = 30.0
+    config_path = os.path.join(project_path, "castle_config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+            fps = cfg.get("fps", fps)
+        except Exception:
+            pass
+
+    return save_cluster_model(
+        output_path=output_path,
+        umap_embedding=umap_embedding,
+        training_features=training_features,
+        cluster_labels=cluster_labels,
+        cluster_names=cluster_names,
+        model_name=model_name,
+        fps=fps,
+        k=k,
+    )
+
+
+def apply_cluster_model_to_project(
+    model_path: str,
+    project_path: str,
+    method: str = "knn_feature",
+) -> dict:
+    """Apply a saved cluster model to a new project's latent features.
+
+    Loads latent features from *project_path*, classifies them with the
+    saved model, and writes ``transferred_labels.csv`` + ``id.csv`` into
+    the project's ``cluster/`` directory.
+
+    Args:
+        model_path: Path to the saved model ``.npz``.
+        project_path: Absolute path to the target project directory.
+        method: ``"knn_feature"`` or ``"knn_umap"``.
+
+    Returns:
+        A dict with ``labels``, ``confidence``, ``cluster_names``,
+        ``output_csv``, and ``n_frames``.
+    """
+    from castle.core.cluster_transfer import load_cluster_model, apply_cluster_model
+    import glob
+
+    model = load_cluster_model(model_path)
+
+    # --- Load latent features from target project ---
+    latent_dir = os.path.join(project_path, "latent")
+    if not os.path.isdir(latent_dir):
+        raise FileNotFoundError(f"No latent directory found: {latent_dir}")
+
+    model_dirs = [
+        d for d in os.listdir(latent_dir)
+        if os.path.isdir(os.path.join(latent_dir, d))
+    ]
+    if not model_dirs:
+        raise FileNotFoundError(f"No model sub-directories in {latent_dir}")
+    model_subdir = os.path.join(latent_dir, model_dirs[0])
+
+    latent_files = sorted(glob.glob(os.path.join(model_subdir, "*.npz")))
+    if not latent_files:
+        raise FileNotFoundError(f"No latent .npz files in {model_subdir}")
+
+    latent_chunks = []
+    for lf in latent_files:
+        loaded = np.load(lf)
+        latent_chunks.append(loaded["latent"])
+    new_features = np.concatenate(latent_chunks, axis=0)
+
+    # --- Apply ---
+    result = apply_cluster_model(model, new_features, method=method)
+
+    # --- Write results ---
+    cluster_dir = os.path.join(project_path, "cluster")
+    os.makedirs(cluster_dir, exist_ok=True)
+
+    # id.csv (from model cluster names)
+    id_rows = sorted(result["cluster_names"].items())
+    id_df = pd.DataFrame(
+        [{"Id": cid, "Name": cname, "Color": "grey"} for cid, cname in id_rows]
+    )
+    id_csv_path = os.path.join(cluster_dir, "id.csv")
+    id_df.to_csv(id_csv_path, index=False)
+
+    # transferred_labels.csv
+    labels_df = pd.DataFrame({
+        "behavior": result["labels"],
+        "confidence": result["confidence"],
+    })
+    labels_csv_path = os.path.join(cluster_dir, "transferred_labels.csv")
+    labels_df.to_csv(labels_csv_path, index=False)
+
+    logger.info(
+        "Applied cluster model to %s: %d frames, %d unique labels",
+        project_path,
+        len(result["labels"]),
+        len(np.unique(result["labels"])),
+    )
+
+    return {
+        "labels": result["labels"],
+        "confidence": result["confidence"],
+        "cluster_names": result["cluster_names"],
+        "output_csv": labels_csv_path,
+        "id_csv": id_csv_path,
+        "n_frames": len(result["labels"]),
+        "mean_confidence": float(result["confidence"].mean()) if len(result["confidence"]) else 0.0,
+    }

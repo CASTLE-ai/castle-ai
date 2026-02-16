@@ -97,6 +97,18 @@ preset_dropdown_list += ['Super-high-magnification objective (500, 300, 100)', '
 # Helpers
 # ---------------------------
 
+def _format_session_status(info):
+    if info is None:
+        return gr.update(value="No previous sessions found. Use **⚙️ New Session** to start.", visible=True)
+    
+    sessions = info['sessions']
+    lines = ["### Previous Sessions\n"]
+    for s in sessions[:5]:  # Show up to 5
+        active = "▶️ " if s.session_id == info.get('active_id', '') else ""
+        lines.append(f"- {active}**{s.name}** — {s.n_clusters} clusters, {s.model}, ROI {s.roi_id} *(updated {s.updated_at[:16]})*")
+    
+    return gr.update(value="\n".join(lines), visible=True)
+
 def update_umap_config_text_with_preset(preset_dropdown):
     """根據使用者選擇的預設來生成對應的 UMAP 配置字串並調整 n_neighbors 數值"""
     if preset_dropdown is None:
@@ -226,7 +238,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=lambda info: (
             gr.update(interactive=info is not None),
-            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters. Click Restore to continue.") if info else gr.update(value="No previous sessions found. Use **New Session** to start.")
+            _format_session_status(info)
         ),
         inputs=[session_info],
         outputs=[ui['restore_btn'], ui['session_status']]
@@ -240,7 +252,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=lambda info: (
             gr.update(interactive=info is not None),
-            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters. Click Restore to continue.") if info else gr.update(value="No previous sessions found. Use **New Session** to start.")
+            _format_session_status(info)
         ),
         inputs=[session_info],
         outputs=[ui['restore_btn'], ui['session_status']]
@@ -248,6 +260,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=update_select_cluster_list,
         inputs=latents,
         outputs=ui['cluster_tree_radio']
+    ).then(
+        fn=collapse_accordion,
+        outputs=ui['cluster_input_accordion']
     )
 
     # Restore previous session (B-03: also restores UMAP embedding)
@@ -277,11 +292,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=generate_embedding,
         inputs=[latents, ui['cluster_tree_radio'], ui['umap_config_text']],
         outputs=[local_latents, local_embedding_plot, ui['embedding_plot']]
-    )
-
-    ui['reset'].click(
-        fn=collapse_accordion,
-        outputs=ui['cluster_input_accordion']
     )
 
     ui['embedding_plot'].select(

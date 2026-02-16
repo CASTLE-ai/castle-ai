@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
 from castle.ui.embedding_scatter import EmbeddingScatterPlot
 from castle.service.history_service import HistoryManager
+from castle.service.session_manager import SessionManager
 
 
 # ---------------------------
@@ -248,20 +249,36 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
     gr.Info(f'Auto-labeled {count} clusters.')
 
     result = import_info_from_local_latent(storage_path, project_name, latents, local_latents, aggregator)
+    
+    # At the end of label_all_and_submit, after successful submit:
+    mgr = SessionManager(storage_path, project_name)
+    active_id = mgr.get_active_session_id()
+    if active_id:
+        mgr.snapshot_to_session(active_id)
+        n_clusters = len([k for k in latents.cluster_meta if latents.cluster_meta[k]['name'] != 'init'])
+        mgr.save_session_state(active_id, n_clusters)
+    
     return result + (history,)
 
 
 def check_session_exists(storage_path, project_name):
-    """Check if previous session files exist."""
+    """Check for existing sessions using SessionManager."""
     if project_name is None:
         return None
-    cluster_path = os.path.join(storage_path, project_name, 'cluster')
-    id_csv = os.path.join(cluster_path, 'id.csv')
-    if not os.path.exists(id_csv):
+    mgr = SessionManager(storage_path, project_name)
+    
+    # Try legacy migration first
+    mgr.migrate_legacy()
+    
+    sessions = mgr.list_sessions()
+    if not sessions:
         return None
-    id_df = pd.read_csv(id_csv)
-    cluster_count = len(id_df) - 1  # Exclude root
-    return {'cluster_count': cluster_count, 'id_csv': id_csv}
+    
+    return {
+        'sessions': sessions,
+        'count': len(sessions),
+        'latest': sessions[0],  # sorted by updated_at desc
+    }
 
 
 def _find_latest_npz(cluster_path):
@@ -348,6 +365,13 @@ def restore_session(storage_path, project_name, select_roi_id, bin_size, select_
             gr.Warning(msg)
         else:
             gr.Info(msg)
+
+    # Use SessionManager to activate the latest session
+    mgr = SessionManager(storage_path, project_name)
+    sessions = mgr.list_sessions()
+    if sessions:
+        latest = sessions[0]  # Already sorted by updated_at desc
+        mgr.activate_session(latest.session_id)
 
     aggregator = LatentAggregator(
         storage_path, project_name, select_roi_id, bin_size,
@@ -481,8 +505,19 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             model_name=select_model,
             notify=notify_callback
         )
+        latents = aggregator.get_latent_object()
+        
+        # After creating aggregator successfully:
+        mgr = SessionManager(storage_path, project_name)
+        mgr.create_session(
+            model=select_model,
+            roi_id=int(select_roi_id) if select_roi_id else 1,
+            bin_size=int(bin_size),
+            total_frames=len(aggregator.latents) if aggregator.latents is not None else 0,
+        )
+        
         session_info = check_session_exists(storage_path, project_name)
-        return aggregator, aggregator.get_latent_object(), session_info
+        return aggregator, latents, session_info
     except Exception as e:
         gr.Warning(f"Initialization Failed: {e}")
         return None, None, None

@@ -306,6 +306,53 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
+## New Modules (v5.1)
+
+### Temporal Smoothing
+
+::: castle.core.temporal_smooth
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Cluster Transfer
+
+::: castle.core.cluster_transfer
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Automated Behavior Microscope
+
+::: castle.core.auto_cluster
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### NWB Export
+
+::: castle.core.nwb_export
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### NWB Service
+
+::: castle.service.nwb_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
 ## CLI Commands
 
 ### Ethogram CLI
@@ -320,6 +367,15 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 ### Compare CLI
 
 ::: castle.cli.compare_cmd
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Cluster CLI
+
+::: castle.cli.cluster_cmd
     options:
       show_root_heading: true
       show_source: true

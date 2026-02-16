@@ -159,19 +159,23 @@ def update_umap_config_text_with_preset(preset_dropdown):
 def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui = dict()
     
-    with gr.Accordion('Input setting', visible=False) as ui['cluster_input_accordion']:
-            ui['select_model'] = gr.Dropdown(
-                label="Select Visual Model",
-                choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
-                value="dinov3_vitb16",
-                interactive=True,
-                visible=True
-            )
-            ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=True)
-            ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=True)
-            ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
-            ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
-            ui['session_status'] = gr.Markdown("", visible=False)
+    # Section 1: Previous Sessions
+    with gr.Accordion("📂 Previous Sessions", open=True) as ui['previous_sessions_accordion']:
+        ui['session_status'] = gr.Markdown("*Checking for previous sessions...*")
+        ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
+    
+    # Section 2: New Session
+    with gr.Accordion("⚙️ New Session", open=False) as ui['cluster_input_accordion']:
+        ui['select_model'] = gr.Dropdown(
+            label="Select Visual Model",
+            choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
+            value="dinov3_vitb16",
+            interactive=True,
+            visible=True
+        )
+        ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=True)
+        ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=True)
+        ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
         
     # State Holders
     latents = gr.State(None)
@@ -222,7 +226,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=lambda info: (
             gr.update(interactive=info is not None),
-            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters", visible=info is not None) if info else (gr.update(interactive=False), gr.update(visible=False))
+            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters. Click Restore to continue.") if info else gr.update(value="No previous sessions found. Use **New Session** to start.")
         ),
         inputs=[session_info],
         outputs=[ui['restore_btn'], ui['session_status']]
@@ -236,7 +240,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=lambda info: (
             gr.update(interactive=info is not None),
-            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters", visible=info is not None) if info else gr.update(visible=False)
+            gr.update(value=f"**Previous session found:** {info['cluster_count']} clusters. Click Restore to continue.") if info else gr.update(value="No previous sessions found. Use **New Session** to start.")
         ),
         inputs=[session_info],
         outputs=[ui['restore_btn'], ui['session_status']]
@@ -254,7 +258,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
                  local_embedding_plot, ui['embedding_plot']]
     ).then(
-        fn=lambda: (gr.update(visible=False), gr.update(visible=False)),
+        fn=lambda: (gr.update(visible=False), gr.update(value="Session restored successfully.")),
         outputs=[ui['restore_btn'], ui['session_status']]
     )
 
@@ -363,6 +367,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     }
 
     visibility_components = {
+        'previous_sessions_accordion': ui['previous_sessions_accordion'],
         'cluster_input_accordion': ui['cluster_input_accordion'],
         'cluster_row_main': ui['cluster_row_main'],
         'syllables_plot': ui['syllables_plot'],

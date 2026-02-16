@@ -48,21 +48,21 @@ def extract_cluster_bouts(
     output_dir: Optional[str] = None,
     fps: float = 10.0,
 ) -> List[str]:
-    """Extract bout video clips for a specific cluster as GIF files.
+    """Extract bout video clips for a specific cluster as MP4 files.
 
     Args:
         aggregator: LatentAggregator instance (provides get_frame, videos_meta, etc.)
         latents: Latent object with .cluster array
         cluster_id: Target cluster ID to extract bouts for
         max_bouts: Maximum number of bouts to extract
-        max_frames: Maximum frames per bout GIF
-        output_dir: Directory to save GIFs. If None, uses a temp directory.
-        fps: GIF playback speed (frames per second)
+        max_frames: Maximum frames per bout video
+        output_dir: Directory to save videos. If None, uses a temp directory.
+        fps: Video playback speed (frames per second)
 
     Returns:
-        List of GIF file paths
+        List of MP4 file paths
     """
-    from PIL import Image
+    import cv2
 
     bouts = find_bouts(latents.cluster, cluster_id)
     if not bouts:
@@ -72,7 +72,7 @@ def extract_cluster_bouts(
         output_dir = tempfile.mkdtemp(prefix="castle_bouts_")
     os.makedirs(output_dir, exist_ok=True)
 
-    gif_paths = []
+    video_paths = []
     for bout_idx, (start_bin, end_bin) in enumerate(bouts[:max_bouts]):
         bout_len = end_bin - start_bin
         # Sample frames: if bout is longer than max_frames, subsample evenly
@@ -85,15 +85,14 @@ def extract_cluster_bouts(
         for bin_idx in indices:
             frame = aggregator.get_frame(int(bin_idx))
             if frame is not None:
-                # Convert to PIL Image
-                img = Image.fromarray(frame)
-                # Resize for reasonable GIF size (max 256px on longest side)
+                # Resize for reasonable video size (max 256px on longest side)
+                h, w = frame.shape[:2]
                 max_side = 256
-                w, h = img.size
                 if max(w, h) > max_side:
                     scale = max_side / max(w, h)
-                    img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-                frames.append(img)
+                    new_w, new_h = int(w * scale), int(h * scale)
+                    frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+                frames.append(frame)
 
         if not frames:
             continue
@@ -103,21 +102,26 @@ def extract_cluster_bouts(
         if cluster_id in latents.cluster_meta:
             cluster_name = latents.cluster_meta[cluster_id]['name']
 
-        gif_path = os.path.join(
+        video_path = os.path.join(
             output_dir,
-            f"bout_{cluster_name}_{bout_idx:02d}_bins{start_bin}-{end_bin}.gif"
+            f"bout_{cluster_name}_{bout_idx:02d}_bins{start_bin}-{end_bin}.mp4"
         )
 
-        # Save as animated GIF
-        duration_ms = int(1000 / fps)
-        frames[0].save(
-            gif_path,
-            save_all=True,
-            append_images=frames[1:],
-            duration=duration_ms,
-            loop=0,
-        )
-        gif_paths.append(gif_path)
-        logger.info(f"Saved bout GIF: {gif_path} ({len(frames)} frames)")
+        # Save as MP4 video using cv2
+        h, w = frames[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
+        
+        for frame in frames:
+            # cv2 expects BGR, frames from get_frame are likely RGB
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            else:
+                frame_bgr = frame
+            out.write(frame_bgr)
+        
+        out.release()
+        video_paths.append(video_path)
+        logger.info(f"Saved bout video: {video_path} ({len(frames)} frames)")
 
-    return gif_paths
+    return video_paths

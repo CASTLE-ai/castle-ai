@@ -63,12 +63,17 @@ def collapse_accordion():
 
 
 def update_select_cluster_list(latents):
-    if hasattr(latents, 'behavior_name2cluster_id'):
-        li = [k for k, v in latents.behavior_name2cluster_id.items()]
-    else:
-        li = []
+    from castle.ui.cluster_tree import build_cluster_tree_choices
+    
+    if latents is None:
+        return gr.update(choices=[], value=None)
+    
+    if not hasattr(latents, 'cluster_meta') or not hasattr(latents, 'cluster'):
         gr.Info('Latent init error, please wait.')
-    return gr.update(choices=li)
+        return gr.update(choices=[], value=None)
+    
+    choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
+    return gr.update(choices=choices)
 
 
 def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
@@ -105,7 +110,10 @@ def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
         history = HistoryManager()
 
     cfg['eps'] = eps
-    history.save_state(local_latents, f"DBSCAN clustering (eps={eps})")
+    # Save pre-clustering state (only if we have something to restore to)
+    if hasattr(local_latents, 'embedding') and hasattr(local_latents, 'cluster'):
+        history.save_state(local_latents, f"DBSCAN clustering (eps={eps})")
+    
     progress(0, desc="Running DBSCAN...")
     local_latents.build_cluster(method='dbscan', configs=cfg)
     progress(1.0, desc="Building plot...")
@@ -121,7 +129,10 @@ def label_local_cluster(local_latents, cluster_id, cluster_name, history):
     if history is None:
         history = HistoryManager()
 
-    history.save_state(local_latents, f"Label cluster {cluster_id} as {cluster_name}")
+    # Only save state if cluster exists
+    if hasattr(local_latents, 'cluster') and hasattr(local_latents, 'embedding'):
+        history.save_state(local_latents, f"Label cluster {cluster_id} as {cluster_name}")
+    
     local_latents.label_cluster(cluster_id, cluster_name)
     gr.Info(f'Named {cluster_id} as {cluster_name}')
     return history
@@ -191,7 +202,9 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
     if history is None:
         history = HistoryManager()
 
-    history.save_state(local_latents, "Submit all clusters to parent")
+    # Only save state if cluster exists
+    if hasattr(local_latents, 'cluster') and hasattr(local_latents, 'embedding'):
+        history.save_state(local_latents, "Submit all clusters to parent")
 
     unique_clusters = np.unique(local_latents.cluster)
 
@@ -458,6 +471,12 @@ def handle_undo(local_latents, history):
         return gr.update(), gr.update(), history, _history_status(history)
 
     desc = history.undo(local_latents)
+    
+    # Check if restored state is valid before plotting
+    if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
+        gr.Info("No previous state to restore")
+        return gr.update(), gr.update(), history, _history_status(history)
+    
     gr.Info(f"Undone: {desc}")
 
     Z_plt = EmbeddingScatterPlot(local_latents)
@@ -471,6 +490,12 @@ def handle_redo(local_latents, history):
         return gr.update(), gr.update(), history, _history_status(history)
 
     desc = history.redo(local_latents)
+    
+    # Check if restored state is valid before plotting
+    if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
+        gr.Info("No previous state to restore")
+        return gr.update(), gr.update(), history, _history_status(history)
+    
     gr.Info(f"Redone: {desc}")
 
     Z_plt = EmbeddingScatterPlot(local_latents)

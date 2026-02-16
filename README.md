@@ -36,7 +36,10 @@
   - **Desktop App**: PyQt6 native application with pyqtgraph visualization
   - **Multi-scale Pooling (A-06)**: Spatial pyramid pooling for richer latent representations
   - **Undo/Redo**: Command Pattern history for clustering operations
-  - **134 Unit Tests**: Comprehensive test coverage
+  - **Ethogram Engine (P1)**: Transition matrix, bout statistics, temporal coherence, raster plot
+  - **Quality Metrics (P2)**: Silhouette, Calinski-Harabasz, Davies-Bouldin, V-measure, NMI, ARI
+  - **Group Comparison (P4)**: BFA test, behavioral fingerprint, energy distance, permutation tests
+  - **260 Unit Tests**: Comprehensive test coverage
   - **Code Quality**: Zero ruff warnings in non-vendored code
 
 - **2025-12: Performance & Stability Update**

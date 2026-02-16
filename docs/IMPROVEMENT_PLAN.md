@@ -1,8 +1,8 @@
 # CASTLE Improvement Plan
 
 > 本文件記錄所有待改進項目，含深度程式碼審計結果、最佳實踐研究、及具體改進方案。
-> 最後更新：2026-02-15 v4.1
-> 狀態：**全部完成**
+> 最後更新：2026-02-16 v5.0
+> 狀態：**全部完成** — 260 unit tests passing
 
 ---
 
@@ -22,7 +22,7 @@
 | **B-03** | **Session 完整恢復** | 🟡 Medium | Medium | ✅ 完成 (`9630b84`) — restore UMAP from .npz |
 | **B-05** | **統一配置管理** | 🟡 Medium | Medium | ✅ 完成 (`9160145`) — ProjectConfig dataclass |
 | **C-02** | **VideoReader LRU cache** | 🟡 Medium | Small | ✅ 完成 (`850b4f5`) — LatentAggregator + VideoReader |
-| **C-04** | **測試覆蓋補強** | 🟡 Medium | Medium | ✅ 完成 (`425e80c`) — 134 unit tests |
+| **C-04** | **測試覆蓋補強** | 🟡 Medium | Medium | ✅ 完成 (`425e80c`) — 260 unit tests |
 | **C-05** | **UMAP 異步執行** | 🟡 Medium | Medium | ✅ 完成 (`f21b5cb`) — gr.Progress() for UMAP/DBSCAN |
 | **C-06** | **Device 偵測統一** | 🟢 Low | Small | ✅ 完成 (`1a01ca4`) |
 | **C-07** | **post_track / batch_track 重複碼** | 🟢 Low | Small | ✅ 完成 (`6cd3af6`) |
@@ -34,6 +34,39 @@
 | **架構清理** | cluster_page 拆分, lazy imports, dedup | 🟡 Medium | Medium | ✅ 完成 (4 commits) |
 | **資源管理** | GPU cache eviction, SAM cache, frame cache | 🟡 Medium | Small | ✅ 完成 (3 commits) |
 | **QC 審計修復** | QC warnings + ruff cleanup | 🟡 Medium | Small | ✅ 完成 (`f636918`, `9279b04`) |
+
+---
+
+## 進階分析模組（P 系列，2026-02-16）
+
+| # | 項目 | 狀態 | 說明 |
+|---|------|------|------|
+| **P1** | **Ethogram Engine** | ✅ 完成 | 轉移矩陣、bout 統計、temporal coherence、ethogram raster plot |
+| **P2** | **Quality Metrics** | ✅ 完成 | Temporal coherence、silhouette、CH、DB、bout quality、V-measure、NMI、ARI |
+| **P4** | **Group Comparison** | ✅ 完成 | BFA test、behavioral fingerprint、energy distance、per-feature permutation + BH-FDR、Hedges' g |
+| **P3** | 差分特徵 + PHATE | ❌ 拒絕 | — |
+| **P5** | CEBRA | ❌ 拒絕 | — |
+| **P6** | 階層 | ⏸️ 擱置 | — |
+
+### P1: Ethogram Engine
+
+- **Core**: `castle/core/ethogram.py` — `Ethogram`, `BoutInfo`, `BoutStatistics`, `TransitionMatrix` dataclasses + computation functions
+- **Service**: `castle/service/ethogram_service.py` — loads cluster data from project, delegates to core
+- **Visualization**: `castle/visualization/ethogram_plots.py` — raster plot, transition heatmap, bout duration distribution, frequency bar
+- **CLI**: `castle/cli/ethogram_cmd.py` — `castle ethogram analyze|transitions|bouts|export`
+
+### P2: Quality Metrics
+
+- **Core**: `castle/core/metrics.py` — `ClusterQualityReport` dataclass, internal (temporal coherence, silhouette, CH, DB, bout quality) + external (V-measure, NMI, ARI) validation
+- **Service**: `castle/service/metrics_service.py` — loads labels/embedding from project, delegates to core
+- **CLI**: `castle cluster evaluate` (integrated into existing `cluster_cmd.py`)
+
+### P4: Group Comparison
+
+- **Core**: `castle/core/comparison.py` — `BehavioralFingerprint`, `ComparisonResult` dataclasses, BFA test, energy distance, per-feature permutation + BH-FDR, Hedges' g
+- **Service**: `castle/service/comparison_service.py` — loads per-video cluster data, computes fingerprints, runs comparison
+- **Visualization**: `castle/visualization/comparison_plots.py` — radar chart, transition heatmap diff, volcano plot, forest plot
+- **CLI**: `castle/cli/compare_cmd.py` — `castle compare run|fingerprint`
 
 ---
 

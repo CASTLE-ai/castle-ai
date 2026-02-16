@@ -22,6 +22,9 @@
 │  annotation_service.py   — Classification scheme management    │
 │  bout_service.py         — Behavioral bout analysis            │
 │  history_service.py      — Undo/Redo (Command Pattern)         │
+│  ethogram_service.py     — Ethogram analysis orchestration     │
+│  metrics_service.py      — Clustering quality evaluation       │
+│  comparison_service.py   — Group comparison orchestration      │
 └──────────────────────────┬─────────────────────────────────────┘
                            │ calls
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -38,6 +41,9 @@
 │  environment.py      — Device detection, worker count          │
 │  mask_filter.py      — Post-tracking mask filtering (A-03)     │
 │  logging_config.py   — Centralized logging setup               │
+│  ethogram.py         — Ethogram analysis engine (P1)           │
+│  metrics.py          — Clustering quality metrics (P2)         │
+│  comparison.py       — Group comparison engine (P4)            │
 └──────────────────────────┬─────────────────────────────────────┘
                            │ uses
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -66,6 +72,10 @@
 │                                                                │
 │  embedding_plots.py  — UMAP scatter, syllable bar,             │
 │                        focus embedding, named embedding         │
+│  ethogram_plots.py   — Ethogram raster, transition heatmap,    │
+│                        bout distributions (P1)                  │
+│  comparison_plots.py — Radar, volcano, forest plots,           │
+│                        transition diff heatmaps (P4)            │
 └────────────────────────────────────────────────────────────────┘
                            │
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -88,10 +98,12 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 |--------|---------|
 | `main.py` | Typer app entry point, registers all subcommand groups |
 | `project_cmd.py` | `castle project create/list/info/delete` |
-| `cluster_cmd.py` | `castle cluster run/list` |
+| `cluster_cmd.py` | `castle cluster run/list/evaluate` |
 | `extract_cmd.py` | `castle extract run` |
 | `track_cmd.py` | `castle track run` |
 | `info_cmd.py` | `castle info status/devices` |
+| `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export` |
+| `compare_cmd.py` | `castle compare run/fingerprint` |
 
 ### `castle/ui/` — Gradio Web Interface
 
@@ -143,6 +155,9 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `annotation_service.py` | Classification scheme management |
 | `bout_service.py` | Behavioral bout analysis and export |
 | `history_service.py` | Undo/Redo via Command Pattern |
+| `ethogram_service.py` | Ethogram analysis: loads cluster data, delegates to `castle.core.ethogram` |
+| `metrics_service.py` | Clustering quality evaluation: loads labels/embedding, delegates to `castle.core.metrics` |
+| `comparison_service.py` | Group comparison: loads per-video data, delegates to `castle.core.comparison` |
 
 ### `castle/core/` — Core Business Logic
 
@@ -158,6 +173,9 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `environment.py` | Device detection (`cuda`/`mps`/`cpu`), worker count |
 | `mask_filter.py` | Post-tracking mask filtering — largest component, configurable threshold (A-03) |
 | `logging_config.py` | Centralized logging setup |
+| `ethogram.py` | Ethogram engine — bout extraction, transition matrix, temporal coherence (P1) |
+| `metrics.py` | Clustering quality metrics — silhouette, CH, DB, temporal coherence, bout quality, external validation (P2) |
+| `comparison.py` | Group comparison — BFA test, behavioral fingerprint, energy distance, permutation tests, Hedges' g (P4) |
 
 ### `castle/utils/` — Utility Layer
 
@@ -185,6 +203,8 @@ Separated from utils (B-01) so data classes don't depend on matplotlib/plotly:
 | Module | Purpose |
 |--------|---------|
 | `embedding_plots.py` | UMAP scatter, syllable bar, focus embedding, named embedding |
+| `ethogram_plots.py` | Ethogram raster, transition heatmap, bout duration box plots, frequency bar chart (P1) |
+| `comparison_plots.py` | Fingerprint radar, transition heatmap diff, volcano plot, forest plot (P4) |
 
 ### `castle/sam/` — SAM (Vendored)
 

@@ -72,6 +72,33 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
+### Ethogram Service
+
+::: castle.service.ethogram_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Metrics Service
+
+::: castle.service.metrics_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Comparison Service
+
+::: castle.service.comparison_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
 ## CLI
 
 ::: castle.cli.main
@@ -104,6 +131,33 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 ### Mask Filter
 
 ::: castle.core.mask_filter
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Ethogram Engine
+
+::: castle.core.ethogram
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Quality Metrics
+
+::: castle.core.metrics
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Group Comparison
+
+::: castle.core.comparison
     options:
       show_root_heading: true
       show_source: true
@@ -228,6 +282,44 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 ### Embedding Plots
 
 ::: castle.visualization.embedding_plots
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Ethogram Plots
+
+::: castle.visualization.ethogram_plots
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Comparison Plots
+
+::: castle.visualization.comparison_plots
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+## CLI Commands
+
+### Ethogram CLI
+
+::: castle.cli.ethogram_cmd
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Compare CLI
+
+::: castle.cli.compare_cmd
     options:
       show_root_heading: true
       show_source: true

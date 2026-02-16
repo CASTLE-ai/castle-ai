@@ -362,13 +362,23 @@ def cluster_evaluate(project: str, storage: str = "", ground_truth: str = "") ->
 
 
 @mcp.tool()
-def ethogram_analyze(project: str, storage: str = "", fps: float = 30.0) -> dict:
+def ethogram_analyze(
+    project: str,
+    storage: str = "",
+    fps: float = 30.0,
+    smooth: bool = False,
+    smooth_window: int = 5,
+    min_bout_frames: int = 3,
+) -> dict:
     """Run ethogram analysis: transition matrix, bout stats, temporal coherence.
 
     Args:
         project: Project name
         storage: Storage directory (defaults to CASTLE_STORAGE env var)
         fps: Frames per second
+        smooth: Apply temporal smoothing before analysis
+        smooth_window: Smoothing window size (odd integer, default 5)
+        min_bout_frames: Minimum bout duration in frames (default 3)
     """
     try:
         import os
@@ -376,7 +386,11 @@ def ethogram_analyze(project: str, storage: str = "", fps: float = 30.0) -> dict
 
         storage_dir = storage or _storage()
         project_path = os.path.join(storage_dir, project)
-        return analyze_ethogram(project_path, fps=fps)
+        return analyze_ethogram(
+            project_path, fps=fps,
+            smooth=smooth, smooth_window=smooth_window,
+            min_bout_frames=min_bout_frames,
+        )
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
 

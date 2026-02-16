@@ -3,20 +3,29 @@
 import os
 import typer
 
+from castle.cli.storage_util import get_storage
+
 app = typer.Typer(help="Ethogram analysis (transition matrix, bout statistics)")
 
 
 @app.command("analyze")
 def analyze(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
     fps: float = typer.Option(30.0, help="Frames per second"),
+    smooth: bool = typer.Option(False, "--smooth", help="Apply temporal smoothing"),
+    smooth_window: int = typer.Option(5, "--smooth-window", help="Smoothing window size"),
+    min_bout: int = typer.Option(3, "--min-bout", help="Minimum bout duration in frames"),
 ):
     """Run complete ethogram analysis on a clustered project."""
     from castle.service.ethogram_service import analyze_ethogram
 
+    storage = get_storage(storage)
     project_path = os.path.join(storage, project)
-    result = analyze_ethogram(project_path, fps=fps)
+    result = analyze_ethogram(
+        project_path, fps=fps,
+        smooth=smooth, smooth_window=smooth_window, min_bout_frames=min_bout,
+    )
 
     if result.get("status") != "success":
         typer.echo(f"Error: {result.get('message', 'unknown error')}", err=True)
@@ -53,11 +62,12 @@ def analyze(
 @app.command("transitions")
 def transitions(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
 ):
     """Show transition matrix."""
     from castle.service.ethogram_service import get_transition_matrix
 
+    storage = get_storage(storage)
     project_path = os.path.join(storage, project)
     result = get_transition_matrix(project_path)
 
@@ -83,12 +93,13 @@ def transitions(
 @app.command("bouts")
 def bouts(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
     fps: float = typer.Option(30.0, help="Frames per second"),
 ):
     """Show bout statistics per cluster."""
     from castle.service.ethogram_service import get_bout_statistics
 
+    storage = get_storage(storage)
     project_path = os.path.join(storage, project)
     result = get_bout_statistics(project_path, fps=fps)
 
@@ -116,7 +127,7 @@ def bouts(
 @app.command("export")
 def export(
     project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(..., "--storage", "-s", help="Storage directory path"),
+    storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
     output: str = typer.Option("./ethogram_export", help="Output directory"),
 ):
     """Export ethogram data to CSV files."""

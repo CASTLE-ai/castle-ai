@@ -118,12 +118,22 @@ def _ethogram_to_dict(ethogram) -> dict:
 # Public API
 # ------------------------------------------------------------------ #
 
-def analyze_ethogram(project_path: str, fps: float = None) -> dict:
+def analyze_ethogram(
+    project_path: str,
+    fps: float = None,
+    smooth: bool = False,
+    smooth_window: int = 5,
+    min_bout_frames: int = 3,
+) -> dict:
     """Run complete ethogram analysis on a clustered project.
 
     Args:
         project_path: Path to the project directory (``storage/project_name``).
         fps: Frames per second. If *None*, defaults to 30.0.
+        smooth: If *True*, apply temporal smoothing before computing the
+            ethogram.
+        smooth_window: Window size for median smoothing (odd integer).
+        min_bout_frames: Minimum bout duration for the bout filter.
 
     Returns:
         Structured dict suitable for JSON serialisation.
@@ -134,14 +144,29 @@ def analyze_ethogram(project_path: str, fps: float = None) -> dict:
     data = _load_cluster_data(project_path)
     effective_fps = fps or data["fps"] or 30.0
 
+    labels = data["labels"]
+
+    if smooth:
+        from castle.core.temporal_smooth import smooth_labels
+        labels = smooth_labels(
+            labels, method="both",
+            window=smooth_window, min_bout_frames=min_bout_frames,
+        )
+
     ethogram = compute_ethogram(
-        data["labels"],
+        labels,
         fps=effective_fps,
         cluster_names=data["cluster_names"],
     )
     result = _ethogram_to_dict(ethogram)
     result["status"] = "success"
     result["project_path"] = project_path
+    if smooth:
+        result["smoothing"] = {
+            "applied": True,
+            "window": smooth_window,
+            "min_bout_frames": min_bout_frames,
+        }
     return result
 
 

@@ -101,13 +101,18 @@ def _format_session_status(info):
     if info is None:
         return gr.update(value="No previous sessions found. Use **⚙️ New Session** to start.", visible=True)
     
-    sessions = info['sessions']
-    lines = ["### Previous Sessions\n"]
-    for s in sessions[:5]:  # Show up to 5
-        active = "▶️ " if s.session_id == info.get('active_id', '') else ""
-        lines.append(f"- {active}**{s.name}** — {s.n_clusters} clusters, {s.model}, ROI {s.roi_id} *(updated {s.updated_at[:16]})*")
-    
-    return gr.update(value="\n".join(lines), visible=True)
+    try:
+        sessions = info.get('sessions', []) if isinstance(info, dict) else []
+        if not sessions:
+            return gr.update(value="No previous sessions found. Use **⚙️ New Session** to start.", visible=True)
+        
+        lines = ["### Previous Sessions\n"]
+        for s in sessions[:5]:
+            lines.append(f"- **{s.name}** — {s.n_clusters} clusters, {s.model}, ROI {s.roi_id} *(updated {s.updated_at[:16]})*")
+        
+        return gr.update(value="\n".join(lines), visible=True)
+    except Exception:
+        return gr.update(value="Error loading sessions.", visible=True)
 
 def update_umap_config_text_with_preset(preset_dropdown):
     """根據使用者選擇的預設來生成對應的 UMAP 配置字串並調整 n_neighbors 數值"""

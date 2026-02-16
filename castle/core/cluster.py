@@ -105,7 +105,7 @@ class LatentAggregator:
         self.project_name = project_name
         self.source_path = os.path.join(storage_path, project_name, 'sources')
         self.project_path = os.path.join(storage_path, project_name)
-        self.bin_size = bin_size
+        self.bin_size = int(bin_size)
         self.model_name = model_name
         self.notify = notify or print  # Fallback to print
         

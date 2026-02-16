@@ -411,14 +411,23 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
     first_video = video_list[0]
     source_path = os.path.join(storage_path, project_name, 'sources', first_video)
     
-    # Use VideoReader for preview
-    with VideoReader(source_path) as vr:
-        frame = vr.get_frame(0)
-    
-    # Get mask
+    # Get mask — find first frame where mask area > 0
     track_dir = os.path.join(storage_path, project_name, 'track', first_video)
     tracker = H5IO(os.path.join(track_dir, 'mask_list.h5'))
-    mask = tracker.read_mask(0)
+    
+    preview_idx = 0
+    n_frames = len(tracker) if len(tracker) > 0 else 1
+    for fi in range(min(n_frames, 500)):  # search up to 500 frames
+        m = tracker.read_mask(fi)
+        if m is not None and m.sum() > 0:
+            preview_idx = fi
+            break
+    
+    mask = tracker.read_mask(preview_idx)
+    
+    # Use VideoReader for preview
+    with VideoReader(source_path) as vr:
+        frame = vr.get_frame(preview_idx)
     
     pf, pm = preprocess.transform(frame, mask)
     mixed = generate_mix_image(pf, pm)
@@ -465,7 +474,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         with gr.Column(scale=4):
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)
             
-            with gr.Accordion("Advanced Extraction Options (A-06)", open=False, visible=False) as adv_accordion:
+            with gr.Accordion("Advanced Extraction Options", open=False, visible=False) as adv_accordion:
                 ui['pooling_method'] = gr.Radio(
                     choices=['weighted_average', 'multiscale'],
                     value='weighted_average',

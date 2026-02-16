@@ -12,6 +12,9 @@ from castle.utils.analysis_utils import compute_roi_info, save_kinematic_csv
 
 
 def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.Progress()):
+    if source_video is None:
+        gr.Warning("Please select a video first.")
+        return None, None, None, None, None
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)

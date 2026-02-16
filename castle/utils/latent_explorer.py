@@ -46,6 +46,7 @@ class Latent:
     def __init__(self, raw, time_window=1, device=''):
         if not device:
             device = DEFAULT_DEVICE
+        time_window = int(time_window)
         n = (len(raw) // time_window) * time_window
         num_feature = raw.shape[-1]
         self.time_window = time_window

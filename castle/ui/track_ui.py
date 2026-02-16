@@ -75,6 +75,9 @@ def toggle_intermediate_display(tracker: ROITracker) -> Generator[Tuple[Any, str
     Yields:
         Tuple of (mixed_image, display_mode_text)
     """
+    if tracker is None:
+        gr.Warning("Please click 'Apply parameters' first to initialize the tracker.")
+        return
     tracker.toggle_display_mode()
     
     while tracker.show_middle_result:

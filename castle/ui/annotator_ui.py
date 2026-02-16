@@ -240,12 +240,13 @@ def create_annotator_ui(storage_path, project_name, latents_state, mulvideo_stat
         outputs=[annotations_state, ui['cluster_radio']],
     )
 
-    # Also refresh when cluster_radio gets focus
-    ui['cluster_radio'].focus(
-        fn=_load_existing_annotations,
-        inputs=[storage_path, project_name, latents_state],
-        outputs=[annotations_state, ui['cluster_radio']],
-    )
+    # Also refresh when cluster_radio gets focus (if supported)
+    if hasattr(ui['cluster_radio'], 'focus'):
+        ui['cluster_radio'].focus(
+            fn=_load_existing_annotations,
+            inputs=[storage_path, project_name, latents_state],
+            outputs=[annotations_state, ui['cluster_radio']],
+        )
 
     # Select cluster → generate GIFs
     ui['cluster_radio'].change(

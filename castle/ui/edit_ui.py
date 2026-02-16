@@ -211,6 +211,9 @@ def create_edit_ui(storage_path, project_name, edit_tab):
         fn=handle_edit_click,
         inputs=edit_button_inputs,
         outputs=edit_button_outputs
+    ).then(
+        fn=lambda: gr.update(visible=False),
+        outputs=track_ui['skip_existing_checkbox'],
     )
     
     return ui

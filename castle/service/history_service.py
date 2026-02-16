@@ -23,20 +23,39 @@ class HistoryManager:
         self._max_history = max_history
 
     def _snapshot_from_latent(self, latent, description: str = "") -> ClusterSnapshot:
-        """Create a snapshot from a latent object."""
+        """Create a snapshot from a latent object (Latent or LocalLatent)."""
+        # LocalLatent uses .export for metadata; Latent uses .cluster_meta
+        cluster = getattr(latent, 'cluster', None)
+        if cluster is not None:
+            cluster = cluster.copy()
+        else:
+            cluster = np.array([])
+
+        meta = getattr(latent, 'cluster_meta', None)
+        if meta is None:
+            meta = getattr(latent, 'export', {})
+        meta = copy.deepcopy(meta)
+
+        embedding = None
+        if hasattr(latent, 'embedding') and latent.embedding is not None:
+            embedding = latent.embedding.copy()
+
         return ClusterSnapshot(
-            cluster=latent.cluster.copy(),
-            cluster_meta=copy.deepcopy(latent.cluster_meta),
-            embedding=(latent.embedding.copy()
-                       if hasattr(latent, 'embedding') and latent.embedding is not None
-                       else None),
+            cluster=cluster,
+            cluster_meta=meta,
+            embedding=embedding,
             description=description,
         )
 
     def _apply_snapshot(self, snapshot: ClusterSnapshot, latent):
-        """Apply a snapshot's state onto a latent object."""
-        latent.cluster = snapshot.cluster
-        latent.cluster_meta = snapshot.cluster_meta
+        """Apply a snapshot's state onto a latent object (Latent or LocalLatent)."""
+        if len(snapshot.cluster) > 0:
+            latent.cluster = snapshot.cluster
+        # Restore metadata to the correct attribute
+        if hasattr(latent, 'cluster_meta'):
+            latent.cluster_meta = snapshot.cluster_meta
+        elif hasattr(latent, 'export'):
+            latent.export = snapshot.cluster_meta
         if snapshot.embedding is not None and hasattr(latent, 'embedding'):
             latent.embedding = snapshot.embedding
 

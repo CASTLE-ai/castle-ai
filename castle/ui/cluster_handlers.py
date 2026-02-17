@@ -231,8 +231,12 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
     if history is None:
         history = HistoryManager()
 
+    if not hasattr(local_latents, 'cluster'):
+        gr.Warning("Please run Generate Cluster first before submitting.")
+        return (None, None, None, None, None, None, None, None, history)
+
     # Save state including parent (for undo of submit)
-    if hasattr(local_latents, 'cluster') and hasattr(local_latents, 'embedding'):
+    if hasattr(local_latents, 'embedding'):
         history.save_state(local_latents, "Submit all clusters to parent", parent=latents)
 
     unique_clusters = np.unique(local_latents.cluster)

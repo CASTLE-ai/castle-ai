@@ -231,9 +231,9 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
     if history is None:
         history = HistoryManager()
 
-    # Only save state if cluster exists
+    # Save state including parent (for undo of submit)
     if hasattr(local_latents, 'cluster') and hasattr(local_latents, 'embedding'):
-        history.save_state(local_latents, "Submit all clusters to parent")
+        history.save_state(local_latents, "Submit all clusters to parent", parent=latents)
 
     unique_clusters = np.unique(local_latents.cluster)
 
@@ -544,7 +544,7 @@ def handle_undo(local_latents, latents, history):
         gr.Info("Nothing to undo")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
 
-    desc = history.undo(local_latents)
+    desc = history.undo(local_latents, parent=latents)
     
     # Check if restored state is valid before plotting
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
@@ -555,7 +555,7 @@ def handle_undo(local_latents, latents, history):
 
     Z_plt = EmbeddingScatterPlot(local_latents)
     
-    # Refresh cluster tree from parent latents
+    # Refresh cluster tree from parent latents (may have been restored too)
     from castle.ui.cluster_tree import build_cluster_tree_choices
     tree_update = gr.update()
     if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
@@ -571,7 +571,7 @@ def handle_redo(local_latents, latents, history):
         gr.Info("Nothing to redo")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
 
-    desc = history.redo(local_latents)
+    desc = history.redo(local_latents, parent=latents)
     
     # Check if restored state is valid before plotting
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):

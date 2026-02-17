@@ -12,6 +12,8 @@ class ClusterSnapshot:
     cluster_meta: dict           # {id: {name, color}}
     embedding: Optional[np.ndarray] = None  # UMAP embedding (2D)
     description: str = ""        # Human-readable description of what changed
+    parent_cluster: Optional[np.ndarray] = None       # parent Latent .cluster
+    parent_cluster_meta: Optional[dict] = None         # parent Latent .cluster_meta
 
 
 class HistoryManager:
@@ -59,37 +61,55 @@ class HistoryManager:
         if snapshot.embedding is not None and hasattr(latent, 'embedding'):
             latent.embedding = snapshot.embedding
 
-    def save_state(self, latent, description: str = ""):
-        """Save current state before a mutation."""
+    def save_state(self, latent, description: str = "", parent=None):
+        """Save current state before a mutation. Optionally also snapshot parent."""
         snapshot = self._snapshot_from_latent(latent, description)
+        if parent is not None and hasattr(parent, 'cluster') and hasattr(parent, 'cluster_meta'):
+            snapshot.parent_cluster = parent.cluster.copy()
+            snapshot.parent_cluster_meta = copy.deepcopy(parent.cluster_meta)
         self._undo_stack.append(snapshot)
         if len(self._undo_stack) > self._max_history:
             self._undo_stack.pop(0)
         self._redo_stack.clear()  # New action invalidates redo
 
-    def undo(self, latent) -> Optional[str]:
+    def undo(self, latent, parent=None) -> Optional[str]:
         """Restore previous state. Returns description of undone action, or None."""
         if not self._undo_stack:
             return None
 
         # Save current state to redo stack
-        self._redo_stack.append(self._snapshot_from_latent(latent))
+        redo_snap = self._snapshot_from_latent(latent)
+        if parent is not None and hasattr(parent, 'cluster') and hasattr(parent, 'cluster_meta'):
+            redo_snap.parent_cluster = parent.cluster.copy()
+            redo_snap.parent_cluster_meta = copy.deepcopy(parent.cluster_meta)
+        self._redo_stack.append(redo_snap)
 
         # Restore previous state
         prev = self._undo_stack.pop()
         self._apply_snapshot(prev, latent)
+        # Also restore parent if snapshot has parent state
+        if parent is not None and prev.parent_cluster is not None:
+            parent.cluster = prev.parent_cluster
+            parent.cluster_meta = prev.parent_cluster_meta
         return prev.description
 
-    def redo(self, latent) -> Optional[str]:
+    def redo(self, latent, parent=None) -> Optional[str]:
         """Re-apply undone action. Returns description, or None."""
         if not self._redo_stack:
             return None
 
         # Save current state to undo stack
-        self._undo_stack.append(self._snapshot_from_latent(latent))
+        undo_snap = self._snapshot_from_latent(latent)
+        if parent is not None and hasattr(parent, 'cluster') and hasattr(parent, 'cluster_meta'):
+            undo_snap.parent_cluster = parent.cluster.copy()
+            undo_snap.parent_cluster_meta = copy.deepcopy(parent.cluster_meta)
+        self._undo_stack.append(undo_snap)
 
         next_state = self._redo_stack.pop()
         self._apply_snapshot(next_state, latent)
+        if parent is not None and next_state.parent_cluster is not None:
+            parent.cluster = next_state.parent_cluster
+            parent.cluster_meta = next_state.parent_cluster_meta
         return next_state.description
 
     @property

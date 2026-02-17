@@ -368,15 +368,24 @@ def restore_session(storage_path, project_name, select_roi_id, bin_size, select_
 
     # Use SessionManager to activate the selected (or latest) session
     mgr = SessionManager(storage_path, project_name)
+    session_info = None
     if session_id:
+        session_info = mgr.get_session(session_id)
         mgr.activate_session(session_id)
     else:
         sessions = mgr.list_sessions()
         if sessions:
+            session_info = sessions[0]
             mgr.activate_session(sessions[0].session_id)
 
+    # Use session's saved parameters if available, fall back to UI values
+    if session_info:
+        select_model = session_info.model or select_model
+        select_roi_id = str(session_info.roi_id) if session_info.roi_id else select_roi_id
+        bin_size = session_info.bin_size if session_info.bin_size else bin_size
+
     aggregator = LatentAggregator(
-        storage_path, project_name, select_roi_id, bin_size,
+        storage_path, project_name, select_roi_id, int(bin_size),
         model_name=select_model,
         notify=notify_callback
     )

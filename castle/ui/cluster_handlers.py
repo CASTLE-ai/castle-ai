@@ -357,8 +357,9 @@ def _restore_embedding_from_npz(npz_path, latents):
 
 def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id=None):
     """Restore latents from saved CSV files and optionally restore UMAP embedding."""
+    _empty = (None, None, None, None, None, None, None, None)
     if project_name is None:
-        return None, None, None, None, None, None, None, None
+        return _empty
 
     def notify_callback(msg, level="info"):
         if level == "error":
@@ -366,7 +367,15 @@ def restore_session(storage_path, project_name, select_roi_id, bin_size, select_
         else:
             gr.Info(msg)
 
-    # Use SessionManager to activate the selected (or latest) session
+    try:
+        return _do_restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id, notify_callback)
+    except Exception as e:
+        gr.Warning(f"Restore failed: {e}")
+        return _empty
+
+
+def _do_restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id, notify_callback):
+    """Inner restore logic."""
     mgr = SessionManager(storage_path, project_name)
     session_info = None
     if session_id:

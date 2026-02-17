@@ -137,11 +137,11 @@ class SessionManager:
             src = os.path.join(session_dir, fname)
             dst = os.path.join(self.cluster_path, fname)
             if os.path.exists(src):
-                shutil.copy2(src, dst)
+                shutil.copy(src, dst)
         
         # Copy npz files
         for npz in glob.glob(os.path.join(session_dir, 'cluster_*.npz')):
-            shutil.copy2(npz, self.cluster_path)
+            shutil.copy(npz, self.cluster_path)
         
         self.set_active_session(session_id)
         return info
@@ -154,11 +154,11 @@ class SessionManager:
         # Copy id.csv
         id_csv = os.path.join(self.cluster_path, 'id.csv')
         if os.path.exists(id_csv):
-            shutil.copy2(id_csv, session_dir)
+            shutil.copy(id_csv, session_dir)
         
         # Copy all cluster_*.npz
         for npz in glob.glob(os.path.join(self.cluster_path, 'cluster_*.npz')):
-            shutil.copy2(npz, session_dir)
+            shutil.copy(npz, session_dir)
     
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""

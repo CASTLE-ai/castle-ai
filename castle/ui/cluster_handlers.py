@@ -355,7 +355,7 @@ def _restore_embedding_from_npz(npz_path, latents):
         return None, None
 
 
-def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model):
+def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id=None):
     """Restore latents from saved CSV files and optionally restore UMAP embedding."""
     if project_name is None:
         return None, None, None, None, None, None, None, None
@@ -366,12 +366,14 @@ def restore_session(storage_path, project_name, select_roi_id, bin_size, select_
         else:
             gr.Info(msg)
 
-    # Use SessionManager to activate the latest session
+    # Use SessionManager to activate the selected (or latest) session
     mgr = SessionManager(storage_path, project_name)
-    sessions = mgr.list_sessions()
-    if sessions:
-        latest = sessions[0]  # Already sorted by updated_at desc
-        mgr.activate_session(latest.session_id)
+    if session_id:
+        mgr.activate_session(session_id)
+    else:
+        sessions = mgr.list_sessions()
+        if sessions:
+            mgr.activate_session(sessions[0].session_id)
 
     aggregator = LatentAggregator(
         storage_path, project_name, select_roi_id, bin_size,

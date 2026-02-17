@@ -98,21 +98,37 @@ preset_dropdown_list += ['Super-high-magnification objective (500, 300, 100)', '
 # ---------------------------
 
 def _format_session_status(info):
-    if info is None:
-        return gr.update(value="No previous sessions found. Use **⚙️ New Session** to start.", visible=True)
+    """Returns (restore_btn_update, session_status_update, session_dropdown_update)."""
+    if info is None or not isinstance(info, dict):
+        return (
+            gr.update(interactive=False),
+            gr.update(value="No previous sessions found. Use **⚙️ New Session** to start.", visible=True),
+            gr.update(choices=[], visible=False),
+        )
     
     try:
-        sessions = info.get('sessions', []) if isinstance(info, dict) else []
+        sessions = info.get('sessions', [])
         if not sessions:
-            return gr.update(value="No previous sessions found. Use **⚙️ New Session** to start.", visible=True)
+            return (
+                gr.update(interactive=False),
+                gr.update(value="No previous sessions found. Use **⚙️ New Session** to start.", visible=True),
+                gr.update(choices=[], visible=False),
+            )
         
-        lines = ["### Previous Sessions\n"]
-        for s in sessions[:5]:
-            lines.append(f"- **{s.name}** — {s.n_clusters} clusters, {s.model}, ROI {s.roi_id} *(updated {s.updated_at[:16]})*")
+        choices = [(f"{s.name} — {s.n_clusters} clusters ({s.updated_at[:16]})", s.session_id) for s in sessions[:10]]
+        latest_id = sessions[0].session_id
         
-        return gr.update(value="\n".join(lines), visible=True)
+        return (
+            gr.update(interactive=True),
+            gr.update(value=f"**{len(sessions)} session(s) found.** Select one to restore.", visible=True),
+            gr.update(choices=choices, value=latest_id, visible=True),
+        )
     except Exception:
-        return gr.update(value="Error loading sessions.", visible=True)
+        return (
+            gr.update(interactive=False),
+            gr.update(value="Error loading sessions.", visible=True),
+            gr.update(choices=[], visible=False),
+        )
 
 def update_umap_config_text_with_preset(preset_dropdown):
     """根據使用者選擇的預設來生成對應的 UMAP 配置字串並調整 n_neighbors 數值"""
@@ -179,6 +195,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # Section 1: Previous Sessions
     with gr.Accordion("📂 Previous Sessions", open=True) as ui['previous_sessions_accordion']:
         ui['session_status'] = gr.Markdown("*Checking for previous sessions...*")
+        ui['session_dropdown'] = gr.Dropdown(label="Select Session", choices=[], interactive=True, visible=False)
         ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
     
     # Section 2: New Session
@@ -241,12 +258,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         inputs=[storage_path, project_name],
         outputs=[session_info]
     ).then(
-        fn=lambda info: (
-            gr.update(interactive=info is not None),
-            _format_session_status(info)
-        ),
+        fn=_format_session_status,
         inputs=[session_info],
-        outputs=[ui['restore_btn'], ui['session_status']]
+        outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
     )
 
     # Initialize: create aggregator + check for previous session
@@ -255,12 +269,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
         outputs=[mulvideo, latents, session_info]
     ).then(
-        fn=lambda info: (
-            gr.update(interactive=info is not None),
-            _format_session_status(info)
-        ),
+        fn=_format_session_status,
         inputs=[session_info],
-        outputs=[ui['restore_btn'], ui['session_status']]
+        outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
     ).then(
         fn=update_select_cluster_list,
         inputs=latents,
@@ -273,13 +284,13 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # Restore previous session (B-03: also restores UMAP embedding)
     ui['restore_btn'].click(
         fn=restore_session,
-        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
+        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'], ui['session_dropdown']],
         outputs=[mulvideo, latents, ui['syllables_plot'], ui['cluster_tree_radio'],
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
                  local_embedding_plot, ui['embedding_plot']]
     ).then(
-        fn=lambda: (gr.update(visible=False), gr.update(value="Session restored successfully.")),
-        outputs=[ui['restore_btn'], ui['session_status']]
+        fn=lambda: (gr.update(visible=False), gr.update(value="Session restored successfully."), gr.update(visible=False)),
+        outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
     )
 
     ui['cluster_tree_radio'].select(

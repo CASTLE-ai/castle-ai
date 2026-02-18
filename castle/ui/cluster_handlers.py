@@ -685,3 +685,160 @@ def update_history_buttons(history):
         gr.update(interactive=history.can_redo),
         _history_status(history),
     )
+
+
+# ---------------------------
+# Auto-Cluster Handler
+# ---------------------------
+
+def run_auto_cluster(storage_path, project_name, latents, mulvideo, max_depth, min_frames, progress=gr.Progress()):
+    """Run recursive hierarchical auto-clustering.
+
+    Args:
+        storage_path: Root storage path.
+        project_name: Project name.
+        latents: LatentAggregator instance (holds global latents).
+        mulvideo: LatentAggregator instance (aggregator).
+        max_depth: Maximum recursion depth.
+        min_frames: Minimum frames per cluster to continue splitting.
+        progress: Gradio progress tracker.
+
+    Returns:
+        (syllables_plot, cluster_tree_radio, behavior_id_csv,
+         behavior_time_series_csv, behavior_time_series_srt,
+         local_embedding_plot, embedding_plot, display_eps, status_str)
+    """
+    _empty = (None, None, None, None, None, None, None, None, "**❌ Auto-cluster failed.**")
+
+    if latents is None or mulvideo is None:
+        gr.Warning("Please initialise the session first (⚙️ New Session).")
+        return _empty
+
+    from castle.service.clustering_service import ClusteringSession
+
+    progress(0.0, desc="Initialising Auto-Cluster …")
+
+    def _progress_cb(msg: str):
+        gr.Info(msg)
+
+    try:
+        session = ClusteringSession(
+            storage_path,
+            project_name,
+            roi=getattr(mulvideo, 'roi_id', 1),
+            bin_size=getattr(mulvideo, 'bin_size', 1),
+            model=getattr(mulvideo, 'model_name', 'dinov3_vitb16'),
+        )
+        # Copy existing cluster state into the service session so it starts
+        # from whatever labels are already assigned.
+        session.latents = latents
+        session.aggregator = mulvideo
+
+        progress(0.1, desc="Running recursive Auto-Cluster …")
+        result = session.auto_cluster(
+            cluster_name='init',
+            max_depth=int(max_depth),
+            min_frames=int(min_frames),
+            progress_callback=_progress_cb,
+        )
+    except Exception as exc:
+        logger.exception("Auto-cluster failed")
+        gr.Warning(f"Auto-cluster failed: {exc}")
+        return _empty
+
+    # After clustering, commit results back
+    progress(0.85, desc="Committing results …")
+    try:
+        # Build a dummy local_latents from root selection so we can call
+        # import_info_from_local_latent to generate files.
+        local_latents_root = latents.select(selected_cluster='init')
+        commit_result = import_info_from_local_latent(
+            storage_path, project_name, latents, local_latents_root, mulvideo
+        )
+    except Exception as exc:
+        logger.exception("Auto-cluster commit failed")
+        gr.Warning(f"Auto-cluster completed but commit failed: {exc}")
+        commit_result = (None, None, None, None, None, None, None, None)
+
+    progress(1.0, desc="Done!")
+
+    n_leaves = result.get('leaf_count', '?')
+    status = (
+        f"**✅ Auto-Cluster complete!** "
+        f"{n_leaves} leaf clusters, max_depth={max_depth}, min_frames={min_frames}."
+    )
+
+    gr.Info(f"Auto-cluster finished: {n_leaves} leaf clusters.")
+    return commit_result + (status,)
+
+
+# ---------------------------
+# Save / Apply Cluster Model Handlers
+# ---------------------------
+
+def save_cluster_model(storage_path, project_name):
+    """Save the current project's cluster model to a .npz file.
+
+    Returns:
+        (gr.File update, status_markdown)
+    """
+    if not storage_path or not project_name:
+        return gr.update(value=None, visible=False), "**❌ No project selected.**"
+
+    import os
+    from castle.service.clustering_service import save_project_cluster_model
+
+    project_path = os.path.join(storage_path, project_name)
+    try:
+        model_path = save_project_cluster_model(
+            project_path=project_path,
+            model_name=project_name,
+        )
+        gr.Info(f"Cluster model saved: {os.path.basename(model_path)}")
+        return gr.update(value=model_path, visible=True), f"**✅ Model saved:** `{model_path}`"
+    except FileNotFoundError as exc:
+        gr.Warning(str(exc))
+        return gr.update(value=None, visible=False), f"**❌ Save failed:** {exc}"
+    except Exception as exc:
+        logger.exception("save_cluster_model failed")
+        gr.Warning(f"Save model failed: {exc}")
+        return gr.update(value=None, visible=False), f"**❌ Save failed:** {exc}"
+
+
+def apply_cluster_model(storage_path, project_name, model_file):
+    """Apply a saved cluster model (.npz) to the current project.
+
+    Args:
+        storage_path: Root storage path.
+        project_name: Target project name.
+        model_file: Path to the saved model .npz (from gr.File).
+
+    Returns:
+        status_markdown
+    """
+    if not storage_path or not project_name:
+        return "**❌ No project selected.**"
+    if not model_file:
+        return "**❌ No model file provided.** Upload a cluster_model.npz."
+
+    import os
+    from castle.service.clustering_service import apply_cluster_model_to_project
+
+    project_path = os.path.join(storage_path, project_name)
+    # model_file from gr.File is the temp path string
+    model_path = model_file if isinstance(model_file, str) else model_file.name
+    try:
+        result = apply_cluster_model_to_project(
+            model_path=model_path,
+            project_path=project_path,
+        )
+        n = result.get('n_frames', '?')
+        gr.Info(f"Cluster model applied: {n} frames classified.")
+        return f"**✅ Model applied!** {n} frames classified. Output written to `{result.get('output_csv', '')}`"
+    except FileNotFoundError as exc:
+        gr.Warning(str(exc))
+        return f"**❌ Apply failed:** {exc}"
+    except Exception as exc:
+        logger.exception("apply_cluster_model failed")
+        gr.Warning(f"Apply model failed: {exc}")
+        return f"**❌ Apply failed:** {exc}"

@@ -33,6 +33,9 @@ from castle.ui.cluster_handlers import (
     handle_redo,
     update_history_buttons,
     check_session_exists,
+    run_auto_cluster,
+    save_cluster_model,
+    apply_cluster_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -245,6 +248,44 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
             
     ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)
+
+    # ---- Auto-Cluster Section ----
+    with gr.Accordion("🤖 Auto-Cluster (Recursive Hierarchical)", open=False) as ui['auto_cluster_accordion']:
+        gr.Markdown(
+            "Automatically runs recursive UMAP + DBSCAN at increasing magnification. "
+            "Equivalent to `castle cluster auto PROJECT --max-depth N --min-frames M`."
+        )
+        with gr.Row():
+            ui['auto_max_depth'] = gr.Slider(
+                label="Max Depth", minimum=1, maximum=10, step=1, value=6,
+                info="Maximum recursion depth (Raiso typically uses 6–7).",
+            )
+            ui['auto_min_frames'] = gr.Number(
+                label="Min Frames", value=100, precision=0,
+                info="Clusters with fewer frames than this are left as leaves.",
+            )
+        ui['auto_cluster_btn'] = gr.Button("🤖 Run Auto-Cluster", variant="primary")
+        ui['auto_cluster_status'] = gr.Markdown("**Status:** Ready")
+
+    # ---- Save / Apply Cluster Model Section ----
+    with gr.Accordion("💾 Save / Apply Cluster Model", open=False) as ui['model_transfer_accordion']:
+        gr.Markdown(
+            "Transfer a trained cluster model to another project. "
+            "Equivalent to `castle cluster save-model` / `castle cluster apply-model`."
+        )
+        with gr.Row():
+            ui['save_model_btn'] = gr.Button("💾 Save Model", variant="secondary")
+            ui['save_model_file'] = gr.File(
+                label="⬇️ Download Model", visible=False, interactive=False
+            )
+        ui['save_model_status'] = gr.Markdown("")
+        gr.Markdown("---")
+        ui['apply_model_file'] = gr.File(
+            label="📂 Upload Cluster Model (.npz)", file_types=[".npz"], interactive=True
+        )
+        ui['apply_model_btn'] = gr.Button("📂 Apply Model", variant="secondary")
+        ui['apply_model_status'] = gr.Markdown("")
+
     with gr.Row(visible=True) as ui['cluster_row_files']:
         with gr.Column(scale=2):
             ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=True)
@@ -387,6 +428,37 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=update_select_cluster_list,
         inputs=latents,
         outputs=ui['cluster_tree_radio']
+    )
+
+    # Auto-Cluster
+    _auto_cluster_outputs = [
+        ui['syllables_plot'], ui['cluster_tree_radio'],
+        ui['behavior_id_csv'], ui['behavior_time_series_csv'],
+        ui['behavior_time_series_srt'],
+        local_embedding_plot, ui['embedding_plot'], ui['display_eps'],
+        ui['auto_cluster_status'],
+    ]
+    ui['auto_cluster_btn'].click(
+        fn=run_auto_cluster,
+        inputs=[
+            storage_path, project_name, latents, mulvideo,
+            ui['auto_max_depth'], ui['auto_min_frames'],
+        ],
+        outputs=_auto_cluster_outputs,
+    )
+
+    # Save Cluster Model
+    ui['save_model_btn'].click(
+        fn=save_cluster_model,
+        inputs=[storage_path, project_name],
+        outputs=[ui['save_model_file'], ui['save_model_status']],
+    )
+
+    # Apply Cluster Model
+    ui['apply_model_btn'].click(
+        fn=apply_cluster_model,
+        inputs=[storage_path, project_name, ui['apply_model_file']],
+        outputs=[ui['apply_model_status']],
     )
 
     # Expose shared state for Annotator tab (A-04)

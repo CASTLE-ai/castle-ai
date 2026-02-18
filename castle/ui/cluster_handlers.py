@@ -6,6 +6,7 @@ These functions are bound to Gradio button clicks.
 They take Gradio state values as input and return updated values.
 """
 
+import logging
 import os
 import json
 import glob
@@ -24,6 +25,8 @@ from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
 from castle.ui.embedding_scatter import EmbeddingScatterPlot
 from castle.service.history_service import HistoryManager
 from castle.service.session_manager import SessionManager
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------
@@ -411,8 +414,7 @@ def _restore_embedding_from_npz(npz_path, latents):
         return local_latents, Z_plt
 
     except Exception:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Failed to restore embedding from %s", npz_path)
         return None, None
 
 

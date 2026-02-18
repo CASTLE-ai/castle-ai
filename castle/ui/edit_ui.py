@@ -1,5 +1,7 @@
 """Edit UI for tracking ROIs in videos."""
 
+import logging
+
 import gradio as gr
 
 from ..utils.video_io import ReadArray
@@ -10,6 +12,8 @@ from .knowledge_ui import create_knowledge_ui
 from .track_ui import create_track_ui
 from .post_track_ui import create_post_track_ui
 from .batch_track_ui import create_batch_track_ui
+
+logger = logging.getLogger(__name__)
 
 # UI callback functions
 def list_project_video_dropdown(storage_path, project_name):
@@ -30,6 +34,11 @@ def handle_edit_click(storage_path, project_name, video_name, view_ui_count, lab
     to prevent deadlocks from multiple concurrent Gradio events.
     """
     import os
+
+    if not storage_path or not project_name or not video_name:
+        gr.Warning("Please select a project and video first.")
+        n_total = 9 + 1 + view_ui_count + label_ui_count + knowledge_ui_count + track_ui_count + post_track_ui_count
+        return tuple([None] * n_total)
     
     # 1. Logic from load_video_for_editing
     video_path = os.path.join(storage_path, project_name, 'sources', video_name)

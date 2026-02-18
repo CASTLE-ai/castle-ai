@@ -1,8 +1,12 @@
 """View UI for displaying video frames and ROI masks."""
 
+import logging
+
 import gradio as gr
 
 from ..utils.roi_manager import get_frame_display, save_frame_to_knowledge
+
+logger = logging.getLogger(__name__)
 
 
 # UI callback functions
@@ -19,6 +23,8 @@ def update_frame_display(storage_path, project_name, source_video, frame_index, 
     Returns:
         numpy.ndarray: Frame image to display
     """
+    if source_video is None or not storage_path or not project_name:
+        return None
     return get_frame_display(storage_path, project_name, source_video, frame_index, display_mode)
 
 
@@ -48,6 +54,8 @@ def update_frame_step(step_value):
     Returns:
         Gradio update object
     """
+    if step_value is None:
+        return gr.update()
     return gr.update(step=int(step_value))
 
 

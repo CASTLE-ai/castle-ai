@@ -1,5 +1,6 @@
 """Source video management UI for Castle AI."""
 
+import logging
 import os
 import gradio as gr
 
@@ -8,6 +9,8 @@ from ..utils.video_manager import (
     scan_video_directory,
     add_videos_batch
 )
+
+logger = logging.getLogger(__name__)
 
 
 # UI callback functions
@@ -20,6 +23,9 @@ def upload_local_videos_wrapper(storage_path, project_name, upload_video_files):
         upload_video_files: List of uploaded video files
     """
     if not upload_video_files:
+        return
+    if not storage_path or not project_name:
+        gr.Warning("Please select a project first.")
         return
     
     for video_file in upload_video_files:
@@ -66,6 +72,9 @@ def add_server_videos_batch_wrapper(storage_path, project_name, video_directory,
     Returns:
         tuple: (empty_video_list, reset_summary, disabled_button)
     """
+    if not storage_path or not project_name:
+        gr.Warning("Please select a project first.")
+        return video_list, "", gr.update(interactive=False)
     if not video_list:
         gr.Warning("No videos to add")
         return video_list, "", gr.update(interactive=False)

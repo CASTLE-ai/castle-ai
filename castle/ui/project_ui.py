@@ -1,5 +1,7 @@
 """Project UI components for Castle AI."""
 
+import logging
+
 import gradio as gr
 
 from ..utils.project_manager import (
@@ -9,6 +11,8 @@ from ..utils.project_manager import (
     generate_default_project_name,
     initialize_storage
 )
+
+logger = logging.getLogger(__name__)
 
 
 # UI callback functions
@@ -24,18 +28,24 @@ def unlock_project_btn(object_count):
 
 def list_project_dropdown(storage_path):
     """Update dropdown with available projects."""
+    if not storage_path:
+        return gr.update(choices=[])
     projects = list_projects(storage_path)
     return gr.update(choices=projects)
 
 
 def create_new_project_wrapper(storage_path, project_name):
     """Wrapper for creating a new project with error handling."""
+    if not storage_path or not project_name:
+        gr.Warning("Storage path and project name are required.")
+        return
     try:
         create_project(storage_path, project_name)
         gr.Info(f"Created project: {project_name}")
     except FileExistsError as e:
         gr.Warning(str(e))
     except Exception as e:
+        logger.exception("Failed to create project %r", project_name)
         gr.Error(f"Failed to create project: {str(e)}")
 
 
@@ -52,6 +62,9 @@ def set_project_name(project_name):
 
 def delete_project_wrapper(storage_path, project_name):
     """Wrapper for deleting a project with UI feedback."""
+    if not storage_path or not project_name:
+        gr.Warning("Storage path and project name are required.")
+        return
     if delete_project(storage_path, project_name):
         gr.Info(f"Deleted project: {project_name}")
     else:

@@ -8,10 +8,13 @@ Heavy logic has been extracted to:
   - castle.ui.cluster_tree        (build_cluster_tree_markdown)
 """
 
+import logging
 import re
 import json
 
 import gradio as gr
+
+logger = logging.getLogger(__name__)
 
 from castle.core.cluster import auto_generate_cluster_name
 
@@ -124,6 +127,7 @@ def _format_session_status(info):
             gr.update(choices=choices, value=latest_id, visible=True),
         )
     except Exception:
+        logger.exception("Error formatting session status")
         return (
             gr.update(interactive=False),
             gr.update(value="Error loading sessions.", visible=True),

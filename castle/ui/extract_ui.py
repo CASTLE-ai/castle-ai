@@ -4,9 +4,12 @@ UI Layer for Extraction.
 Delegates all logic to castle.core.extractor.
 """
 
+import logging
 import os
 import gradio as gr
 from tqdm import tqdm # 新增: 匯入 tqdm
+
+logger = logging.getLogger(__name__)
 
 from castle.core.data import Preprocess
 from castle.core.extractor import extract_roi_latent_from_video, extract_roi_crop_video, extract_roi_rotation_latent_from_video
@@ -60,7 +63,7 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False)  # latent_file_list
     ])
 
-    if not project_name:
+    if not storage_path or not project_name:
         gr.Warning("No project selected.")
         return updates # 返回預設的隱藏狀態
 
@@ -157,14 +160,16 @@ def ui_extract_roi_latent(
         # Construct the expected output path
         # Replicate valid tag logic from extractor.py
         tags = []
-        if preprocess_args.center_roi_switch: tags.append("ctr")
-        if preprocess_args.remove_background_switch: tags.append("rmbg")
+        if preprocess_args.center_roi_switch:
+            tags.append("ctr")
+        if preprocess_args.remove_background_switch:
+            tags.append("rmbg")
         # A-06: replicate tag logic
         if pooling_method == 'multiscale' and parsed_scales:
             scales_str = "x".join(str(s) for s in sorted(parsed_scales))
             tags.append(f"spp{scales_str}")
         if parsed_layers:
-            layers_str = "x".join(str(l) for l in sorted(parsed_layers))
+            layers_str = "x".join(str(lay) for lay in sorted(parsed_layers))
             tags.append(f"L{layers_str}")
         
         suffix = "_".join([select_model] + tags)
@@ -406,7 +411,8 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
     # Preview logic
     _, config = get_project_config(storage_path, project_name)
     video_list = sorted(config['source']) if select_video == "All" else [select_video]
-    if not video_list: raise ValueError("No videos.")
+    if not video_list:
+        raise ValueError("No videos.")
     
     first_video = video_list[0]
     source_path = os.path.join(storage_path, project_name, 'sources', first_video)

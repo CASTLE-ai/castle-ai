@@ -62,6 +62,9 @@ def run_tracking(tracker: ROITracker, skip_existing: bool, progress=gr.Progress(
     Returns:
         Status message with frame range
     """
+    if tracker is None:
+        gr.Warning("Please click 'Apply parameters' first to initialize the tracker.")
+        return "No tracker initialized."
     status = tracker.track(progress, skip_existing=skip_existing)
     return f"{status}. Tracked from frame {tracker.start_frame} to {tracker.stop_frame}"
 
@@ -95,6 +98,8 @@ def cancel_tracking(tracker: ROITracker) -> None:
     Args:
         tracker: The ROITracker instance
     """
+    if tracker is None:
+        return
     tracker.cancel_tracking()
 
 

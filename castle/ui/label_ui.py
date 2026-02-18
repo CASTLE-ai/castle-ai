@@ -26,6 +26,9 @@ def index_slide_event(segmentor, sam_model, source_video, index):
 
 def label_click_fn(segmentor, sam_model, frame, mode, evt: gr.SelectData):
     # Load SAM model once and reuse across frames
+    if frame is None:
+        gr.Warning("No frame loaded. Please select a frame first.")
+        return segmentor, sam_model, None
     if sam_model is None:
         sam_model = load_sam_model(model_type='vit_b')
     if segmentor is None:
@@ -43,12 +46,13 @@ def label_click_fn(segmentor, sam_model, frame, mode, evt: gr.SelectData):
     mix_img_with_dots = generate_image_with_dots(mix_img, segmentor.click_points, segmentor.click_modes)
     
     return segmentor, sam_model, mix_img_with_dots
-    # return segmentor, merge_frame_and_mask(frame, mask, segmentor.click_points, segmentor.click_modes)
 
 def reset_click_mode():
     return 'Add'
 
 def next_roi(segmentor):
+    if segmentor is None:
+        return segmentor
     segmentor.next_roi()
     return segmentor
 

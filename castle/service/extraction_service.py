@@ -116,6 +116,7 @@ def extract_latent(
     return ';'.join(paths)
 
 
+# NOTE: Not yet exposed via CLI or UI
 def extract_crop_video(
     storage_path: str,
     project_name: str,
@@ -167,6 +168,7 @@ def extract_crop_video(
     return ';'.join(paths)
 
 
+# NOTE: Not yet exposed via CLI or UI
 def extract_rotation_latent(
     storage_path: str,
     project_name: str,

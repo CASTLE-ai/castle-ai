@@ -13,16 +13,12 @@ require the Clustering workflow to have been run in the current session.
 import os
 import datetime
 import logging
-import subprocess
-import tempfile
-
 import gradio as gr
 import numpy as np
 
 from castle.service.annotator_loader import (
     AnnotatorData,
     load_annotator_data,
-    get_annotator_frame,
 )
 from castle.service.bout_service import find_bouts, generate_grid_video
 from castle.service.annotation_service import (
@@ -40,58 +36,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------
 # Helpers
 # ---------------------------
-
-
-def _transcode_to_h264(video_path: str) -> None:
-    """Re-encode *video_path* in-place to H.264 using ffmpeg libx264.
-
-    The file is written to a temporary path first, then atomically
-    replaces the original so that a partial failure leaves the mp4v
-    file intact.
-
-    Args:
-        video_path: Path to an MP4 file written with the mp4v codec.
-    """
-    tmp_path = video_path + ".h264tmp.mp4"
-    try:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                video_path,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-crf",
-                "23",
-                "-movflags",
-                "+faststart",
-                tmp_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            os.replace(tmp_path, video_path)
-        else:
-            logger.warning(
-                "ffmpeg H.264 transcode failed for %s (keeping mp4v). stderr: %s",
-                video_path,
-                result.stderr[-300:],
-            )
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-    except FileNotFoundError:
-        logger.warning("ffmpeg not found — keeping mp4v codec for %s", video_path)
-    except Exception as exc:
-        logger.warning("H.264 transcode error for %s: %s", video_path, exc)
-        if os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
 
 
 def _get_cluster_choices(annotator_data, annotations):
@@ -144,90 +88,6 @@ def _resolve_mask_h5_path(annotator_data: AnnotatorData) -> str | None:
     if os.path.exists(mask_path):
         return mask_path
     return None
-
-
-def _extract_bouts_standalone(
-    annotator_data: AnnotatorData,
-    cluster_id: int,
-    max_bouts: int = 9,
-    max_frames: int = 60,
-    output_dir: str = None,
-    fps: float = 10.0,
-):
-    """Extract bout video clips from AnnotatorData without LatentAggregator.
-
-    This mirrors the logic in :func:`castle.service.bout_service.extract_cluster_bouts`
-    but uses :func:`get_annotator_frame` instead of an aggregator instance.
-
-    Args:
-        annotator_data: Loaded :class:`AnnotatorData`.
-        cluster_id: Target cluster ID.
-        max_bouts: Maximum number of bouts to extract.
-        max_frames: Maximum frames per bout video.
-        output_dir: Directory to save videos (tmpdir if None).
-        fps: Video playback speed.
-
-    Returns:
-        List of MP4 file paths.
-    """
-    import cv2
-
-    bouts = find_bouts(annotator_data.cluster, cluster_id)
-    if not bouts:
-        return []
-
-    if output_dir is None:
-        output_dir = tempfile.mkdtemp(prefix="castle_bouts_")
-    os.makedirs(output_dir, exist_ok=True)
-
-    cluster_name = "unknown"
-    if cluster_id in annotator_data.cluster_meta:
-        cluster_name = annotator_data.cluster_meta[cluster_id]["name"]
-
-    video_paths = []
-    for bout_idx, (start_bin, end_bin) in enumerate(bouts[:max_bouts]):
-        bout_len = end_bin - start_bin
-        if bout_len > max_frames:
-            indices = np.linspace(start_bin, end_bin - 1, max_frames, dtype=int)
-        else:
-            indices = np.arange(start_bin, end_bin)
-
-        frames = []
-        for bin_idx in indices:
-            frame = get_annotator_frame(annotator_data, int(bin_idx))
-            if frame is not None:
-                h, w = frame.shape[:2]
-                max_side = 256
-                if max(w, h) > max_side:
-                    scale = max_side / max(w, h)
-                    new_w, new_h = int(w * scale), int(h * scale)
-                    frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-                frames.append(frame)
-
-        if not frames:
-            continue
-
-        video_path = os.path.join(
-            output_dir,
-            f"bout_{cluster_name}_{bout_idx:02d}_bins{start_bin}-{end_bin}.mp4",
-        )
-
-        h, w = frames[0].shape[:2]
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
-        for frame in frames:
-            if len(frame.shape) == 3 and frame.shape[2] == 3:
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            else:
-                frame_bgr = frame
-            out.write(frame_bgr)
-        out.release()
-        _transcode_to_h264(video_path)
-
-        video_paths.append(video_path)
-        logger.info("Saved bout video: %s (%d frames)", video_path, len(frames))
-
-    return video_paths
 
 
 # ---------------------------

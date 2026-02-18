@@ -281,8 +281,8 @@ class AnalysisPanel(QWidget):
             for cid, meta in annotator_data.cluster_meta.items()
         }
 
-        from castle.core.ethogram import compute_ethogram
-        ethogram = compute_ethogram(cluster_labels, fps=fps, cluster_names=cluster_names)
+        from castle.service.ethogram_service import compute_ethogram_from_data
+        ethogram = compute_ethogram_from_data(cluster_labels, fps=fps, cluster_names=cluster_names)
 
         from castle.visualization.ethogram_plots import (
             plot_transition_heatmap,

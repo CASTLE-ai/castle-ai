@@ -5,7 +5,6 @@ Select project data categories and package them into a ZIP archive.
 Mirrors the Gradio export_ui tab, using shutil.copyfile for CIFS compatibility.
 """
 
-import glob
 import logging
 import os
 import shutil
@@ -21,94 +20,25 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSlot
 
 from castle.desktop.services.worker_threads import ServiceWorker
+from castle.service.export_service import (
+    _collect_masks,
+    _collect_latent,
+    _collect_cluster_results,
+    _collect_annotations,
+    _collect_grid_videos,
+    _collect_analysis,
+    _collect_source_videos,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Collection helpers (mirror export_ui.py)
+# Local helpers
 # ---------------------------------------------------------------------------
 
 def _project_path(storage_path: str, project_name: str) -> str:
     return os.path.join(storage_path, project_name)
-
-
-def _collect_masks(pp: str) -> list:
-    pattern = os.path.join(pp, "track", "*", "mask_list.h5")
-    results = []
-    for src in glob.glob(pattern):
-        video_name = os.path.basename(os.path.dirname(src))
-        results.append((src, os.path.join("track", video_name, "mask_list.h5")))
-    return results
-
-
-def _collect_latent(pp: str) -> list:
-    latent_dir = os.path.join(pp, "latent")
-    results = []
-    if not os.path.isdir(latent_dir):
-        return results
-    for root, _dirs, files in os.walk(latent_dir):
-        for f in files:
-            src = os.path.join(root, f)
-            results.append((src, os.path.relpath(src, pp)))
-    return results
-
-
-def _collect_cluster_results(pp: str) -> list:
-    cluster_dir = os.path.join(pp, "cluster")
-    results = []
-    if not os.path.isdir(cluster_dir):
-        return results
-    for pattern in ("id.csv", "cluster_*.npz", "time_series_*.csv"):
-        for src in glob.glob(os.path.join(cluster_dir, pattern)):
-            results.append((src, os.path.relpath(src, pp)))
-    return results
-
-
-def _collect_annotations(pp: str, session_id: str) -> list:
-    if not session_id:
-        return []
-    src = os.path.join(pp, "cluster", "sessions", session_id, "annotations.csv")
-    if not os.path.isfile(src):
-        return []
-    return [(src, os.path.relpath(src, pp))]
-
-
-def _collect_grid_videos(pp: str) -> list:
-    pattern = os.path.join(pp, "cluster", "grid_videos", "*.mp4")
-    return [(src, os.path.relpath(src, pp)) for src in glob.glob(pattern)]
-
-
-def _collect_analysis(pp: str) -> list:
-    results = []
-    analysis_dir = os.path.join(pp, "analysis")
-    if os.path.isdir(analysis_dir):
-        for root, _dirs, files in os.walk(analysis_dir):
-            for f in files:
-                src = os.path.join(root, f)
-                results.append((src, os.path.relpath(src, pp)))
-    sessions_dir = os.path.join(pp, "cluster", "sessions")
-    if os.path.isdir(sessions_dir):
-        for sid in os.listdir(sessions_dir):
-            sid_analysis = os.path.join(sessions_dir, sid, "analysis")
-            if os.path.isdir(sid_analysis):
-                for root, _dirs, files in os.walk(sid_analysis):
-                    for f in files:
-                        src = os.path.join(root, f)
-                        results.append((src, os.path.relpath(src, pp)))
-    return results
-
-
-def _collect_source_videos(pp: str) -> list:
-    sources_dir = os.path.join(pp, "sources")
-    results = []
-    if not os.path.isdir(sources_dir):
-        return results
-    for root, _dirs, files in os.walk(sources_dir):
-        for f in files:
-            src = os.path.join(root, f)
-            results.append((src, os.path.relpath(src, pp)))
-    return results
 
 
 def _human_size(path: str) -> str:

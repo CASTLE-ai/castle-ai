@@ -7,7 +7,6 @@ Supported exports: masks, latent features, cluster results, annotations,
 grid videos, and source videos.
 """
 
-import glob
 import logging
 import os
 import shutil
@@ -16,6 +15,16 @@ import zipfile
 from datetime import datetime
 
 import gradio as gr
+
+from castle.service.export_service import (
+    _collect_masks,
+    _collect_latent,
+    _collect_cluster_results,
+    _collect_annotations,
+    _collect_grid_videos,
+    _collect_analysis,
+    _collect_source_videos,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,105 +36,6 @@ logger = logging.getLogger(__name__)
 
 def _project_path(storage_path: str, project_name: str) -> str:
     return os.path.join(storage_path, project_name)
-
-
-def _collect_masks(project_path: str) -> list[tuple[str, str]]:
-    """Return list of (src_path, archive_name) for all mask_list.h5 files."""
-    pattern = os.path.join(project_path, "track", "*", "mask_list.h5")
-    results = []
-    for src in glob.glob(pattern):
-        video_name = os.path.basename(os.path.dirname(src))
-        results.append((src, os.path.join("track", video_name, "mask_list.h5")))
-    return results
-
-
-def _collect_latent(project_path: str) -> list[tuple[str, str]]:
-    """Return list of (src_path, archive_name) for all latent feature files."""
-    latent_dir = os.path.join(project_path, "latent")
-    results = []
-    if not os.path.isdir(latent_dir):
-        return results
-    for root, _dirs, files in os.walk(latent_dir):
-        for f in files:
-            src = os.path.join(root, f)
-            rel = os.path.relpath(src, project_path)
-            results.append((src, rel))
-    return results
-
-
-def _collect_cluster_results(project_path: str) -> list[tuple[str, str]]:
-    """Return (src, archive_name) for cluster id.csv, cluster_*.npz, time_series_*.csv."""
-    cluster_dir = os.path.join(project_path, "cluster")
-    results = []
-    if not os.path.isdir(cluster_dir):
-        return results
-    for pattern in ("id.csv", "cluster_*.npz", "time_series_*.csv"):
-        for src in glob.glob(os.path.join(cluster_dir, pattern)):
-            rel = os.path.relpath(src, project_path)
-            results.append((src, rel))
-    return results
-
-
-def _collect_annotations(project_path: str, session_id: str) -> list[tuple[str, str]]:
-    """Return (src, archive_name) for the selected session's annotations.csv."""
-    if not session_id:
-        return []
-    src = os.path.join(
-        project_path, "cluster", "sessions", session_id, "annotations.csv"
-    )
-    if not os.path.isfile(src):
-        return []
-    rel = os.path.relpath(src, project_path)
-    return [(src, rel)]
-
-
-def _collect_grid_videos(project_path: str) -> list[tuple[str, str]]:
-    """Return (src, archive_name) for all grid videos (.mp4)."""
-    pattern = os.path.join(project_path, "cluster", "grid_videos", "*.mp4")
-    results = []
-    for src in glob.glob(pattern):
-        rel = os.path.relpath(src, project_path)
-        results.append((src, rel))
-    return results
-
-
-def _collect_analysis(project_path: str) -> list[tuple[str, str]]:
-    """Return (src, archive_name) for analysis outputs (ethogram, metrics)."""
-    results = []
-    # Ethogram outputs (if saved to disk by the analysis tab)
-    analysis_dir = os.path.join(project_path, "analysis")
-    if os.path.isdir(analysis_dir):
-        for root, _dirs, files in os.walk(analysis_dir):
-            for f in files:
-                src = os.path.join(root, f)
-                rel = os.path.relpath(src, project_path)
-                results.append((src, rel))
-    # Also include any session-level analysis files
-    sessions_dir = os.path.join(project_path, "cluster", "sessions")
-    if os.path.isdir(sessions_dir):
-        for sid in os.listdir(sessions_dir):
-            sid_analysis = os.path.join(sessions_dir, sid, "analysis")
-            if os.path.isdir(sid_analysis):
-                for root, _dirs, files in os.walk(sid_analysis):
-                    for f in files:
-                        src = os.path.join(root, f)
-                        rel = os.path.relpath(src, project_path)
-                        results.append((src, rel))
-    return results
-
-
-def _collect_source_videos(project_path: str) -> list[tuple[str, str]]:
-    """Return (src, archive_name) for all source video files."""
-    sources_dir = os.path.join(project_path, "sources")
-    results = []
-    if not os.path.isdir(sources_dir):
-        return results
-    for root, _dirs, files in os.walk(sources_dir):
-        for f in files:
-            src = os.path.join(root, f)
-            rel = os.path.relpath(src, project_path)
-            results.append((src, rel))
-    return results
 
 
 def _human_size(path: str) -> str:
@@ -280,6 +190,58 @@ def on_export(
         yield f"**❌ Export failed:** {exc}", None
 
 
+def on_export_nwb(
+    storage_path: str,
+    project_name: str,
+    session_description: str,
+    experimenter: str,
+):
+    """Export project cluster results to NWB format.
+
+    Args:
+        storage_path: Root storage path.
+        project_name: Project name.
+        session_description: NWB session description string.
+        experimenter: Experimenter name.
+
+    Returns:
+        (status_markdown, gr.File update)
+    """
+    if not storage_path or not project_name:
+        return "**❌ Error:** No project selected.", gr.update(value=None, visible=False)
+
+    from castle.service.nwb_service import export_project_nwb
+
+    project_path = os.path.join(storage_path, project_name)
+    try:
+        nwb_path = export_project_nwb(
+            project_path=project_path,
+            session_description=session_description or "CASTLE behavioral analysis",
+            experimenter=experimenter or "",
+        )
+        size_str = _human_size(nwb_path)
+        return (
+            f"**✅ NWB export complete!** `{os.path.basename(nwb_path)}` ({size_str})",
+            gr.update(value=nwb_path, visible=True),
+        )
+    except ImportError as exc:
+        return (
+            f"**❌ NWB export requires pynwb:** `pip install pynwb`. ({exc})",
+            gr.update(value=None, visible=False),
+        )
+    except FileNotFoundError as exc:
+        return (
+            f"**❌ NWB export failed:** {exc}",
+            gr.update(value=None, visible=False),
+        )
+    except Exception as exc:
+        logger.exception("NWB export failed")
+        return (
+            f"**❌ NWB export failed:** {exc}",
+            gr.update(value=None, visible=False),
+        )
+
+
 # ---------------------------
 # UI Construction
 # ---------------------------
@@ -359,6 +321,28 @@ def create_export_ui(storage_path, project_name):
         ui["status"] = gr.Markdown("**Status:** Ready")
         ui["download"] = gr.File(label="⬇️ Download ZIP", visible=False)
 
+        gr.Markdown("---")
+        gr.Markdown("### 🧪 NWB Export")
+        gr.Markdown(
+            "Export project cluster results and ethogram data to "
+            "[NWB (Neurodata Without Borders)](https://nwb.org/) format. "
+            "Requires `pynwb` to be installed."
+        )
+        with gr.Row():
+            ui["nwb_session_desc"] = gr.Textbox(
+                label="Session Description",
+                value="CASTLE behavioral analysis",
+                scale=3,
+            )
+            ui["nwb_experimenter"] = gr.Textbox(
+                label="Experimenter",
+                value="",
+                scale=1,
+            )
+        ui["nwb_export_btn"] = gr.Button("🧪 Export NWB", variant="secondary")
+        ui["nwb_status"] = gr.Markdown("**NWB Status:** Ready")
+        ui["nwb_download"] = gr.File(label="⬇️ Download NWB", visible=False)
+
     # ---------------------------
     # Event Bindings
     # ---------------------------
@@ -396,6 +380,17 @@ def create_export_ui(storage_path, project_name):
         fn=_run_export,
         inputs=_export_inputs,
         outputs=[ui["status"], ui["download"]],
+    )
+
+    ui["nwb_export_btn"].click(
+        fn=on_export_nwb,
+        inputs=[
+            storage_path,
+            project_name,
+            ui["nwb_session_desc"],
+            ui["nwb_experimenter"],
+        ],
+        outputs=[ui["nwb_status"], ui["nwb_download"]],
     )
 
     return ui

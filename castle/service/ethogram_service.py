@@ -224,6 +224,26 @@ def get_bout_statistics(project_path: str, fps: float = None) -> dict:
     }
 
 
+def compute_ethogram_from_data(labels, fps: float, cluster_names: dict = None):
+    """Compute an :class:`~castle.core.ethogram.Ethogram` from pre-loaded data.
+
+    This is the service-layer entry point for frontends that have already
+    loaded cluster labels into memory (e.g. from
+    :func:`castle.service.annotator_loader.load_annotator_data`).
+
+    Args:
+        labels: 1-D array-like of integer cluster assignments (one per bin).
+        fps: Frames per second for duration calculations.
+        cluster_names: Optional ``{cluster_id: name}`` mapping.
+
+    Returns:
+        :class:`~castle.core.ethogram.Ethogram` instance.
+    """
+    from castle.core.ethogram import compute_ethogram
+
+    return compute_ethogram(labels, fps=fps, cluster_names=cluster_names or {})
+
+
 def export_ethogram_csv(project_path: str, output_path: str) -> str:
     """Export ethogram data to CSV files.
 

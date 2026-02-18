@@ -102,6 +102,7 @@ def add_videos(storage_path: str, project_name: str, video_paths: List[str]) -> 
     return results
 
 
+# NOTE: Not yet exposed via CLI or UI
 def add_videos_from_directory(storage_path: str, project_name: str, 
                               video_directory: str) -> dict:
     """

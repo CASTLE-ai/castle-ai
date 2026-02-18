@@ -85,6 +85,60 @@ def _load_data(storage_path: str, project_name: str, session_id: str):
 # ---------------------------------------------------------------------------
 
 
+def export_ethogram_csv_handler(storage_path: str, project_name: str, session_id: str):
+    """Export ethogram data to CSV files and return as a ZIP download.
+
+    Equivalent to `castle ethogram export` CLI.
+
+    Returns:
+        (status_markdown, gr.File update)
+    """
+    import os
+    import shutil
+    import tempfile
+    import zipfile
+    from datetime import datetime
+
+    if not storage_path or not project_name:
+        return "**❌ No project selected.**", gr.update(value=None, visible=False)
+
+    from castle.service.ethogram_service import export_ethogram_csv
+
+    project_path = os.path.join(storage_path, project_name)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tmp_dir = tempfile.mkdtemp(prefix="castle_ethogram_")
+    csv_dir = os.path.join(tmp_dir, "ethogram_csv")
+
+    try:
+        export_ethogram_csv(project_path=project_path, output_path=csv_dir)
+    except FileNotFoundError as exc:
+        return f"**❌ Export failed:** {exc}", gr.update(value=None, visible=False)
+    except Exception as exc:
+        logger.exception("Ethogram CSV export failed")
+        return f"**❌ Export failed:** {exc}", gr.update(value=None, visible=False)
+
+    # Zip the output directory
+    zip_name = f"{project_name}_ethogram_{timestamp}.zip"
+    zip_path = os.path.join(tmp_dir, zip_name)
+    try:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for fname in os.listdir(csv_dir):
+                src = os.path.join(csv_dir, fname)
+                if os.path.isfile(src):
+                    staging = os.path.join(tmp_dir, f"_stage_{fname}")
+                    shutil.copyfile(src, staging)
+                    zf.write(staging, fname)
+                    os.unlink(staging)
+    except Exception as exc:
+        logger.exception("Ethogram CSV zip failed")
+        return f"**❌ Zip failed:** {exc}", gr.update(value=None, visible=False)
+
+    return (
+        f"**✅ Ethogram CSV exported!** {zip_name}",
+        gr.update(value=zip_path, visible=True),
+    )
+
+
 def generate_ethogram(annotator_data):
     """Compute ethogram from AnnotatorData and return (heatmap fig, stats df, raster fig)."""
     import matplotlib
@@ -104,11 +158,11 @@ def generate_ethogram(annotator_data):
         for cid, meta in annotator_data.cluster_meta.items()
     }
 
-    # Compute ethogram
-    from castle.core.ethogram import compute_ethogram
+    # Compute ethogram via service layer
+    from castle.service.ethogram_service import compute_ethogram_from_data
 
     try:
-        ethogram = compute_ethogram(cluster_labels, fps=fps, cluster_names=cluster_names)
+        ethogram = compute_ethogram_from_data(cluster_labels, fps=fps, cluster_names=cluster_names)
     except Exception as exc:
         logger.exception("compute_ethogram failed")
         gr.Warning(f"Ethogram computation failed: {exc}")
@@ -250,7 +304,9 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
                 "bout durations, and temporal structure."
             )
 
-            ui["ethogram_btn"] = gr.Button("▶ Generate Ethogram", variant="primary")
+            with gr.Row():
+                ui["ethogram_btn"] = gr.Button("▶ Generate Ethogram", variant="primary", scale=3)
+                ui["export_csv_btn"] = gr.Button("📥 Export CSV", variant="secondary", scale=1)
 
             with gr.Row():
                 with gr.Column(scale=1):
@@ -265,6 +321,11 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
             ui["bout_stats_df"] = gr.Dataframe(
                 label="Bout Duration Statistics",
                 interactive=False,
+            )
+
+            ui["export_csv_status"] = gr.Markdown("")
+            ui["export_csv_file"] = gr.File(
+                label="⬇️ Download Ethogram CSV (ZIP)", visible=False, interactive=False
             )
 
         gr.Markdown("---")
@@ -322,6 +383,13 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
         fn=generate_ethogram,
         inputs=[analysis_data],
         outputs=[ui["transition_plot"], ui["bout_stats_df"], ui["raster_plot"]],
+    )
+
+    # Export Ethogram CSV
+    ui["export_csv_btn"].click(
+        fn=export_ethogram_csv_handler,
+        inputs=[storage_path, project_name, ui["session_dropdown"]],
+        outputs=[ui["export_csv_status"], ui["export_csv_file"]],
     )
 
     # Compute Metrics

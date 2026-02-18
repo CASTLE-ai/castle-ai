@@ -361,7 +361,7 @@ def on_save_custom_scheme(storage_path, project_name, custom_name, custom_labels
 # UI Construction
 # ---------------------------
 
-def create_annotator_ui(storage_path, project_name):
+def create_annotator_ui(storage_path, project_name, annotator_tab=None):
     """Create the Cluster Annotator tab UI.
 
     This tab is self-contained and does NOT require shared state from the
@@ -371,6 +371,7 @@ def create_annotator_ui(storage_path, project_name):
     Args:
         storage_path: gr.State with storage path.
         project_name: gr.State with project name.
+        annotator_tab: gr.Tab reference for auto-loading sessions on tab enter.
 
     Returns:
         dict of UI components.
@@ -391,7 +392,6 @@ def create_annotator_ui(storage_path, project_name):
                 interactive=True,
                 scale=3,
             )
-            ui["refresh_btn"] = gr.Button("🔄", scale=0, min_width=50)
             ui["load_btn"] = gr.Button("📂 Load Cluster Data", variant="primary", scale=1)
 
         ui["load_status"] = gr.Markdown("**Status:** Not loaded")
@@ -462,12 +462,13 @@ def create_annotator_ui(storage_path, project_name):
     # Event Bindings
     # ---------------------------
 
-    # Refresh session list
-    ui["refresh_btn"].click(
-        fn=on_refresh_sessions,
-        inputs=[storage_path, project_name],
-        outputs=[ui["session_dropdown"]],
-    )
+    # Auto-load session list when entering the tab
+    if annotator_tab is not None:
+        annotator_tab.select(
+            fn=on_refresh_sessions,
+            inputs=[storage_path, project_name],
+            outputs=[ui["session_dropdown"]],
+        )
 
     # Auto-refresh sessions on Load: refresh dropdown first, then load data
     ui["load_btn"].click(

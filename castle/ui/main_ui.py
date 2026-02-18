@@ -70,9 +70,9 @@ def create_ui(OS_SYS, root=''):
                     )
 
                 # Sub-tab: Cluster Annotator (A-04)
-                with gr.Tab(label='Cluster Annotator'):
+                with gr.Tab(label='Cluster Annotator') as annotator_tab:
                     _annotator_ui = create_annotator_ui(
-                        storage_path, project_name,
+                        storage_path, project_name, annotator_tab,
                     )
 
             cluster_ui_object_count = gr.State(len(cluster_ui))

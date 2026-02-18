@@ -163,6 +163,16 @@ def load_annotator_data(
     )
 
     if cls_array is not None:
+        # Downsample embedding to match cluster array if sizes differ
+        if len(emb_array) != len(cls_array) and len(emb_array) > 0 and len(cls_array) > 0:
+            ratio = len(emb_array) / len(cls_array)
+            if abs(ratio - round(ratio)) < 0.01:
+                step = int(round(ratio))
+                emb_array = emb_array[::step]
+                logger.info(
+                    "Downsampled embedding %d → %d (step=%d) to match cluster array",
+                    len(emb_array) * step, len(emb_array), step,
+                )
         logger.info(
             "Loaded cluster array from time_series CSVs: %d bins total", len(cls_array)
         )

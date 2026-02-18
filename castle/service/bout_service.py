@@ -212,6 +212,14 @@ def _select_representative_bouts(
     if not bouts:
         return []
 
+    # Guard: embedding and cluster array must have same length
+    if len(embedding) != len(cluster_array):
+        logger.warning(
+            "Embedding/cluster size mismatch (%d vs %d); returning first %d bouts",
+            len(embedding), len(cluster_array), n,
+        )
+        return bouts[:n]
+
     # Cluster centroid from all bins belonging to this cluster
     mask = cluster_array == cluster_id
     centroid = embedding[mask].mean(axis=0)  # shape (2,)

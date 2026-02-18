@@ -347,8 +347,7 @@ def on_save_annotation(
     """Save a single cluster annotation scoped to the loaded session."""
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or not behavior_label:
-        gr.Info("Select a cluster and a behavior label first.")
-        return annotations_state, _get_cluster_choices(annotator_data, annotations_state)
+        return annotations_state, gr.update()
 
     # Resolve session_id from AnnotatorData
     session_id = annotator_data.session_id if annotator_data is not None else None
@@ -365,7 +364,14 @@ def on_save_annotation(
     save_annotations(storage_path, project_name, annotations, session_id=session_id)
     gr.Info(f"Saved: {cluster_name} → {behavior_label}")
 
-    return annotations, _get_cluster_choices(annotator_data, annotations)
+    choices = _get_cluster_choices(annotator_data, annotations)
+    # Keep current selection valid — find the matching choice with potential ✅ prefix
+    current_value = None
+    for c in choices:
+        if _strip_check(c) == cluster_name:
+            current_value = c
+            break
+    return annotations, gr.update(choices=choices, value=current_value)
 
 
 def on_save_custom_scheme(storage_path, project_name, custom_name, custom_labels_text):
@@ -565,20 +571,33 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         outputs=ui["behavior_radio"],
     )
 
-    # Save annotation
+    _save_inputs = [
+        storage_path,
+        project_name,
+        annotator_data,
+        annotations_state,
+        ui["cluster_radio"],
+        ui["behavior_radio"],
+        ui["scheme_dropdown"],
+        ui["comment_box"],
+    ]
+    _save_outputs = [annotations_state, ui["cluster_radio"]]
+
+    # Save annotation (button + auto-save on label change / comment blur)
     ui["save_annotation_btn"].click(
         fn=on_save_annotation,
-        inputs=[
-            storage_path,
-            project_name,
-            annotator_data,
-            annotations_state,
-            ui["cluster_radio"],
-            ui["behavior_radio"],
-            ui["scheme_dropdown"],
-            ui["comment_box"],
-        ],
-        outputs=[annotations_state, ui["cluster_radio"]],
+        inputs=_save_inputs,
+        outputs=_save_outputs,
+    )
+    ui["behavior_radio"].change(
+        fn=on_save_annotation,
+        inputs=_save_inputs,
+        outputs=_save_outputs,
+    )
+    ui["comment_box"].blur(
+        fn=on_save_annotation,
+        inputs=_save_inputs,
+        outputs=_save_outputs,
     )
 
     # Save custom scheme

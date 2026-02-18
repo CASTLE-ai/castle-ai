@@ -158,15 +158,35 @@ def _extract_bouts_standalone(
 # Event Handlers
 # ---------------------------
 
+def on_refresh_sessions(storage_path, project_name):
+    """Refresh the session dropdown list."""
+    if not storage_path or not project_name:
+        return gr.update(choices=[], value=None, visible=False)
+
+    from castle.service.session_manager import SessionManager
+    mgr = SessionManager(storage_path, project_name)
+    sessions = mgr.list_sessions()
+
+    if not sessions:
+        return gr.update(choices=[("(no sessions — load from disk)", "")], value="", visible=True)
+
+    choices = [
+        (f"{s.name} — {s.n_clusters} clusters, bin_size={s.bin_size} ({s.updated_at[:16]})", s.session_id)
+        for s in sessions
+    ]
+    # Default to active session or latest
+    active_id = mgr.get_active_session_id()
+    default = active_id if active_id else (sessions[0].session_id if sessions else None)
+    return gr.update(choices=choices, value=default, visible=True)
+
+
 def on_load_cluster_data(storage_path, project_name, session_id):
     """Load cluster data from disk and populate the cluster radio."""
     if not storage_path or not project_name:
         gr.Warning("Select a project first.")
         return None, gr.update(choices=[], value=None), "**Status:** No project selected"
 
-    sid = session_id.strip() if session_id else None
-    if not sid:
-        sid = None
+    sid = session_id if session_id else None
 
     try:
         annotator_data = load_annotator_data(storage_path, project_name, session_id=sid)
@@ -303,11 +323,13 @@ def create_annotator_ui(storage_path, project_name):
         # --- Load controls ---
         gr.Markdown("### 📋 Cluster Annotator")
         with gr.Row():
-            ui["session_id_input"] = gr.Textbox(
-                label="Session ID (optional)",
-                placeholder="e.g. session_001 — leave blank for active session",
+            ui["session_dropdown"] = gr.Dropdown(
+                label="Select Session",
+                choices=[],
+                interactive=True,
                 scale=3,
             )
+            ui["refresh_btn"] = gr.Button("🔄", scale=0, min_width=50)
             ui["load_btn"] = gr.Button("📂 Load Cluster Data", variant="primary", scale=1)
 
         ui["load_status"] = gr.Markdown("**Status:** Not loaded")
@@ -380,10 +402,17 @@ def create_annotator_ui(storage_path, project_name):
     # Event Bindings
     # ---------------------------
 
+    # Refresh session list
+    ui["refresh_btn"].click(
+        fn=on_refresh_sessions,
+        inputs=[storage_path, project_name],
+        outputs=[ui["session_dropdown"]],
+    )
+
     # Load cluster data button
     ui["load_btn"].click(
         fn=on_load_cluster_data,
-        inputs=[storage_path, project_name, ui["session_id_input"]],
+        inputs=[storage_path, project_name, ui["session_dropdown"]],
         outputs=[annotator_data, ui["cluster_radio"], ui["load_status"]],
     )
 

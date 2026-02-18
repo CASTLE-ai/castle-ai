@@ -162,6 +162,23 @@ def load_annotator_data(
         if len(seen) == 1:
             # Single video: all bins belong to it
             videos_meta = [(total_bins, seen[0])]
+
+            # Derive bin_size from actual video frame count / n_bins
+            first_video_path = os.path.join(source_path, seen[0])
+            if os.path.exists(first_video_path) and total_bins > 0:
+                try:
+                    with VideoReader(first_video_path) as vr:
+                        n_video_frames = len(vr)
+                        derived_bin_size = max(1, n_video_frames // total_bins)
+                        if derived_bin_size != bin_size:
+                            logger.info(
+                                "Overriding manifest bin_size=%d with derived=%d "
+                                "(video=%d frames, cluster=%d bins)",
+                                bin_size, derived_bin_size, n_video_frames, total_bins,
+                            )
+                            bin_size = derived_bin_size
+                except Exception as exc:
+                    logger.warning("Could not derive bin_size from video: %s", exc)
         else:
             # Multiple videos: try to derive n_bins per video from latent files
             latent_dir = os.path.join(project_path, "latent")

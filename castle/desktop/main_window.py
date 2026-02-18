@@ -17,6 +17,9 @@ from castle.desktop.widgets.source_panel import SourcePanel
 from castle.desktop.widgets.tracking_panel import TrackingPanel
 from castle.desktop.widgets.extract_panel import ExtractPanel
 from castle.desktop.widgets.cluster_panel import ClusterPanel
+from castle.desktop.widgets.annotator_panel import AnnotatorPanel
+from castle.desktop.widgets.analysis_panel import AnalysisPanel
+from castle.desktop.widgets.export_panel import ExportPanel
 
 
 class MainWindow(QMainWindow):
@@ -88,6 +91,9 @@ class MainWindow(QMainWindow):
         self.tracking_panel = TrackingPanel(self)
         self.extract_panel = ExtractPanel(self)
         self.cluster_panel = ClusterPanel(self)
+        self.annotator_panel = AnnotatorPanel(self)
+        self.analysis_panel = AnalysisPanel(self)
+        self.export_panel = ExportPanel(self)
 
         # Add tabs
         self.tabs.addTab(self.project_panel, "0. Project")
@@ -95,6 +101,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tracking_panel, "2. Tracking ROIs")
         self.tabs.addTab(self.extract_panel, "3. Extract Latent")
         self.tabs.addTab(self.cluster_panel, "4. Behavior Microscope")
+        self.tabs.addTab(self.annotator_panel, "5. Annotator")
+        self.tabs.addTab(self.analysis_panel, "6. Analysis")
+        self.tabs.addTab(self.export_panel, "7. Export")
 
         # Disable non-project tabs initially
         for i in range(1, self.tabs.count()):
@@ -132,6 +141,9 @@ class MainWindow(QMainWindow):
         self.tracking_panel.set_project(storage_path, project_name)
         self.extract_panel.set_project(storage_path, project_name)
         self.cluster_panel.set_project(storage_path, project_name)
+        self.annotator_panel.set_project(storage_path, project_name)
+        self.analysis_panel.set_project(storage_path, project_name)
+        self.export_panel.set_project(storage_path, project_name)
 
         self.statusbar.showMessage(
             f"Project '{project_name}' loaded successfully", 3000

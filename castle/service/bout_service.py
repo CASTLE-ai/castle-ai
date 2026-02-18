@@ -345,7 +345,6 @@ def generate_grid_video(
     output_dir: Optional[str] = None,
     target_fps: float = 30.0,
     cell_size: int = 192,
-    speed: float = 1.0,
     mask_h5_path: Optional[str] = None,
 ) -> Optional[str]:
     """Generate a grid video of the most representative bouts for a cluster.
@@ -370,8 +369,6 @@ def generate_grid_video(
         target_fps: Base frame-rate of the output video.
         cell_size: Each grid cell is resized so its longest side equals
             *cell_size* pixels before tiling.
-        speed: Playback speed multiplier (0.1 – 2.0).  The effective output
-            fps is ``target_fps * speed``.  Included in the cache filename.
         mask_h5_path: Optional path to a ``mask_list.h5`` file.  When
             supplied, frames within the actual bout window receive a green
             dashed ROI rectangle.
@@ -385,9 +382,7 @@ def generate_grid_video(
     cluster_meta = annotator_data.cluster_meta
     cluster_name = cluster_meta.get(cluster_id, {}).get("name", f"cluster{cluster_id}")
 
-    # Clamp speed to valid range
-    speed = max(0.1, min(2.0, float(speed)))
-    output_fps = target_fps * speed
+    output_fps = target_fps
 
     # --- Cache check ---
     if output_dir is None:
@@ -398,7 +393,7 @@ def generate_grid_video(
 
     cache_path = os.path.join(
         output_dir,
-        f"{cluster_name}_grid_{grid_cols}x{grid_cols}_speed{speed:.1f}.mp4",
+        f"{cluster_name}_grid_{grid_cols}x{grid_cols}.mp4",
     )
     if os.path.exists(cache_path):
         logger.info("Grid video cache hit: %s", cache_path)
@@ -552,8 +547,8 @@ def generate_grid_video(
 
     writer.release()
     logger.info(
-        "Grid video written: %s (%d cells × %d frames, speed=%.1f)",
-        raw_path, len(selected), n_frames, speed,
+        "Grid video written: %s (%d cells × %d frames)",
+        raw_path, len(selected), n_frames,
     )
 
     # --- Transcode to H.264 ---

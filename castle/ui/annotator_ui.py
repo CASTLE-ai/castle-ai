@@ -288,7 +288,7 @@ def on_load_cluster_data(storage_path, project_name, session_id):
     return annotator_data, gr.update(choices=choices, value=None), status_msg
 
 
-def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice, grid_cols, speed):
+def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice, grid_cols):
     """When user selects a cluster, generate a grid video and return its path."""
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or annotator_data is None:
@@ -300,11 +300,8 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
 
     n_bins_in_cluster = int(np.sum(annotator_data.cluster == cluster_id))
     cols = int(grid_cols) if grid_cols else 3
-    playback_speed = float(speed) if speed else 1.0
 
-    from castle.service.bout_service import find_bouts as _find_bouts
-
-    all_bouts = _find_bouts(annotator_data.cluster, cluster_id)
+    all_bouts = find_bouts(annotator_data.cluster, cluster_id)
     n_bouts = len(all_bouts)
 
     output_dir = os.path.join(
@@ -320,7 +317,6 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
         cluster_id=cluster_id,
         grid_cols=cols,
         output_dir=output_dir,
-        speed=playback_speed,
         mask_h5_path=mask_h5_path,
     )
 
@@ -328,13 +324,6 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
         f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
     )
     return video_path, info_text
-
-
-def on_speed_change(storage_path, project_name, annotator_data, cluster_choice, grid_cols, speed):
-    """Regenerate the grid video when playback speed changes."""
-    return on_cluster_select(
-        storage_path, project_name, annotator_data, cluster_choice, grid_cols, speed
-    )
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
@@ -528,14 +517,13 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         outputs=[annotator_data, ui["cluster_radio"], ui["load_status"]],
     )
 
-    # Common inputs for cluster-select and speed-change
+    # Inputs for cluster-select (no speed — speed is JS-only)
     _video_inputs = [
         storage_path,
         project_name,
         annotator_data,
         ui["cluster_radio"],
         ui["grid_cols"],
-        ui["speed_slider"],
     ]
     _video_outputs = [ui["grid_video"], ui["cluster_info"]]
 
@@ -553,11 +541,12 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         outputs=_video_outputs,
     )
 
-    # Speed change → regenerate grid video
+    # Speed change → JS-only: set playbackRate on the video element
     ui["speed_slider"].change(
-        fn=on_speed_change,
-        inputs=_video_inputs,
-        outputs=_video_outputs,
+        fn=None,
+        inputs=[ui["speed_slider"]],
+        outputs=[],
+        js="(speed) => { document.querySelectorAll('video').forEach(v => v.playbackRate = speed); }",
     )
 
     # Change classification scheme → update labels

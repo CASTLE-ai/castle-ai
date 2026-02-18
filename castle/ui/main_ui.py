@@ -73,8 +73,6 @@ def create_ui(OS_SYS, root=''):
                 with gr.Tab(label='Cluster Annotator'):
                     _annotator_ui = create_annotator_ui(
                         storage_path, project_name,
-                        shared_states['latents'],
-                        shared_states['mulvideo'],
                     )
 
             cluster_ui_object_count = gr.State(len(cluster_ui))

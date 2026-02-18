@@ -95,15 +95,26 @@ class MainWindow(QMainWindow):
         self.analysis_panel = AnalysisPanel(self)
         self.export_panel = ExportPanel(self)
 
-        # Add tabs
+        # --- Tab 4: Behavior Microscope (with sub-tabs) ---
+        microscope_widget = QWidget()
+        microscope_layout = QVBoxLayout(microscope_widget)
+        microscope_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.microscope_tabs = QTabWidget()
+        self.microscope_tabs.setDocumentMode(True)
+        self.microscope_tabs.addTab(self.cluster_panel, "Clustering")
+        self.microscope_tabs.addTab(self.annotator_panel, "Cluster Annotator")
+
+        microscope_layout.addWidget(self.microscope_tabs)
+
+        # Add top-level tabs (7 total, matching Gradio 0-6)
         self.tabs.addTab(self.project_panel, "0. Project")
         self.tabs.addTab(self.source_panel, "1. Upload Videos")
         self.tabs.addTab(self.tracking_panel, "2. Tracking ROIs")
         self.tabs.addTab(self.extract_panel, "3. Extract Latent")
-        self.tabs.addTab(self.cluster_panel, "4. Behavior Microscope")
-        self.tabs.addTab(self.annotator_panel, "5. Annotator")
-        self.tabs.addTab(self.analysis_panel, "6. Analysis")
-        self.tabs.addTab(self.export_panel, "7. Export")
+        self.tabs.addTab(microscope_widget, "4. Behavior Microscope")
+        self.tabs.addTab(self.analysis_panel, "5. Analysis")
+        self.tabs.addTab(self.export_panel, "6. Export")
 
         # Disable non-project tabs initially
         for i in range(1, self.tabs.count()):

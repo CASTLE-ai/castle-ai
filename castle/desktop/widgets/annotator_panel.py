@@ -1,19 +1,23 @@
 """
-CASTLE Desktop - Annotator Panel (Tab 5)
+CASTLE Desktop - Annotator Panel (sub-tab inside 4. Behavior Microscope)
 
 Cluster annotation with behavior labeling, classification scheme management,
-and optional comment field.  Mirrors the Gradio annotator_ui tab.
+optional comment field, and a grid video preview of representative bouts.
+Mirrors the Gradio annotator_ui tab.
 """
 
 import datetime
 import logging
+import os
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QComboBox, QLineEdit, QListWidget, QListWidgetItem,
     QTextEdit, QProgressBar, QMessageBox, QSplitter, QAbstractItemView,
+    QSpinBox, QSlider, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot, QUrl
+from PyQt6.QtGui import QDesktopServices
 
 from castle.desktop.services.worker_threads import ServiceWorker
 
@@ -32,6 +36,8 @@ class AnnotatorPanel(QWidget):
         self._annotations: dict = {}  # {cluster_name: annotation_dict}
         self._session_id: str | None = None
         self._worker: ServiceWorker | None = None
+        self._grid_worker: ServiceWorker | None = None
+        self._grid_video_path: str | None = None
 
         self._setup_ui()
 
@@ -50,11 +56,18 @@ class AnnotatorPanel(QWidget):
         self._status_label = QLabel("Status: Not loaded")
         layout.addWidget(self._status_label)
 
-        # Main content splitter
+        # Main content splitter: left = cluster list, right = annotation + preview
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._create_cluster_group())
-        splitter.addWidget(self._create_annotation_group())
-        splitter.setSizes([350, 500])
+
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(self._create_annotation_group())
+        right_layout.addWidget(self._create_grid_video_group())
+        splitter.addWidget(right_widget)
+
+        splitter.setSizes([350, 700])
         layout.addWidget(splitter, stretch=1)
 
         # Progress bar
@@ -154,6 +167,71 @@ class AnnotatorPanel(QWidget):
 
         return group
 
+    def _create_grid_video_group(self) -> QGroupBox:
+        """Create the grid video preview group box."""
+        group = QGroupBox("Grid Video Preview")
+        layout = QVBoxLayout(group)
+
+        # Controls row
+        controls_row = QHBoxLayout()
+
+        controls_row.addWidget(QLabel("Grid Size:"))
+        self._grid_size_spin = QSpinBox()
+        self._grid_size_spin.setRange(1, 5)
+        self._grid_size_spin.setValue(3)
+        self._grid_size_spin.setSuffix("×N")
+        self._grid_size_spin.setToolTip("Grid columns/rows (e.g. 3 → 3×3 = 9 clips)")
+        controls_row.addWidget(self._grid_size_spin)
+
+        controls_row.addSpacing(16)
+
+        controls_row.addWidget(QLabel("Speed:"))
+        self._speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self._speed_slider.setRange(1, 20)   # 0.1x → 2.0x in 0.1 steps
+        self._speed_slider.setValue(10)       # default 1.0x
+        self._speed_slider.setMaximumWidth(120)
+        self._speed_slider.setToolTip("Playback speed (0.1x – 2.0x)")
+        self._speed_slider.valueChanged.connect(self._on_speed_changed)
+        controls_row.addWidget(self._speed_slider)
+
+        self._speed_label = QLabel("1.0×")
+        self._speed_label.setMinimumWidth(40)
+        controls_row.addWidget(self._speed_label)
+
+        controls_row.addStretch()
+
+        self._generate_preview_btn = QPushButton("🎬 Generate Preview")
+        self._generate_preview_btn.setObjectName("primaryButton")
+        self._generate_preview_btn.clicked.connect(self._generate_grid_preview)
+        self._generate_preview_btn.setEnabled(False)
+        controls_row.addWidget(self._generate_preview_btn)
+
+        layout.addLayout(controls_row)
+
+        # Video path / status display
+        self._video_status_label = QLabel("No preview generated.")
+        self._video_status_label.setWordWrap(True)
+        self._video_status_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        layout.addWidget(self._video_status_label)
+
+        # Open video button (hidden until a video is ready)
+        open_row = QHBoxLayout()
+        self._open_video_btn = QPushButton("▶ Open Video")
+        self._open_video_btn.setVisible(False)
+        self._open_video_btn.clicked.connect(self._open_grid_video)
+        open_row.addWidget(self._open_video_btn)
+        open_row.addStretch()
+        layout.addLayout(open_row)
+
+        # Progress bar for grid generation
+        self._grid_progress = QProgressBar()
+        self._grid_progress.setVisible(False)
+        layout.addWidget(self._grid_progress)
+
+        return group
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -165,9 +243,13 @@ class AnnotatorPanel(QWidget):
         self._annotator_data = None
         self._annotations = {}
         self._session_id = None
+        self._grid_video_path = None
         self._cluster_list.clear()
         self._status_label.setText("Status: Project loaded — click 'Load Cluster Data'")
         self._save_btn.setEnabled(False)
+        self._generate_preview_btn.setEnabled(False)
+        self._open_video_btn.setVisible(False)
+        self._video_status_label.setText("No preview generated.")
         self._refresh_sessions()
 
     # ------------------------------------------------------------------
@@ -249,6 +331,7 @@ class AnnotatorPanel(QWidget):
             f"(bin_size={annotator_data.bin_size}, fps={annotator_data.fps:.1f})"
         )
         self._save_btn.setEnabled(True)
+        self._generate_preview_btn.setEnabled(True)
 
     @pyqtSlot(str)
     def _on_load_error(self, err: str):
@@ -319,6 +402,11 @@ class AnnotatorPanel(QWidget):
 
             self._comment_edit.setText(comment)
 
+        # Reset grid video status when cluster changes
+        self._grid_video_path = None
+        self._open_video_btn.setVisible(False)
+        self._video_status_label.setText("No preview generated for this cluster.")
+
     @pyqtSlot(str)
     def _on_scheme_changed(self, scheme_name: str):
         if not scheme_name or not self._storage_path:
@@ -331,6 +419,11 @@ class AnnotatorPanel(QWidget):
         self._label_combo.clear()
         self._label_combo.addItem("")  # blank default
         self._label_combo.addItems(labels)
+
+    @pyqtSlot(int)
+    def _on_speed_changed(self, value: int):
+        speed = value / 10.0
+        self._speed_label.setText(f"{speed:.1f}×")
 
     @pyqtSlot()
     def _save_annotation(self):
@@ -401,3 +494,88 @@ class AnnotatorPanel(QWidget):
         if idx >= 0:
             self._scheme_combo.setCurrentIndex(idx)
         self._status_label.setText(f"Saved scheme '{name}' with {len(labels)} labels")
+
+    # ------------------------------------------------------------------
+    # Grid video
+    # ------------------------------------------------------------------
+
+    @pyqtSlot()
+    def _generate_grid_preview(self):
+        """Generate a grid video for the currently selected cluster."""
+        if self._annotator_data is None:
+            QMessageBox.warning(self, "Error", "Load cluster data first.")
+            return
+
+        current = self._cluster_list.currentItem()
+        if current is None:
+            QMessageBox.warning(self, "Error", "Select a cluster first.")
+            return
+
+        cluster_name = current.data(Qt.ItemDataRole.UserRole)
+
+        # Find cluster_id from cluster_meta
+        cluster_id = None
+        for cid, meta in self._annotator_data.cluster_meta.items():
+            if meta.get("name") == cluster_name:
+                cluster_id = cid
+                break
+
+        if cluster_id is None:
+            QMessageBox.warning(self, "Error", f"Cannot find cluster ID for '{cluster_name}'.")
+            return
+
+        grid_cols = self._grid_size_spin.value()
+
+        # Disable controls during generation
+        self._generate_preview_btn.setEnabled(False)
+        self._open_video_btn.setVisible(False)
+        self._grid_progress.setVisible(True)
+        self._grid_progress.setRange(0, 0)
+        self._video_status_label.setText(
+            f"Generating {grid_cols}×{grid_cols} grid for '{cluster_name}'…"
+        )
+
+        from castle.service.bout_service import generate_grid_video
+
+        self._grid_worker = ServiceWorker(
+            generate_grid_video,
+            self._annotator_data,
+            cluster_id,
+            grid_cols=grid_cols,
+        )
+        self._grid_worker.finished.connect(self._on_grid_video_ready)
+        self._grid_worker.error.connect(self._on_grid_video_error)
+        self._grid_worker.start()
+
+    @pyqtSlot(object)
+    def _on_grid_video_ready(self, video_path):
+        self._grid_progress.setVisible(False)
+        self._generate_preview_btn.setEnabled(True)
+
+        if not video_path or not os.path.exists(video_path):
+            self._video_status_label.setText(
+                "⚠ Grid video generation returned no output (check logs)."
+            )
+            return
+
+        self._grid_video_path = video_path
+        self._video_status_label.setText(f"✅ Ready: {video_path}")
+        self._open_video_btn.setVisible(True)
+
+        # Auto-open with system player
+        self._open_grid_video()
+
+    @pyqtSlot(str)
+    def _on_grid_video_error(self, err: str):
+        self._grid_progress.setVisible(False)
+        self._generate_preview_btn.setEnabled(True)
+        self._video_status_label.setText(f"Error: {err}")
+        logger.error("Grid video generation failed: %s", err)
+
+    @pyqtSlot()
+    def _open_grid_video(self):
+        """Open the generated grid video with the system default player."""
+        if not self._grid_video_path or not os.path.exists(self._grid_video_path):
+            QMessageBox.warning(self, "No Video", "No grid video available.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self._grid_video_path))

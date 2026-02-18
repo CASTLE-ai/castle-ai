@@ -342,6 +342,7 @@ def on_save_annotation(
     cluster_choice,
     behavior_label,
     scheme_name,
+    comment,
 ):
     """Save a single cluster annotation scoped to the loaded session."""
     cluster_name = _strip_check(cluster_choice)
@@ -356,6 +357,7 @@ def on_save_annotation(
     annotations[cluster_name] = {
         "behavior_label": behavior_label,
         "scheme": scheme_name or "",
+        "comment": comment or "",
         "annotator": "user",
         "timestamp": datetime.datetime.now().isoformat(),
     }
@@ -469,6 +471,13 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
                     interactive=True,
                 )
 
+                ui["comment_box"] = gr.Textbox(
+                    label="💬 Comment (optional)",
+                    placeholder="e.g. mostly grooming with some head movement",
+                    lines=2,
+                    interactive=True,
+                )
+
                 ui["save_annotation_btn"] = gr.Button("💾 Save Annotation", variant="primary")
 
                 gr.Markdown("---")
@@ -567,6 +576,7 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
             ui["cluster_radio"],
             ui["behavior_radio"],
             ui["scheme_dropdown"],
+            ui["comment_box"],
         ],
         outputs=[annotations_state, ui["cluster_radio"]],
     )

@@ -24,7 +24,7 @@ from castle.service.annotator_loader import (
     load_annotator_data,
     get_annotator_frame,
 )
-from castle.service.bout_service import find_bouts
+from castle.service.bout_service import find_bouts, generate_grid_video
 from castle.service.annotation_service import (
     list_schemes,
     get_scheme_labels,
@@ -267,33 +267,39 @@ def on_load_cluster_data(storage_path, project_name, session_id):
 
 
 def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice, grid_cols):
-    """When user selects a cluster, generate bout videos and return gallery."""
+    """When user selects a cluster, generate a grid video and return its path."""
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or annotator_data is None:
-        return [], "**Selected:** None"
+        return None, "**Selected:** None"
 
     cluster_id = _find_cluster_id_by_name(annotator_data, cluster_name)
     if cluster_id is None:
-        return [], f"**Error:** Cluster '{cluster_name}' not found"
+        return None, f"**Error:** Cluster '{cluster_name}' not found"
 
     n_bins_in_cluster = int(np.sum(annotator_data.cluster == cluster_id))
-    max_bouts = int(int(grid_cols) * int(grid_cols)) if grid_cols else 9
+    cols = int(grid_cols) if grid_cols else 3
+
+    from castle.service.bout_service import find_bouts as _find_bouts
+
+    all_bouts = _find_bouts(annotator_data.cluster, cluster_id)
+    n_bouts = len(all_bouts)
 
     output_dir = os.path.join(
-        storage_path, project_name, "cluster", "bout_gifs", cluster_name
+        annotator_data.project_path, "cluster", "grid_videos"
     )
 
-    video_paths = _extract_bouts_standalone(
+    gr.Info(f"Generating {cols}×{cols} grid video for '{cluster_name}'…")
+    video_path = generate_grid_video(
         annotator_data=annotator_data,
         cluster_id=cluster_id,
-        max_bouts=max_bouts,
-        max_frames=60,
+        grid_cols=cols,
         output_dir=output_dir,
-        fps=annotator_data.fps if annotator_data.fps > 0 else 10.0,
     )
 
-    info_text = f"**{cluster_name}** — {n_bins_in_cluster} bins, {len(video_paths)} bouts"
-    return video_paths, info_text
+    info_text = (
+        f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
+    )
+    return video_path, info_text
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
@@ -443,14 +449,12 @@ def create_annotator_ui(storage_path, project_name):
                     )
                     ui["save_scheme_btn"] = gr.Button("Save Scheme")
 
-            # --- Right Column: Video Gallery ---
+            # --- Right Column: Grid Video ---
             with gr.Column(scale=7):
-                ui["gallery"] = gr.Gallery(
-                    label="Bout Previews",
-                    columns=3,
-                    rows=3,
-                    height="auto",
-                    object_fit="contain",
+                ui["grid_video"] = gr.Video(
+                    label="Grid Video — Most Representative Bouts",
+                    autoplay=True,
+                    loop=True,
                     interactive=False,
                 )
 
@@ -476,7 +480,7 @@ def create_annotator_ui(storage_path, project_name):
         outputs=[annotator_data, ui["cluster_radio"], ui["load_status"]],
     )
 
-    # Select cluster → generate bout videos
+    # Select cluster → generate grid video
     ui["cluster_radio"].change(
         fn=on_cluster_select,
         inputs=[
@@ -486,7 +490,7 @@ def create_annotator_ui(storage_path, project_name):
             ui["cluster_radio"],
             ui["grid_cols"],
         ],
-        outputs=[ui["gallery"], ui["cluster_info"]],
+        outputs=[ui["grid_video"], ui["cluster_info"]],
     )
 
     # Change classification scheme → update labels

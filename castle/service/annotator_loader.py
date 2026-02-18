@@ -38,6 +38,7 @@ class AnnotatorData:
         source_path: Absolute path to the project's sources/ directory.
         videos_meta: List of (n_bins, video_name) tuples.
         fps: Frames per second from project videos.
+        session_id: Optional session ID used to scope annotations on disk.
     """
 
     cluster: np.ndarray
@@ -48,6 +49,7 @@ class AnnotatorData:
     source_path: str
     videos_meta: List[Tuple[int, str]]
     fps: float
+    session_id: Optional[str] = None
 
     # Internal cache — excluded from repr / comparisons
     _reader_cache: Dict[str, VideoReader] = field(
@@ -256,6 +258,7 @@ def load_annotator_data(
         source_path=source_path,
         videos_meta=videos_meta,
         fps=fps,
+        session_id=session_id,
     )
 
 

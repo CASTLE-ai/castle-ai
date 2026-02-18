@@ -268,6 +268,76 @@ def _compute_aligned_range(
     return min(padded_lengths)
 
 
+def draw_dashed_rect(
+    img: np.ndarray,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    color: Tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 1,
+    dash_len: int = 5,
+    gap_len: int = 3,
+) -> None:
+    """Draw a dashed rectangle on *img* in-place.
+
+    Args:
+        img: BGR image array (modified in-place).
+        x1: Left column of rectangle.
+        y1: Top row of rectangle.
+        x2: Right column of rectangle.
+        y2: Bottom row of rectangle.
+        color: BGR color tuple.
+        thickness: Line thickness in pixels.
+        dash_len: Length of each dash segment in pixels.
+        gap_len: Length of gap between dashes in pixels.
+    """
+    import cv2
+
+    step = dash_len + gap_len
+    # Top and bottom horizontal edges
+    for x in range(x1, x2, step):
+        x_end = min(x + dash_len, x2)
+        cv2.line(img, (x, y1), (x_end, y1), color, thickness)
+        cv2.line(img, (x, y2), (x_end, y2), color, thickness)
+    # Left and right vertical edges
+    for y in range(y1, y2, step):
+        y_end = min(y + dash_len, y2)
+        cv2.line(img, (x1, y), (x1, y_end), color, thickness)
+        cv2.line(img, (x2, y), (x2, y_end), color, thickness)
+
+
+def _load_mask_bbox(
+    mask_h5_path: str,
+    frame_idx: int,
+) -> Optional[Tuple[int, int, int, int]]:
+    """Load a binary mask from an HDF5 file and return its bounding box.
+
+    Args:
+        mask_h5_path: Path to ``mask_list.h5``.
+        frame_idx: Frame index (key in the HDF5 file as a string).
+
+    Returns:
+        ``(row_min, col_min, row_max, col_max)`` of the non-zero mask region,
+        or *None* if the key is absent or the mask is all-zero.
+    """
+    try:
+        import h5py
+        with h5py.File(mask_h5_path, 'r') as f:
+            key = str(frame_idx)
+            if key not in f:
+                return None
+            mask = f[key][()]  # uint8 array (H, W)
+    except Exception as exc:
+        logger.debug("Could not read mask from %s[%d]: %s", mask_h5_path, frame_idx, exc)
+        return None
+
+    rows, cols = np.where(mask > 0)
+    if rows.size == 0:
+        return None
+    return int(rows.min()), int(cols.min()), int(rows.max()), int(cols.max())
+
+
 def generate_grid_video(
     annotator_data,
     cluster_id: int,
@@ -275,6 +345,8 @@ def generate_grid_video(
     output_dir: Optional[str] = None,
     target_fps: float = 30.0,
     cell_size: int = 192,
+    speed: float = 1.0,
+    mask_h5_path: Optional[str] = None,
 ) -> Optional[str]:
     """Generate a grid video of the most representative bouts for a cluster.
 
@@ -285,15 +357,24 @@ def generate_grid_video(
     The result is cached: if the output file already exists it is returned
     immediately without re-rendering.
 
+    For frames that fall within the *actual* bout window (not the pre/post
+    padding), a thin green dashed rectangle is drawn around the ROI if a
+    ``mask_h5_path`` is provided.
+
     Args:
         annotator_data: :class:`~castle.service.annotator_loader.AnnotatorData`.
         cluster_id: Target cluster ID.
         grid_cols: Side length of the square grid (e.g. 3 → 3×3 = 9 cells).
         output_dir: Directory for the cached grid video.  Defaults to
             ``<project_path>/cluster/grid_videos/``.
-        target_fps: Frame-rate of the output video.
+        target_fps: Base frame-rate of the output video.
         cell_size: Each grid cell is resized so its longest side equals
             *cell_size* pixels before tiling.
+        speed: Playback speed multiplier (0.1 – 2.0).  The effective output
+            fps is ``target_fps * speed``.  Included in the cache filename.
+        mask_h5_path: Optional path to a ``mask_list.h5`` file.  When
+            supplied, frames within the actual bout window receive a green
+            dashed ROI rectangle.
 
     Returns:
         Absolute path to the rendered (or cached) MP4, or *None* on failure.
@@ -304,6 +385,10 @@ def generate_grid_video(
     cluster_meta = annotator_data.cluster_meta
     cluster_name = cluster_meta.get(cluster_id, {}).get("name", f"cluster{cluster_id}")
 
+    # Clamp speed to valid range
+    speed = max(0.1, min(2.0, float(speed)))
+    output_fps = target_fps * speed
+
     # --- Cache check ---
     if output_dir is None:
         output_dir = os.path.join(
@@ -312,7 +397,8 @@ def generate_grid_video(
     os.makedirs(output_dir, exist_ok=True)
 
     cache_path = os.path.join(
-        output_dir, f"{cluster_name}_grid_{grid_cols}x{grid_cols}.mp4"
+        output_dir,
+        f"{cluster_name}_grid_{grid_cols}x{grid_cols}_speed{speed:.1f}.mp4",
     )
     if os.path.exists(cache_path):
         logger.info("Grid video cache hit: %s", cache_path)
@@ -368,9 +454,22 @@ def generate_grid_video(
     # --- Write raw video with cv2 ---
     raw_path = cache_path + ".raw.mp4"
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(raw_path, fourcc, target_fps, (grid_w, grid_h))
+    writer = cv2.VideoWriter(raw_path, fourcc, output_fps, (grid_w, grid_h))
 
     black_cell = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
+
+    # Pre-load mask h5 dimensions once (to scale bbox)
+    mask_shape: Optional[Tuple[int, int]] = None
+    if mask_h5_path and os.path.exists(mask_h5_path):
+        try:
+            import h5py
+            with h5py.File(mask_h5_path, 'r') as f:
+                # Peek at the first key to learn the mask shape
+                first_key = next(iter(f), None)
+                if first_key is not None:
+                    mask_shape = f[first_key][()].shape  # (H, W)
+        except Exception as exc:
+            logger.debug("Could not peek mask shape from %s: %s", mask_h5_path, exc)
 
     for frame_offset in range(n_frames):
         grid_rows_imgs = []
@@ -379,8 +478,8 @@ def generate_grid_video(
             for col in range(grid_cols):
                 cell_idx = row * grid_cols + col
                 if cell_idx < len(selected):
-                    start, end = selected[cell_idx]
-                    centre = (start + end) // 2
+                    bout_start, bout_end = selected[cell_idx]
+                    centre = (bout_start + bout_end) // 2
                     bin_idx = centre - half_len + frame_offset
                     if 0 <= bin_idx < total_bins:
                         frame = get_annotator_frame(annotator_data, int(bin_idx))
@@ -398,6 +497,44 @@ def generate_grid_video(
                         # Pad to exact cell size (top-left anchor)
                         cell_img = black_cell.copy()
                         cell_img[:rh, :rw] = frame_resized
+
+                        # --- ROI overlay for actual bout frames ---
+                        if (
+                            mask_h5_path
+                            and os.path.exists(mask_h5_path)
+                            and bout_start <= bin_idx < bout_end
+                        ):
+                            # Map bin → representative video frame index
+                            video_frame_idx = int(bin_idx) * bin_size + bin_size // 2
+                            bbox = _load_mask_bbox(mask_h5_path, video_frame_idx)
+                            if bbox is not None and mask_shape is not None:
+                                mask_h_dim, mask_w_dim = mask_shape
+                                row_min, col_min, row_max, col_max = bbox
+                                # Scale bbox from mask space → frame space → cell space
+                                # frame (fw, fh) may differ from mask dims
+                                sx = fw / mask_w_dim
+                                sy = fh / mask_h_dim
+                                # Then scale from frame space to cell space
+                                cell_sx = rw / fw
+                                cell_sy = rh / fh
+                                x1 = int(col_min * sx * cell_sx)
+                                y1 = int(row_min * sy * cell_sy)
+                                x2 = int(col_max * sx * cell_sx)
+                                y2 = int(row_max * sy * cell_sy)
+                                # Clamp to cell bounds
+                                x1 = max(0, min(x1, rw - 1))
+                                y1 = max(0, min(y1, rh - 1))
+                                x2 = max(0, min(x2, rw - 1))
+                                y2 = max(0, min(y2, rh - 1))
+                                if x2 > x1 and y2 > y1:
+                                    # cell_img is RGB; draw in RGB green (0, 255, 0)
+                                    draw_dashed_rect(
+                                        cell_img, x1, y1, x2, y2,
+                                        color=(0, 255, 0),
+                                        thickness=1,
+                                        dash_len=5,
+                                        gap_len=3,
+                                    )
                     else:
                         cell_img = black_cell.copy()
                 else:
@@ -415,7 +552,8 @@ def generate_grid_video(
 
     writer.release()
     logger.info(
-        "Grid video written: %s (%d cells × %d frames)", raw_path, len(selected), n_frames
+        "Grid video written: %s (%d cells × %d frames, speed=%.1f)",
+        raw_path, len(selected), n_frames, speed,
     )
 
     # --- Transcode to H.264 ---

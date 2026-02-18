@@ -125,6 +125,27 @@ def _find_cluster_id_by_name(annotator_data, name):
     return None
 
 
+def _resolve_mask_h5_path(annotator_data: AnnotatorData) -> str | None:
+    """Attempt to find the mask_list.h5 for the first video in the project.
+
+    Looks for ``{project_path}/track/{video_name}/mask_list.h5``.
+
+    Args:
+        annotator_data: Loaded :class:`AnnotatorData`.
+
+    Returns:
+        Absolute path to the H5 file if it exists, else *None*.
+    """
+    if not annotator_data.videos_meta:
+        return None
+    _, first_video = annotator_data.videos_meta[0]
+    video_name = os.path.basename(first_video)
+    mask_path = os.path.join(annotator_data.project_path, "track", video_name, "mask_list.h5")
+    if os.path.exists(mask_path):
+        return mask_path
+    return None
+
+
 def _extract_bouts_standalone(
     annotator_data: AnnotatorData,
     cluster_id: int,
@@ -254,7 +275,8 @@ def on_load_cluster_data(storage_path, project_name, session_id):
         gr.Warning(f"Failed to load: {exc}")
         return None, gr.update(choices=[], value=None), f"**Error:** {exc}"
 
-    annotations = load_annotations(storage_path, project_name)
+    # Load annotations scoped to this session
+    annotations = load_annotations(storage_path, project_name, session_id=sid)
     choices = _get_cluster_choices(annotator_data, annotations)
     n_clusters = len(choices)
     n_bins = len(annotator_data.cluster)
@@ -266,7 +288,7 @@ def on_load_cluster_data(storage_path, project_name, session_id):
     return annotator_data, gr.update(choices=choices, value=None), status_msg
 
 
-def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice, grid_cols):
+def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice, grid_cols, speed):
     """When user selects a cluster, generate a grid video and return its path."""
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or annotator_data is None:
@@ -278,6 +300,7 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
 
     n_bins_in_cluster = int(np.sum(annotator_data.cluster == cluster_id))
     cols = int(grid_cols) if grid_cols else 3
+    playback_speed = float(speed) if speed else 1.0
 
     from castle.service.bout_service import find_bouts as _find_bouts
 
@@ -288,18 +311,30 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
         annotator_data.project_path, "cluster", "grid_videos"
     )
 
+    # Resolve mask path for ROI overlay
+    mask_h5_path = _resolve_mask_h5_path(annotator_data)
+
     gr.Info(f"Generating {cols}×{cols} grid video for '{cluster_name}'…")
     video_path = generate_grid_video(
         annotator_data=annotator_data,
         cluster_id=cluster_id,
         grid_cols=cols,
         output_dir=output_dir,
+        speed=playback_speed,
+        mask_h5_path=mask_h5_path,
     )
 
     info_text = (
         f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
     )
     return video_path, info_text
+
+
+def on_speed_change(storage_path, project_name, annotator_data, cluster_choice, grid_cols, speed):
+    """Regenerate the grid video when playback speed changes."""
+    return on_cluster_select(
+        storage_path, project_name, annotator_data, cluster_choice, grid_cols, speed
+    )
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
@@ -319,11 +354,14 @@ def on_save_annotation(
     behavior_label,
     scheme_name,
 ):
-    """Save a single cluster annotation."""
+    """Save a single cluster annotation scoped to the loaded session."""
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or not behavior_label:
         gr.Info("Select a cluster and a behavior label first.")
         return annotations_state, _get_cluster_choices(annotator_data, annotations_state)
+
+    # Resolve session_id from AnnotatorData
+    session_id = annotator_data.session_id if annotator_data is not None else None
 
     annotations = dict(annotations_state) if annotations_state else {}
     annotations[cluster_name] = {
@@ -333,7 +371,7 @@ def on_save_annotation(
         "timestamp": datetime.datetime.now().isoformat(),
     }
 
-    save_annotations(storage_path, project_name, annotations)
+    save_annotations(storage_path, project_name, annotations, session_id=session_id)
     gr.Info(f"Saved: {cluster_name} → {behavior_label}")
 
     return annotations, _get_cluster_choices(annotator_data, annotations)
@@ -416,6 +454,15 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
                     interactive=True,
                 )
 
+                ui["speed_slider"] = gr.Slider(
+                    label="Playback Speed",
+                    minimum=0.1,
+                    maximum=2.0,
+                    value=1.0,
+                    step=0.1,
+                    interactive=True,
+                )
+
                 ui["cluster_info"] = gr.Markdown("**Selected:** None")
 
                 gr.Markdown("---")
@@ -481,17 +528,36 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         outputs=[annotator_data, ui["cluster_radio"], ui["load_status"]],
     )
 
+    # Common inputs for cluster-select and speed-change
+    _video_inputs = [
+        storage_path,
+        project_name,
+        annotator_data,
+        ui["cluster_radio"],
+        ui["grid_cols"],
+        ui["speed_slider"],
+    ]
+    _video_outputs = [ui["grid_video"], ui["cluster_info"]]
+
     # Select cluster → generate grid video
     ui["cluster_radio"].change(
         fn=on_cluster_select,
-        inputs=[
-            storage_path,
-            project_name,
-            annotator_data,
-            ui["cluster_radio"],
-            ui["grid_cols"],
-        ],
-        outputs=[ui["grid_video"], ui["cluster_info"]],
+        inputs=_video_inputs,
+        outputs=_video_outputs,
+    )
+
+    # Grid size change → regenerate
+    ui["grid_cols"].change(
+        fn=on_cluster_select,
+        inputs=_video_inputs,
+        outputs=_video_outputs,
+    )
+
+    # Speed change → regenerate grid video
+    ui["speed_slider"].change(
+        fn=on_speed_change,
+        inputs=_video_inputs,
+        outputs=_video_outputs,
     )
 
     # Change classification scheme → update labels

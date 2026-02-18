@@ -7,7 +7,7 @@ import os
 import json
 import logging
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,29 +22,70 @@ DEFAULT_SCHEMES = {
 }
 
 
-def _schemes_path(storage_path: str, project_name: str) -> str:
-    """Path to the custom classification schemes JSON file."""
+def _schemes_path(storage_path: str, project_name: str, session_id: Optional[str] = None) -> str:
+    """Path to the custom classification schemes JSON file.
+
+    If *session_id* is given the file lives inside the session directory;
+    otherwise it falls back to the cluster root for backward compatibility.
+
+    Args:
+        storage_path: Root storage directory.
+        project_name: Project name.
+        session_id: Optional session ID for per-session storage.
+
+    Returns:
+        Absolute path to ``classification_schemes.json``.
+    """
+    if session_id:
+        return os.path.join(
+            storage_path, project_name,
+            'cluster', 'sessions', session_id,
+            'classification_schemes.json',
+        )
     return os.path.join(storage_path, project_name, 'cluster', 'classification_schemes.json')
 
 
-def _annotations_path(storage_path: str, project_name: str) -> str:
-    """Path to the annotations CSV file."""
+def _annotations_path(storage_path: str, project_name: str, session_id: Optional[str] = None) -> str:
+    """Path to the annotations CSV file.
+
+    If *session_id* is given the file lives inside the session directory;
+    otherwise it falls back to the cluster root for backward compatibility.
+
+    Args:
+        storage_path: Root storage directory.
+        project_name: Project name.
+        session_id: Optional session ID for per-session storage.
+
+    Returns:
+        Absolute path to ``annotations.csv``.
+    """
+    if session_id:
+        return os.path.join(
+            storage_path, project_name,
+            'cluster', 'sessions', session_id,
+            'annotations.csv',
+        )
     return os.path.join(storage_path, project_name, 'cluster', 'annotations.csv')
 
 
-def list_schemes(storage_path: str, project_name: str) -> Dict[str, List[str]]:
+def list_schemes(
+    storage_path: str,
+    project_name: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, List[str]]:
     """List available classification schemes (default + custom).
 
     Args:
-        storage_path: Root storage directory
-        project_name: Project name
+        storage_path: Root storage directory.
+        project_name: Project name.
+        session_id: Optional session ID for per-session custom schemes.
 
     Returns:
-        Dict mapping scheme name to list of label strings
+        Dict mapping scheme name to list of label strings.
     """
     schemes = dict(DEFAULT_SCHEMES)
 
-    custom_path = _schemes_path(storage_path, project_name)
+    custom_path = _schemes_path(storage_path, project_name, session_id)
     if os.path.exists(custom_path):
         try:
             with open(custom_path, 'r') as f:
@@ -56,31 +97,44 @@ def list_schemes(storage_path: str, project_name: str) -> Dict[str, List[str]]:
     return schemes
 
 
-def get_scheme_labels(storage_path: str, project_name: str, scheme_name: str) -> List[str]:
+def get_scheme_labels(
+    storage_path: str,
+    project_name: str,
+    scheme_name: str,
+    session_id: Optional[str] = None,
+) -> List[str]:
     """Get labels for a specific classification scheme.
 
     Args:
-        storage_path: Root storage directory
-        project_name: Project name
-        scheme_name: Name of the scheme
+        storage_path: Root storage directory.
+        project_name: Project name.
+        scheme_name: Name of the scheme.
+        session_id: Optional session ID for per-session custom schemes.
 
     Returns:
-        List of label strings, or empty list if not found
+        List of label strings, or empty list if not found.
     """
-    schemes = list_schemes(storage_path, project_name)
+    schemes = list_schemes(storage_path, project_name, session_id)
     return schemes.get(scheme_name, [])
 
 
-def save_scheme(storage_path: str, project_name: str, name: str, labels: List[str]) -> None:
+def save_scheme(
+    storage_path: str,
+    project_name: str,
+    name: str,
+    labels: List[str],
+    session_id: Optional[str] = None,
+) -> None:
     """Save a custom classification scheme.
 
     Args:
-        storage_path: Root storage directory
-        project_name: Project name
-        name: Scheme name
-        labels: List of behavior label strings
+        storage_path: Root storage directory.
+        project_name: Project name.
+        name: Scheme name.
+        labels: List of behavior label strings.
+        session_id: Optional session ID for per-session storage.
     """
-    custom_path = _schemes_path(storage_path, project_name)
+    custom_path = _schemes_path(storage_path, project_name, session_id)
     os.makedirs(os.path.dirname(custom_path), exist_ok=True)
 
     existing = {}
@@ -98,18 +152,23 @@ def save_scheme(storage_path: str, project_name: str, name: str, labels: List[st
     logger.info(f"Saved classification scheme '{name}' with {len(labels)} labels")
 
 
-def load_annotations(storage_path: str, project_name: str) -> Dict[str, dict]:
+def load_annotations(
+    storage_path: str,
+    project_name: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, dict]:
     """Load existing annotations from annotations.csv.
 
     Args:
-        storage_path: Root storage directory
-        project_name: Project name
+        storage_path: Root storage directory.
+        project_name: Project name.
+        session_id: Optional session ID for per-session annotations.
 
     Returns:
         Dict mapping cluster_name to annotation dict:
             {'behavior_label': str, 'scheme': str, 'annotator': str, 'timestamp': str}
     """
-    csv_path = _annotations_path(storage_path, project_name)
+    csv_path = _annotations_path(storage_path, project_name, session_id)
     if not os.path.exists(csv_path):
         return {}
 
@@ -133,18 +192,20 @@ def save_annotations(
     storage_path: str,
     project_name: str,
     annotations: Dict[str, dict],
+    session_id: Optional[str] = None,
 ) -> str:
     """Save annotations to annotations.csv.
 
     Args:
-        storage_path: Root storage directory
-        project_name: Project name
-        annotations: Dict mapping cluster_name to annotation dict
+        storage_path: Root storage directory.
+        project_name: Project name.
+        annotations: Dict mapping cluster_name to annotation dict.
+        session_id: Optional session ID for per-session storage.
 
     Returns:
-        Path to saved CSV file
+        Path to saved CSV file.
     """
-    csv_path = _annotations_path(storage_path, project_name)
+    csv_path = _annotations_path(storage_path, project_name, session_id)
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
     rows = []

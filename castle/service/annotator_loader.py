@@ -2,9 +2,9 @@
 castle/service/annotator_loader.py
 Lightweight loader for cluster data — decoupled from LatentAggregator.
 
-Reads cluster files (id.csv, cluster_.npz) and project config directly
-from disk without requiring the clustering workflow to have been run in
-the current session.
+Reads cluster files (id.csv, time_series_*.csv, cluster_.npz) and project
+config directly from disk without requiring the clustering workflow to have
+been run in the current session.
 """
 
 import os
@@ -30,7 +30,7 @@ class AnnotatorData:
     """Lightweight cluster data for the Annotator, loaded from files.
 
     Attributes:
-        cluster: 1-D integer array of cluster assignments per bin, from 'cls' NPZ key.
+        cluster: 1-D integer array of cluster assignments per bin.
         cluster_meta: Mapping of cluster_id → {'name': str, 'color': str}.
         embedding: 2-D float array of UMAP embeddings, from 'emb' NPZ key.
         bin_size: Number of video frames per temporal bin.
@@ -66,14 +66,15 @@ def load_annotator_data(
     storage_path: str,
     project_name: str,
     session_id: Optional[str] = None,
-) -> AnnotatorData:
+) -> "AnnotatorData":
     """Load cluster data from disk files.
 
     Reads:
-    - ``cluster/id.csv``          → cluster_meta
-    - ``cluster/cluster_.npz``    → cls array + emb array
-    - project ``config.json``     → videos_meta (video names), fps
-    - session manifest            → bin_size (falls back to 1)
+    - ``cluster/id.csv``                  → cluster_meta
+    - ``cluster/time_series_*.csv``       → cluster array + videos_meta (primary)
+    - ``cluster/cluster_.npz``            → emb array; cls fallback if no CSVs
+    - project ``config.json``             → video order, fps
+    - session manifest                    → bin_size (falls back to 1)
 
     If *session_id* is provided the session is first activated (its files
     are copied to the cluster/ root) via :class:`SessionManager`.
@@ -131,39 +132,52 @@ def load_annotator_data(
             "color": str(row["Color"]),
         }
 
-    # --- Load cluster array + embedding from cluster_.npz ---
+    # --- Load embedding from cluster_.npz (kept for visualization) ---
     npz_path = os.path.join(cluster_path, "cluster_.npz")
     if not os.path.exists(npz_path):
         raise FileNotFoundError(f"cluster_.npz not found: {npz_path}")
 
     npz = np.load(npz_path, allow_pickle=False)
-    cls_array: np.ndarray = npz["cls"].astype(np.int32)
     emb_array: np.ndarray = npz["emb"].astype(np.float64)
 
-    # --- Load project config for videos_meta and fps ---
+    # --- Load project config for video order and fps ---
     _, config = get_project_config(storage_path, project_name)
 
     videos_meta: List[Tuple[int, str]] = []
     fps: float = 30.0
 
     latent_info = config.get("latent", {})
-    if latent_info:
-        # Build videos_meta: derive n_bins from cls array length and bin_size.
-        # We only know the total bins; distribute per video proportionally using
-        # latent file sizes when available, otherwise treat as a single video.
+
+    # Collect unique source video names in project config order
+    seen: List[str] = []
+    for _latent_fname, video_name in latent_info.items():
+        if video_name not in seen:
+            seen.append(video_name)
+
+    # --- Try to build cluster array from time_series_*.csv files ---
+    cls_array = _load_cluster_from_time_series(
+        cluster_path=cluster_path,
+        video_names=seen,
+        bin_size=bin_size,
+        videos_meta_out=videos_meta,  # mutated in-place
+    )
+
+    if cls_array is not None:
+        logger.info(
+            "Loaded cluster array from time_series CSVs: %d bins total", len(cls_array)
+        )
+    else:
+        # --- Fallback: read cls array from cluster_.npz ---
+        logger.info("No time_series CSVs found; falling back to cluster_.npz cls array")
+        cls_array = npz["cls"].astype(np.int32)
         total_bins = len(cls_array)
 
-        # Collect unique source video names (in order)
-        seen: List[str] = []
-        for _latent_fname, video_name in latent_info.items():
-            if video_name not in seen:
-                seen.append(video_name)
-
+        # Rebuild videos_meta from npz cls + latent info
         if len(seen) == 1:
-            # Single video: all bins belong to it
-            videos_meta = [(total_bins, seen[0])]
+            videos_meta.clear()
+            videos_meta.append((total_bins, seen[0]))
 
-            # Derive bin_size from actual video frame count / n_bins
+            # Derive bin_size from actual frame count when possible
             first_video_path = os.path.join(source_path, seen[0])
             if os.path.exists(first_video_path) and total_bins > 0:
                 try:
@@ -174,17 +188,18 @@ def load_annotator_data(
                             logger.info(
                                 "Overriding manifest bin_size=%d with derived=%d "
                                 "(video=%d frames, cluster=%d bins)",
-                                bin_size, derived_bin_size, n_video_frames, total_bins,
+                                bin_size,
+                                derived_bin_size,
+                                n_video_frames,
+                                total_bins,
                             )
                             bin_size = derived_bin_size
                 except Exception as exc:
                     logger.warning("Could not derive bin_size from video: %s", exc)
-        else:
-            # Multiple videos: try to derive n_bins per video from latent files
+        elif seen:
             latent_dir = os.path.join(project_path, "latent")
             video_bins: Dict[str, int] = {}
             for latent_fname, video_name in latent_info.items():
-                # Try to find the latent file in any subdirectory
                 for dirpath, _dirs, files in os.walk(latent_dir):
                     if latent_fname in files:
                         try:
@@ -201,25 +216,26 @@ def load_annotator_data(
                             pass
                         break
 
+            videos_meta.clear()
             if video_bins:
-                videos_meta = [(video_bins[v], v) for v in seen if v in video_bins]
+                videos_meta.extend(
+                    (video_bins[v], v) for v in seen if v in video_bins
+                )
             else:
-                # Fallback: divide bins equally
                 n_per = total_bins // len(seen)
-                videos_meta = [(n_per, v) for v in seen]
+                videos_meta.extend((n_per, v) for v in seen)
+        else:
+            logger.warning("No 'latent' key in project config; videos_meta will be empty.")
 
-        # Read fps from the first available video
-        if seen:
-            first_video_path = os.path.join(source_path, seen[0])
-            if os.path.exists(first_video_path):
-                try:
-                    with VideoReader(first_video_path) as vr:
-                        fps = vr.fps
-                except Exception as exc:
-                    logger.warning("Could not read fps from %s: %s", first_video_path, exc)
-    else:
-        # No latent info in config: treat the whole cls array as one unnamed video
-        logger.warning("No 'latent' key in project config; videos_meta will be empty.")
+    # --- Read fps from the first available video ---
+    if seen:
+        first_video_path = os.path.join(source_path, seen[0])
+        if os.path.exists(first_video_path):
+            try:
+                with VideoReader(first_video_path) as vr:
+                    fps = vr.fps
+            except Exception as exc:
+                logger.warning("Could not read fps from %s: %s", first_video_path, exc)
 
     return AnnotatorData(
         cluster=cls_array,
@@ -233,12 +249,75 @@ def load_annotator_data(
     )
 
 
+def _load_cluster_from_time_series(
+    cluster_path: str,
+    video_names: List[str],
+    bin_size: int,
+    videos_meta_out: List[Tuple[int, str]],
+) -> Optional[np.ndarray]:
+    """Build a flat cluster assignment array from per-video time_series CSVs.
+
+    Each ``time_series_<basename>.csv`` has one row per *frame* with a
+    ``behavior`` column containing the leaf cluster ID.  Down-sampling by
+    *bin_size* converts it to per-bin values.
+
+    Args:
+        cluster_path: Directory containing the time_series CSV files.
+        video_names: Ordered list of video filenames (from project config).
+        bin_size: Number of frames per temporal bin.
+        videos_meta_out: Output list that is populated with
+            ``(n_bins, video_name)`` tuples (mutated in-place).
+
+    Returns:
+        Concatenated int32 array of cluster IDs per bin, or *None* if no
+        CSV files were found for any of the listed videos.
+    """
+    import pandas as pd
+
+    segments: List[np.ndarray] = []
+    found_any = False
+
+    for video_name in video_names:
+        basename = os.path.splitext(os.path.basename(video_name))[0]
+        ts_path = os.path.join(cluster_path, f"time_series_{basename}.csv")
+
+        if not os.path.exists(ts_path):
+            logger.warning("time_series CSV not found for %s at %s", video_name, ts_path)
+            continue
+
+        found_any = True
+        ts_df = pd.read_csv(ts_path)
+
+        if "behavior" not in ts_df.columns:
+            logger.error("'behavior' column missing in %s — skipping", ts_path)
+            continue
+
+        # Down-sample: one value per bin (take first frame of each bin)
+        per_bin = ts_df["behavior"].values[::bin_size].astype(np.int32)
+        n_bins = len(per_bin)
+
+        videos_meta_out.append((n_bins, video_name))
+        segments.append(per_bin)
+        logger.debug(
+            "Loaded %s: %d frames → %d bins (bin_size=%d)",
+            basename,
+            len(ts_df),
+            n_bins,
+            bin_size,
+        )
+
+    if not found_any:
+        return None
+
+    return np.concatenate(segments) if segments else np.array([], dtype=np.int32)
+
+
 # ---------------------------
 # Frame Retrieval
 # ---------------------------
 
 def get_annotator_frame(
-    annotator_data: AnnotatorData,
+    annotator_data: "AnnotatorData",
     bin_idx: int,
 ) -> Optional[np.ndarray]:
     """Return the representative video frame for a given global bin index.
@@ -283,11 +362,15 @@ def get_annotator_frame(
             )
             return None
 
-    logger.error("bin_idx %d is out of range (total bins: %d)", bin_idx, len(annotator_data.cluster))
+    logger.error(
+        "bin_idx %d is out of range (total bins: %d)",
+        bin_idx,
+        len(annotator_data.cluster),
+    )
     return None
 
 
-def _get_cached_reader(annotator_data: AnnotatorData, video_path: str) -> VideoReader:
+def _get_cached_reader(annotator_data: "AnnotatorData", video_path: str) -> VideoReader:
     """Return a cached VideoReader, evicting the oldest entry when full.
 
     Cache is stored directly on the :class:`AnnotatorData` instance and is

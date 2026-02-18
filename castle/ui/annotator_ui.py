@@ -13,6 +13,7 @@ require the Clustering workflow to have been run in the current session.
 import os
 import datetime
 import logging
+import subprocess
 import tempfile
 
 import gradio as gr
@@ -39,6 +40,59 @@ logger = logging.getLogger(__name__)
 # ---------------------------
 # Helpers
 # ---------------------------
+
+
+def _transcode_to_h264(video_path: str) -> None:
+    """Re-encode *video_path* in-place to H.264 using ffmpeg libx264.
+
+    The file is written to a temporary path first, then atomically
+    replaces the original so that a partial failure leaves the mp4v
+    file intact.
+
+    Args:
+        video_path: Path to an MP4 file written with the mp4v codec.
+    """
+    tmp_path = video_path + ".h264tmp.mp4"
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-movflags",
+                "+faststart",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            os.replace(tmp_path, video_path)
+        else:
+            logger.warning(
+                "ffmpeg H.264 transcode failed for %s (keeping mp4v). stderr: %s",
+                video_path,
+                result.stderr[-300:],
+            )
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except FileNotFoundError:
+        logger.warning("ffmpeg not found — keeping mp4v codec for %s", video_path)
+    except Exception as exc:
+        logger.warning("H.264 transcode error for %s: %s", video_path, exc)
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
 
 def _get_cluster_choices(annotator_data, annotations):
     """Build cluster list with ✅ for labeled ones."""
@@ -147,6 +201,7 @@ def _extract_bouts_standalone(
                 frame_bgr = frame
             out.write(frame_bgr)
         out.release()
+        _transcode_to_h264(video_path)
 
         video_paths.append(video_path)
         logger.info("Saved bout video: %s (%d frames)", video_path, len(frames))

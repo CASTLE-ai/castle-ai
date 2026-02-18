@@ -9,6 +9,7 @@ They take Gradio state values as input and return updated values.
 import os
 import json
 import glob
+import subprocess
 import cv2
 import tempfile
 
@@ -34,33 +35,89 @@ dbscan_config_template = '''{
 }'''
 
 
+def _transcode_to_h264(video_path: str) -> None:
+    """Re-encode *video_path* in-place to H.264 using ffmpeg libx264.
+
+    The file is written to a temporary path first, then atomically
+    replaces the original so that a partial failure leaves the mp4v
+    file intact.
+
+    Args:
+        video_path: Path to an MP4 file written with the mp4v codec.
+    """
+    import logging
+
+    _log = logging.getLogger(__name__)
+    tmp_path = video_path + ".h264tmp.mp4"
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-movflags",
+                "+faststart",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            os.replace(tmp_path, video_path)
+        else:
+            _log.warning(
+                "ffmpeg H.264 transcode failed for %s (keeping mp4v). stderr: %s",
+                video_path,
+                result.stderr[-300:],
+            )
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except FileNotFoundError:
+        _log.warning("ffmpeg not found — keeping mp4v codec for %s", video_path)
+    except Exception as exc:
+        _log.warning("H.264 transcode error for %s: %s", video_path, exc)
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 # ---------------------------
 # Event Handlers
 # ---------------------------
 
 def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
-    """Generate a short MP4 clip around center_bin."""
+    """Generate a short H.264 MP4 clip around center_bin."""
     half = n_frames // 2
     start = max(0, center_bin - half)
     end = start + n_frames
-    
+
     frames = []
     for i in range(start, end):
         frame = aggregator.get_frame(int(i))
         if frame is not None:
             frames.append(frame)
-    
+
     if not frames:
         return None
-    
+
     h, w = frames[0].shape[:2]
-    tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(tmp.name, fourcc, fps, (w, h))
     for f in frames:
         bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR) if len(f.shape) == 3 else f
         out.write(bgr)
     out.release()
+    _transcode_to_h264(tmp.name)
     return tmp.name
 
 
@@ -613,7 +670,7 @@ def _history_status(history):
     if history.can_undo:
         parts.append(f"Undo: {history.undo_description}")
     if history.can_redo:
-        parts.append(f"Redo available")
+        parts.append("Redo available")
     return " | ".join(parts) if parts else "No history"
 
 

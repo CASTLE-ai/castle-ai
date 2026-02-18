@@ -7,11 +7,64 @@ A bout is a consecutive sequence of frames assigned to the same cluster.
 
 import os
 import logging
+import subprocess
 import tempfile
 import numpy as np
 from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _transcode_to_h264(video_path: str) -> None:
+    """Re-encode *video_path* in-place to H.264 using ffmpeg libx264.
+
+    The file is written to a temporary path first, then atomically
+    replaces the original so that a partial failure leaves the mp4v
+    file intact.
+
+    Args:
+        video_path: Path to an MP4 file written with the mp4v codec.
+    """
+    tmp_path = video_path + ".h264tmp.mp4"
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-movflags",
+                "+faststart",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            os.replace(tmp_path, video_path)
+        else:
+            logger.warning(
+                "ffmpeg H.264 transcode failed for %s (keeping mp4v). stderr: %s",
+                video_path,
+                result.stderr[-300:],
+            )
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except FileNotFoundError:
+        logger.warning("ffmpeg not found — keeping mp4v codec for %s", video_path)
+    except Exception as exc:
+        logger.warning("H.264 transcode error for %s: %s", video_path, exc)
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def find_bouts(cluster_array: np.ndarray, cluster_id: int) -> List[Tuple[int, int]]:
@@ -107,11 +160,11 @@ def extract_cluster_bouts(
             f"bout_{cluster_name}_{bout_idx:02d}_bins{start_bin}-{end_bin}.mp4"
         )
 
-        # Save as MP4 video using cv2
+        # Save as MP4 video using cv2, then transcode to H.264 for browser compat
         h, w = frames[0].shape[:2]
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
-        
+
         for frame in frames:
             # cv2 expects BGR, frames from get_frame are likely RGB
             if len(frame.shape) == 3 and frame.shape[2] == 3:
@@ -119,9 +172,10 @@ def extract_cluster_bouts(
             else:
                 frame_bgr = frame
             out.write(frame_bgr)
-        
+
         out.release()
+        _transcode_to_h264(video_path)
         video_paths.append(video_path)
-        logger.info(f"Saved bout video: {video_path} ({len(frames)} frames)")
+        logger.info("Saved bout video: %s (%d frames)", video_path, len(frames))
 
     return video_paths

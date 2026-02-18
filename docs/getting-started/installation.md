@@ -88,11 +88,27 @@ Download each file and place it in the `ckpt/` directory:
 
 ### Step 5: Verify Installation
 
-```bash
-python app.py
-```
+=== "Gradio Web UI"
 
-If everything is set up correctly, a Gradio web UI will launch at [http://localhost:7860](http://localhost:7860).
+    ```bash
+    python app.py
+    ```
+
+    If everything is set up correctly, a Gradio web UI will launch at [http://localhost:7860](http://localhost:7860).
+
+=== "PyQt6 Desktop App"
+
+    ```bash
+    castle gui
+    # or
+    python -m castle.desktop
+    ```
+
+=== "CLI"
+
+    ```bash
+    castle --help
+    ```
 
 ---
 

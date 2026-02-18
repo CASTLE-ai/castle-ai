@@ -99,6 +99,24 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
+### Annotator Loader
+
+::: castle.service.annotator_loader
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
+### Session Manager
+
+::: castle.service.session_manager
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
 ## CLI
 
 ::: castle.cli.main

@@ -1,6 +1,26 @@
 # Step 5: Export and Use Results
 
-After completing the behavior analysis in Step 4, CASTLE automatically generates several output files. This page explains the available outputs, their formats, and how to use them in your research.
+After completing the behavior analysis, CASTLE provides a dedicated **6. Export** tab for packaging project data, plus several output files generated automatically during analysis.
+
+---
+
+## Export Tab (6. Export)
+
+The Export tab lets you select which data components to include in a downloadable ZIP archive:
+
+| Component | Contents |
+|-----------|----------|
+| **Tracking Masks** | `track/<video>/mask_list.h5` — per-frame HDF5 masks |
+| **Latent Features** | `latent/**/*.npz` — extracted feature vectors |
+| **Cluster Results** | `cluster/id.csv`, `cluster_*.npz`, `time_series_*.csv` |
+| **Annotations** | `cluster/sessions/<id>/annotations.csv` — labels + comments |
+| **Grid Videos** | `cluster/grid_videos/*.mp4` — pre-rendered cluster mosaic clips |
+| **Analysis Outputs** | `analysis/` + session analysis folders |
+
+1. Switch to the **6. Export** tab
+2. Select a session (for annotations/grid videos)
+3. Check the components you want
+4. Click **Package ZIP** — the archive is built and a download link appears
 
 ---
 
@@ -11,10 +31,14 @@ All outputs are saved in the `cluster/` directory within your project:
 ```
 projects/my-project/
 └── cluster/
-    ├── id.csv                          # Cluster ID → name mapping
-    ├── time_series.csv                 # Frame-by-frame assignments
+    ├── id.csv                          # Cluster ID → name mapping (legacy)
+    ├── time_series.csv                 # Frame-by-frame assignments (legacy)
     ├── cluster_behavior1_behavior2_.npz # Embedding + cluster data
-    └── (SRT subtitle files)
+    ├── grid_videos/                    # Pre-rendered cluster grid videos
+    └── sessions/
+        └── <session_id>/
+            ├── annotations.csv         # Cluster labels + comments
+            └── time_series_<id>.csv    # Frame assignments for this session
 ```
 
 ### Behavior ID CSV (`id.csv`)
@@ -203,6 +227,8 @@ You've completed the full CASTLE workflow:
 2. ✅ Tracked ROIs with SAM + DeAOT
 3. ✅ Extracted latent features with DINOv2/v3
 4. ✅ Discovered behavioral clusters with UMAP + DBSCAN
-5. ✅ Exported results for analysis and publication
+5. ✅ Annotated clusters with behavior labels and comments
+6. ✅ Reviewed Ethogram, Quality Metrics, and Group Comparison in the Analysis tab
+7. ✅ Exported results as a ZIP archive for analysis and publication
 
 For questions or issues, check the [FAQ](../faq.md) or open an issue on [GitHub](https://github.com/CASTLE-ai/castle-ai/issues).

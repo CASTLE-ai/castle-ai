@@ -33,12 +33,16 @@
 - **2026-02: Developer Branch - Major Architecture Overhaul**
   - **Service Layer**: Clean separation between UI and business logic
   - **CLI Frontend**: Full command-line interface via `castle` command
-  - **Desktop App**: PyQt6 native application with pyqtgraph visualization
-  - **Multi-scale Pooling (A-06)**: Spatial pyramid pooling for richer latent representations
+  - **Desktop App**: PyQt6 native 8-tab application with pyqtgraph visualization
+  - **Cluster Annotator** (Tab 5 desktop / sub-tab in Gradio 4): Grid video browser, per-session annotations, comment field, auto-save on label change / comment blur, mask contour overlay, speed control
+  - **Analysis Tab** (Tab 6 desktop / Tab 5 Gradio): Ethogram (raster + transition matrix + bout stats), Quality Metrics (silhouette, CH, DB, V-measure, NMI, ARI), Group Comparison placeholder
+  - **Export Tab** (Tab 7 desktop / Tab 6 Gradio): ZIP download with selectable components (masks, latent, cluster results, annotations, grid videos, analysis outputs)
+  - **Recursive Auto-clustering**: `castle cluster auto` — automated hierarchical Behavior Microscope
+  - **Multi-scale Pooling**: Spatial pyramid pooling for richer latent representations
+  - **Session Management**: Multiple clustering sessions per project with `SessionManager`
+  - **NWB Export**: `castle ethogram export-nwb` — Neurodata Without Borders format
+  - **MCP Server**: `castle mcp start` — Model Context Protocol server
   - **Undo/Redo**: Command Pattern history for clustering operations
-  - **Ethogram Engine (P1)**: Transition matrix, bout statistics, temporal coherence, raster plot
-  - **Quality Metrics (P2)**: Silhouette, Calinski-Harabasz, Davies-Bouldin, V-measure, NMI, ARI
-  - **Group Comparison (P4)**: BFA test, behavioral fingerprint, energy distance, permutation tests
   - **260 Unit Tests**: Comprehensive test coverage
   - **Code Quality**: Zero ruff warnings in non-vendored code
 
@@ -90,8 +94,39 @@
     ```
 
 ## Run App
+
+=== "Gradio Web UI"
+
 ```bash
 python app.py
+```
+
+Opens at [http://localhost:7860](http://localhost:7860) with 7 tabs:
+`0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Analysis | 6. Export`
+
+=== "PyQt6 Desktop App"
+
+```bash
+castle gui
+# or
+python -m castle.desktop
+```
+
+Native 8-tab desktop GUI:
+`0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Annotator | 6. Analysis | 7. Export`
+
+=== "CLI"
+
+```bash
+castle --help
+# Key commands:
+castle project init <name>
+castle track <project>
+castle extract <project>
+castle cluster run <project>
+castle cluster auto <project>    # Recursive hierarchical auto-clustering
+castle ethogram analyze <project>
+castle compare run <project_a> <project_b>
 ```
 
 ## Performance Benchmarks

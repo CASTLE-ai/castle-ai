@@ -2,6 +2,11 @@
 
 The **4. Behavior Microscope** tab is where CASTLE's core analysis happens — transforming latent features into interpretable behavioral categories through dimensionality reduction and clustering.
 
+The tab contains two sub-tabs:
+
+- **Clustering** — UMAP + DBSCAN workspace
+- **Cluster Annotator** — grid video browser with behavior labeling, comments, and auto-save
+
 ---
 
 ## Overview
@@ -10,9 +15,14 @@ The analysis workflow:
 
 ```
 Latent Vectors → Initialize → Select Cluster → UMAP Embedding → DBSCAN Clustering → Label & Submit
+                                                                                           ↓
+                                                              Cluster Annotator (grid video, label, comment)
 ```
 
 This is an **iterative, hierarchical** process. You start with broad categories (low magnification) and progressively zoom in to discover finer behavioral syllables.
+
+!!! tip "Automated alternative"
+    For large datasets, use `castle cluster auto <project>` to run recursive hierarchical clustering fully automatically from the CLI — no manual UMAP/DBSCAN interaction required.
 
 ---
 
@@ -195,6 +205,46 @@ After submitting, the following are generated:
 
 ---
 
+## Cluster Annotator Sub-tab
+
+After generating clusters, use the **Cluster Annotator** sub-tab to review and label them:
+
+1. Switch to the **Cluster Annotator** sub-tab within **4. Behavior Microscope**
+2. Select the clustering session from the dropdown and click **Load Cluster Data**
+3. A list of clusters appears on the left panel
+4. Click a cluster to load its **grid video** — a mosaic of representative video clips
+
+### Labeling
+
+- Enter a **behavior name** in the label field (replaces the default cluster name)
+- Optionally add a **comment** to describe the behavior or note uncertainty
+- Labels are **auto-saved** immediately on change; comments are auto-saved on focus-out
+
+### Mask Contour Overlay
+
+When tracking data is available, ROI mask contours are drawn over the video frames so you can confirm the tracked region corresponds to the animal.
+
+### Speed Control (Desktop App)
+
+The PyQt6 desktop app includes a **playback speed** selector (0.25×, 0.5×, 1×, 2×) for reviewing grid videos.
+
+---
+
+## Automated Clustering (CLI)
+
+For headless pipelines, the recursive auto-clustering command runs the full hierarchical Behavior Microscope automatically:
+
+```bash
+castle cluster auto <project> \
+    --max-depth 6 \
+    --min-frames 100 \
+    --eps 0.3,0.5,0.7,1.0,1.5,2.0,3.0
+```
+
+This mirrors the manual workflow — `select cluster → UMAP → DBSCAN → split → recurse` — but runs unattended. UMAP config is auto-selected per depth (Low at depth 0, Intermediate at depth 1+).
+
+---
+
 ## Tips
 
 - **Start with Low Magnification 100** as your first exploration
@@ -210,4 +260,4 @@ After submitting, the following are generated:
 
 ## Next Step
 
-Once you've identified and labeled behavioral clusters, proceed to [**Step 5: Export Results**](step5-export.md).
+After labeling clusters, explore downstream analysis in **5. Analysis** (Ethogram, Quality Metrics, Group Comparison), then proceed to [**Step 5: Export Results**](step5-export.md).

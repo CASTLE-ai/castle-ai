@@ -97,21 +97,25 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 | Module | Purpose |
 |--------|---------|
 | `main.py` | Typer app entry point, registers all subcommand groups |
-| `project_cmd.py` | `castle project create/list/info/delete` |
-| `cluster_cmd.py` | `castle cluster run/list/evaluate` |
-| `extract_cmd.py` | `castle extract run` |
-| `track_cmd.py` | `castle track run` |
-| `info_cmd.py` | `castle info status/devices` |
-| `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export` |
+| `project_cmd.py` | `castle project init/info/add-videos/list` |
+| `cluster_cmd.py` | `castle cluster run/export/save-model/apply-model/auto/evaluate` |
+| `extract_cmd.py` | `castle extract <project>` |
+| `track_cmd.py` | `castle track <project>` |
+| `info_cmd.py` | `castle info <project>` |
+| `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export/export-nwb` |
 | `compare_cmd.py` | `castle compare run/fingerprint` |
+| `gui_cmd.py` | `castle gui` — launch the PyQt6 desktop app |
+| `mcp_cmd.py` | `castle mcp start` — start the MCP server |
 
 ### `castle/ui/` — Gradio Web Interface
 
-Built on [Gradio](https://gradio.app/). Each tab has its own module:
+Built on [Gradio](https://gradio.app/). Each tab has its own module.
+
+7 top-level tabs: **0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Analysis | 6. Export**
 
 | Module | Tab | Purpose |
 |--------|-----|---------|
-| `main_ui.py` | — | Creates the top-level app with all tabs |
+| `main_ui.py` | — | Creates the top-level app with all 7 tabs |
 | `project_ui.py` | 0. Project | Create, open, delete projects |
 | `source_ui.py` | 1. Upload Videos | Upload local files or scan server directories |
 | `edit_ui.py` | 2. Tracking ROIs | Container for all tracking sub-UIs |
@@ -119,28 +123,41 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module:
 | `label_ui.py` | └─ Label ROI | Point-and-click segmentation with SAM |
 | `knowledge_ui.py` | └─ ROI Prompts | Gallery of all saved ROI labels |
 | `track_ui.py` | └─ Tracking | Run DeAOT tracking with progress |
-| `post_track_ui.py` | └─ Analysis | Post-process and review tracking |
+| `post_track_ui.py` | └─ Post-Track | Post-process and review tracking results |
 | `batch_track_ui.py` | └─ Batch | Process multiple videos |
 | `extract_ui.py` | 3. Extract Latent | Configure and run feature extraction |
-| `cluster_page_ui.py` | 4. Behavior Microscope | UMAP + DBSCAN analysis |
+| `cluster_page_ui.py` | 4. Behavior Microscope | UMAP + DBSCAN clustering workspace |
 | `embedding_scatter.py` | └─ (component) | Plotly embedding scatter widget |
 | `cluster_handlers.py` | └─ (component) | Cluster operation callbacks |
 | `cluster_tree.py` | └─ (component) | Hierarchical cluster tree view |
+| `cluster_input_ui.py` | └─ (component) | Clustering parameter input widgets |
+| `annotator_ui.py` | └─ Cluster Annotator | Grid video browser, per-session labels, auto-save |
+| `analysis_ui.py` | 5. Analysis | Ethogram, Quality Metrics sub-tabs, Group Comparison placeholder |
+| `export_ui.py` | 6. Export | ZIP download with selectable data components |
+| `plot_mask_info.py` | (component) | Mask info / contour overlay utilities |
 
 ### `castle/desktop/` — PyQt6 Desktop Application
 
 Native desktop GUI using [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) and [pyqtgraph](https://pyqtgraph.readthedocs.io/).
 
+8 tabs: **0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Annotator | 6. Analysis | 7. Export**
+
 | Module | Purpose |
 |--------|---------|
-| `main_window.py` | Main window with 5 tabs |
-| `workers.py` | QThread workers for background tasks |
+| `main_window.py` | Main window with 8 tabs |
+| `services/worker_threads.py` | QThread `ServiceWorker` for background tasks |
 | `components/syllable_bar.py` | pyqtgraph-based syllable bar widget |
-| `widgets/project_panel.py` | Project management panel |
-| `widgets/source_panel.py` | Video source panel |
-| `widgets/tracking_panel.py` | ROI tracking panel |
-| `widgets/extract_panel.py` | Feature extraction panel |
-| `widgets/cluster_panel.py` | Behavior clustering panel |
+| `components/embedding_view.py` | Embedding scatter view |
+| `components/video_player.py` | In-app video player |
+| `components/cluster_tree.py` | Hierarchical cluster tree widget |
+| `widgets/project_panel.py` | Tab 0 — Project management |
+| `widgets/source_panel.py` | Tab 1 — Video source |
+| `widgets/tracking_panel.py` | Tab 2 — ROI tracking |
+| `widgets/extract_panel.py` | Tab 3 — Feature extraction |
+| `widgets/cluster_panel.py` | Tab 4 — Behavior Microscope (UMAP + DBSCAN) |
+| `widgets/annotator_panel.py` | Tab 5 — Cluster Annotator (grid video, labels, comments, auto-save) |
+| `widgets/analysis_panel.py` | Tab 6 — Analysis (Ethogram + Quality Metrics sub-tabs) |
+| `widgets/export_panel.py` | Tab 7 — Export (ZIP with selectable components) |
 
 ### `castle/service/` — Service Layer
 
@@ -150,14 +167,17 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 |--------|---------|
 | `project_service.py` | Project CRUD (create, list, info, delete) |
 | `extraction_service.py` | Feature extraction orchestration |
-| `clustering_service.py` | UMAP + DBSCAN session management |
+| `clustering_service.py` | UMAP + DBSCAN session management, recursive auto-clustering |
 | `tracking_service.py` | Tracking pipeline orchestration |
 | `annotation_service.py` | Classification scheme management |
+| `annotator_loader.py` | `AnnotatorData` — loads cluster + video data for Annotator and Analysis UIs |
+| `session_manager.py` | `SessionManager` — list/create/activate clustering sessions |
 | `bout_service.py` | Behavioral bout analysis and export |
 | `history_service.py` | Undo/Redo via Command Pattern |
 | `ethogram_service.py` | Ethogram analysis: loads cluster data, delegates to `castle.core.ethogram` |
 | `metrics_service.py` | Clustering quality evaluation: loads labels/embedding, delegates to `castle.core.metrics` |
 | `comparison_service.py` | Group comparison: loads per-video data, delegates to `castle.core.comparison` |
+| `nwb_service.py` | NWB (Neurodata Without Borders) export orchestration |
 
 ### `castle/core/` — Core Business Logic
 
@@ -165,17 +185,22 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 |--------|---------|
 | `extractor.py` | Feature extraction execution engine |
 | `cluster.py` | `LatentAggregator` — multi-video latent loading and frame retrieval |
+| `cluster_transfer.py` | Save / apply clustering models to new data |
+| `auto_cluster.py` | Recursive hierarchical Behavior Microscope — automated multi-level clustering |
 | `data.py` | `Preprocess` pipeline, `VideoDataset` for batched extraction |
 | `models.py` | `VisualEncoder` abstraction: DINOv2, DINOv3, multi-scale pooling |
 | `config.py` | Constants: checkpoint paths, model IDs, supported models |
 | `project.py` | Project config read/write (file inventory) |
-| `project_config.py` | `ProjectConfig` dataclass — typed processing parameters (B-05) |
+| `project_config.py` | `ProjectConfig` dataclass — typed processing parameters |
 | `environment.py` | Device detection (`cuda`/`mps`/`cpu`), worker count |
-| `mask_filter.py` | Post-tracking mask filtering — largest component, configurable threshold (A-03) |
+| `mask_filter.py` | Post-tracking mask filtering — largest component, configurable threshold |
 | `logging_config.py` | Centralized logging setup |
-| `ethogram.py` | Ethogram engine — bout extraction, transition matrix, temporal coherence (P1) |
-| `metrics.py` | Clustering quality metrics — silhouette, CH, DB, temporal coherence, bout quality, external validation (P2) |
-| `comparison.py` | Group comparison — BFA test, behavioral fingerprint, energy distance, permutation tests, Hedges' g (P4) |
+| `temporal_smooth.py` | Temporal smoothing of cluster label sequences |
+| `interfaces.py` | Shared abstract interfaces / protocols |
+| `ethogram.py` | Ethogram engine — bout extraction, transition matrix, temporal coherence |
+| `metrics.py` | Clustering quality metrics — silhouette, CH, DB, temporal coherence, bout quality, external validation |
+| `comparison.py` | Group comparison — BFA test, behavioral fingerprint, energy distance, permutation tests, Hedges' g |
+| `nwb_export.py` | NWB file creation from CASTLE cluster data |
 
 ### `castle/utils/` — Utility Layer
 
@@ -278,10 +303,19 @@ projects/my-project/
 ├── latent/                                  # Extracted features
 │   └── dinov2_vitb14_reg/
 │       ├── video1_ROI_1_dinov2_vitb14_reg_ctr_rmbg.npz        # default pooling
-│       ├── video1_ROI_1_dinov2_vitb14_reg_ctr_spp1x2x4.npz    # A-06 multiscale
-│       └── video1_ROI_1_dinov2_vitb14_reg_ctr_L3x7x11.npz     # A-06 multi-layer
-└── cluster/                                 # Analysis results
-    ├── id.csv                               # Cluster ID → name mapping
-    ├── time_series.csv                      # Frame-by-frame assignments
-    └── cluster_grooming_rearing_.npz        # Embedding + labels
+│       ├── video1_ROI_1_dinov2_vitb14_reg_ctr_spp1x2x4.npz    # multiscale SPP
+│       └── video1_ROI_1_dinov2_vitb14_reg_ctr_L3x7x11.npz     # multi-layer
+├── cluster/                                 # Clustering outputs
+│   ├── id.csv                               # Cluster ID → name mapping (legacy)
+│   ├── time_series.csv                      # Frame-by-frame assignments (legacy)
+│   ├── cluster_grooming_rearing_.npz        # Embedding + labels
+│   ├── grid_videos/                         # Pre-rendered cluster grid videos
+│   │   └── <session_id>_cluster0.mp4
+│   └── sessions/                            # Per-session clustering state
+│       └── <session_id>/
+│           ├── session.json                 # Session metadata
+│           ├── annotations.csv              # Per-cluster labels + comments
+│           ├── time_series_<session>.csv    # Frame assignments for this session
+│           └── analysis/                   # Ethogram / metrics outputs
+└── analysis/                                # Project-wide analysis outputs
 ```

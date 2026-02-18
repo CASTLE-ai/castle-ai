@@ -4,7 +4,9 @@ All configurable parameters in CASTLE, consolidated in one place.
 
 ---
 
-## Launch Options (`app.py`)
+## Launch Options
+
+### Gradio Web UI (`app.py`)
 
 ```bash
 python app.py [OPTIONS]
@@ -14,6 +16,30 @@ python app.py [OPTIONS]
 |--------|-------------|---------|
 | `--root PATH` | Custom project storage path | `projects/` |
 | `--share` | Enable Gradio public URL (auto-enabled on Colab) | `False` |
+
+### PyQt6 Desktop App
+
+```bash
+castle gui [OPTIONS]
+# or: python -m castle.desktop [OPTIONS]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--storage PATH` | Custom project storage path | `projects/` |
+| `--project NAME` | Auto-open this project on startup | `None` |
+
+### CLI
+
+```bash
+castle [COMMAND] [OPTIONS]
+```
+
+Use `castle --help` or `castle <command> --help` for full option reference. Key environment variable:
+
+| Variable | Description |
+|----------|-------------|
+| `CASTLE_STORAGE` | Default project storage directory |
 
 ---
 

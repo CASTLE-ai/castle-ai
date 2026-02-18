@@ -65,21 +65,75 @@ The high-dimensional features are reduced and clustered to discover behavioral p
 - **UMAP** (Uniform Manifold Approximation and Projection) reduces dimensions for visualization
 - **DBSCAN** clusters the embedding into behavioral syllables
 - **Hierarchical exploration**: three magnification levels (low → intermediate → high) for progressively finer behavioral categories
+- **Recursive auto-clustering**: fully automated hierarchical pipeline via `castle cluster auto`
 - Interactive click-to-explore on the UMAP plot
+
+### 6. Cluster Annotator
+
+After clustering, annotate discovered clusters with behavior labels:
+
+- **Grid video browser** — watch representative video clips for each cluster
+- **Per-session annotations** — label name and comment saved per clustering session
+- **Auto-save** — labels and comments saved automatically on change / focus-out
+- **Mask contour overlay** — ROI contours drawn over video frames
+- **Speed control** — playback speed selector in the desktop app
+
+### 7. Downstream Analysis
+
+- **Ethogram** — raster plot, transition matrix heatmap, bout duration distributions
+- **Quality Metrics** — silhouette score, Calinski-Harabasz, Davies-Bouldin, V-measure, NMI, ARI
+- **Group Comparison** — behavioral fingerprint radar, BFA test, energy distance, permutation tests
+
+### 8. Export
+
+Package results as a ZIP archive with selectable components (masks, latent features, cluster results, annotations, grid videos, analysis outputs).
 
 ---
 
 ## GUI vs Programmatic
 
-CASTLE offers two interfaces:
+CASTLE offers three interfaces:
 
-### Gradio GUI (Recommended)
+### Gradio Web UI (Recommended for exploration)
 
 ```bash
 python app.py
 ```
 
-Interactive web interface at `http://localhost:7860` with 5 tabs following the pipeline. Best for most users and covered in this tutorial series.
+Interactive web interface at `http://localhost:7860` with **7 tabs** following the pipeline:
+
+| Tab | Name | Purpose |
+|-----|------|---------|
+| 0 | Project | Create / open projects |
+| 1 | Upload Videos | Import video files |
+| 2 | Tracking ROIs | SAM labeling + DeAOT tracking + batch |
+| 3 | Extract Latent | DINOv2/v3 feature extraction |
+| 4 | Behavior Microscope | UMAP + DBSCAN clustering + Cluster Annotator |
+| 5 | Analysis | Ethogram, Quality Metrics, Group Comparison |
+| 6 | Export | ZIP download with selectable data components |
+
+### PyQt6 Desktop App
+
+```bash
+python -m castle.desktop
+```
+or via CLI:
+```bash
+castle gui
+```
+
+Native desktop application with **8 tabs**:
+
+| Tab | Name |
+|-----|------|
+| 0 | Project |
+| 1 | Upload Videos |
+| 2 | Tracking ROIs |
+| 3 | Extract Latent |
+| 4 | Behavior Microscope |
+| 5 | Annotator |
+| 6 | Analysis |
+| 7 | Export |
 
 ### Jupyter Notebooks
 
@@ -106,3 +160,6 @@ Follow the tutorials in order:
 3. [**Extract Features**](step3-extract.md)
 4. [**Behavior Analysis**](step4-analysis.md)
 5. [**Export Results**](step5-export.md)
+
+!!! note "Coming soon"
+    Dedicated tutorials for the Cluster Annotator and Analysis tabs are planned.

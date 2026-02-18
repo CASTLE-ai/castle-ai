@@ -9,11 +9,23 @@ This guide walks you through a complete analysis using a demo video in under 5 m
 
 ## 1. Launch CASTLE
 
-```bash
-python app.py
-```
+=== "Gradio Web UI"
 
-The Gradio web UI opens at [http://localhost:7860](http://localhost:7860).
+    ```bash
+    python app.py
+    ```
+
+    The Gradio web UI opens at [http://localhost:7860](http://localhost:7860).
+
+=== "PyQt6 Desktop App"
+
+    ```bash
+    castle gui
+    # or
+    python -m castle.desktop
+    ```
+
+    A native desktop window opens with 8 tabs.
 
 ---
 
@@ -71,6 +83,24 @@ The Gradio web UI opens at [http://localhost:7860](http://localhost:7860).
 3. Run the analysis to discover behavioral categories
 
 ![Behavior analysis results](../assets/screenshots/quickstart-analysis.png)
+
+---
+
+## 7. Annotate Clusters (Optional)
+
+1. Within the **4. Behavior Microscope** tab, switch to the **Cluster Annotator** sub-tab
+2. Select a clustering session and click **Load Cluster Data**
+3. Browse grid videos for each cluster to verify its behavior
+4. Assign behavior labels and (optionally) add a comment
+5. Labels are **auto-saved** when changed or when the comment field loses focus
+
+---
+
+## 8. Export Results
+
+1. Switch to the **6. Export** tab
+2. Select the data components you want (masks, latent, cluster results, annotations, grid videos)
+3. Click **Package ZIP** to download a ZIP archive
 
 ---
 

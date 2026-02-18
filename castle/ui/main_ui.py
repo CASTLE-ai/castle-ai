@@ -77,12 +77,6 @@ def create_ui(OS_SYS, root=''):
                         storage_path, project_name, annotator_tab,
                     )
 
-                # Sub-tab: Analysis (ethogram + quality metrics)
-                with gr.Tab(label='Analysis') as analysis_tab:
-                    _analysis_ui = create_analysis_ui(
-                        storage_path, project_name, analysis_tab,
-                    )
-
             cluster_ui_object_count = gr.State(len(cluster_ui))
             cluster_page_tab.select(
                 fn=toggle_tab_visibility,
@@ -90,8 +84,14 @@ def create_ui(OS_SYS, root=''):
                 outputs=[v for k, v in cluster_ui.items()]
             )
 
-        # Export tab (Stage 5)
-        with gr.Tab(label='5. Export'):
+        # Analysis tab (Stage 5)
+        with gr.Tab(label='5. Analysis') as analysis_tab:
+            _analysis_ui = create_analysis_ui(
+                storage_path, project_name, analysis_tab,
+            )
+
+        # Export tab (Stage 6)
+        with gr.Tab(label='6. Export'):
             create_export_ui(storage_path, project_name)
 
     return app

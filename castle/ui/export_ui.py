@@ -89,6 +89,31 @@ def _collect_grid_videos(project_path: str) -> list[tuple[str, str]]:
     return results
 
 
+def _collect_analysis(project_path: str) -> list[tuple[str, str]]:
+    """Return (src, archive_name) for analysis outputs (ethogram, metrics)."""
+    results = []
+    # Ethogram outputs (if saved to disk by the analysis tab)
+    analysis_dir = os.path.join(project_path, "analysis")
+    if os.path.isdir(analysis_dir):
+        for root, _dirs, files in os.walk(analysis_dir):
+            for f in files:
+                src = os.path.join(root, f)
+                rel = os.path.relpath(src, project_path)
+                results.append((src, rel))
+    # Also include any session-level analysis files
+    sessions_dir = os.path.join(project_path, "cluster", "sessions")
+    if os.path.isdir(sessions_dir):
+        for sid in os.listdir(sessions_dir):
+            sid_analysis = os.path.join(sessions_dir, sid, "analysis")
+            if os.path.isdir(sid_analysis):
+                for root, _dirs, files in os.walk(sid_analysis):
+                    for f in files:
+                        src = os.path.join(root, f)
+                        rel = os.path.relpath(src, project_path)
+                        results.append((src, rel))
+    return results
+
+
 def _collect_source_videos(project_path: str) -> list[tuple[str, str]]:
     """Return (src, archive_name) for all source video files."""
     sources_dir = os.path.join(project_path, "sources")
@@ -156,6 +181,7 @@ def on_export(
     include_cluster,
     include_annotations,
     include_grid_videos,
+    include_analysis,
     include_source_videos,
     session_id,
 ):
@@ -194,6 +220,8 @@ def on_export(
         files.extend(_collect_annotations(pp, session_id))
     if include_grid_videos:
         files.extend(_collect_grid_videos(pp))
+    if include_analysis:
+        files.extend(_collect_analysis(pp))
     if include_source_videos:
         files.extend(_collect_source_videos(pp))
 
@@ -299,6 +327,10 @@ def create_export_ui(storage_path, project_name):
                     label="🎬 Grid videos (cluster/grid_videos/*.mp4)",
                     value=True,
                 )
+                ui["include_analysis"] = gr.Checkbox(
+                    label="📊 Analysis results (ethogram, metrics)",
+                    value=True,
+                )
                 ui["include_source_videos"] = gr.Checkbox(
                     label="📹 Source videos (sources/)",
                     value=False,
@@ -345,6 +377,7 @@ def create_export_ui(storage_path, project_name):
         ui["include_cluster"],
         ui["include_annotations"],
         ui["include_grid_videos"],
+        ui["include_analysis"],
         ui["include_source_videos"],
         ui["session_dropdown"],
     ]

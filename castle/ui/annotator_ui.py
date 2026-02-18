@@ -187,6 +187,7 @@ def on_load_cluster_data(storage_path, project_name, session_id):
         return None, gr.update(choices=[], value=None), "**Status:** No project selected"
 
     sid = session_id if session_id else None
+    logger.info("on_load_cluster_data: storage=%s project=%s session_id=%r", storage_path, project_name, sid)
 
     try:
         annotator_data = load_annotator_data(storage_path, project_name, session_id=sid)
@@ -409,8 +410,12 @@ def create_annotator_ui(storage_path, project_name):
         outputs=[ui["session_dropdown"]],
     )
 
-    # Load cluster data button
+    # Auto-refresh sessions on Load: refresh dropdown first, then load data
     ui["load_btn"].click(
+        fn=on_refresh_sessions,
+        inputs=[storage_path, project_name],
+        outputs=[ui["session_dropdown"]],
+    ).then(
         fn=on_load_cluster_data,
         inputs=[storage_path, project_name, ui["session_dropdown"]],
         outputs=[annotator_data, ui["cluster_radio"], ui["load_status"]],

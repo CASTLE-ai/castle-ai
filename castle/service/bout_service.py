@@ -268,74 +268,68 @@ def _compute_aligned_range(
     return min(padded_lengths)
 
 
-def draw_dashed_rect(
+def _draw_dashed_contour(
     img: np.ndarray,
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
+    contour_pts: np.ndarray,
     color: Tuple[int, int, int] = (0, 255, 0),
     thickness: int = 1,
-    dash_len: int = 5,
-    gap_len: int = 3,
+    dash_len: int = 6,
+    gap_len: int = 4,
 ) -> None:
-    """Draw a dashed rectangle on *img* in-place.
+    """Draw a dashed contour line on *img* in-place.
 
-    Args:
-        img: BGR image array (modified in-place).
-        x1: Left column of rectangle.
-        y1: Top row of rectangle.
-        x2: Right column of rectangle.
-        y2: Bottom row of rectangle.
-        color: BGR color tuple.
-        thickness: Line thickness in pixels.
-        dash_len: Length of each dash segment in pixels.
-        gap_len: Length of gap between dashes in pixels.
+    Walks the contour point-by-point, alternating between drawing
+    (dash) and skipping (gap) segments.
     """
     import cv2
 
-    step = dash_len + gap_len
-    # Top and bottom horizontal edges
-    for x in range(x1, x2, step):
-        x_end = min(x + dash_len, x2)
-        cv2.line(img, (x, y1), (x_end, y1), color, thickness)
-        cv2.line(img, (x, y2), (x_end, y2), color, thickness)
-    # Left and right vertical edges
-    for y in range(y1, y2, step):
-        y_end = min(y + dash_len, y2)
-        cv2.line(img, (x1, y), (x1, y_end), color, thickness)
-        cv2.line(img, (x2, y), (x2, y_end), color, thickness)
+    n = len(contour_pts)
+    if n < 2:
+        return
+    drawing = True
+    seg_remaining = dash_len
+    for i in range(n):
+        p1 = tuple(contour_pts[i].ravel())
+        p2 = tuple(contour_pts[(i + 1) % n].ravel())
+        if drawing:
+            cv2.line(img, p1, p2, color, thickness)
+        seg_remaining -= 1
+        if seg_remaining <= 0:
+            drawing = not drawing
+            seg_remaining = dash_len if drawing else gap_len
 
 
-def _load_mask_bbox(
+def _load_mask_contours(
     mask_h5_path: str,
     frame_idx: int,
-) -> Optional[Tuple[int, int, int, int]]:
-    """Load a binary mask from an HDF5 file and return its bounding box.
-
-    Args:
-        mask_h5_path: Path to ``mask_list.h5``.
-        frame_idx: Frame index (key in the HDF5 file as a string).
+) -> Optional[Tuple[list, Tuple[int, int]]]:
+    """Load a binary mask from HDF5 and return its contours + mask shape.
 
     Returns:
-        ``(row_min, col_min, row_max, col_max)`` of the non-zero mask region,
-        or *None* if the key is absent or the mask is all-zero.
+        ``(contours, (mask_h, mask_w))`` or *None*.
+        Each contour is a numpy array of shape ``(N, 1, 2)``.
     """
+    import cv2
+
     try:
         import h5py
         with h5py.File(mask_h5_path, 'r') as f:
             key = str(frame_idx)
             if key not in f:
                 return None
-            mask = f[key][()]  # uint8 array (H, W)
+            mask = f[key][()]  # uint8 (H, W)
     except Exception as exc:
         logger.debug("Could not read mask from %s[%d]: %s", mask_h5_path, frame_idx, exc)
         return None
 
-    rows, cols = np.where(mask > 0)
-    if rows.size == 0:
+    if mask.max() == 0:
         return None
-    return int(rows.min()), int(cols.min()), int(rows.max()), int(cols.max())
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    return contours, mask.shape[:2]
 
 
 def generate_grid_video(
@@ -358,7 +352,8 @@ def generate_grid_video(
 
     For frames that fall within the *actual* bout window (not the pre/post
     padding), a thin green dashed rectangle is drawn around the ROI if a
-    ``mask_h5_path`` is provided.
+    ``mask_h5_path`` is provided.  The contour follows the mask shape
+    (not a bounding box).
 
     Args:
         annotator_data: :class:`~castle.service.annotator_loader.AnnotatorData`.
@@ -371,7 +366,7 @@ def generate_grid_video(
             *cell_size* pixels before tiling.
         mask_h5_path: Optional path to a ``mask_list.h5`` file.  When
             supplied, frames within the actual bout window receive a green
-            dashed ROI rectangle.
+            dashed ROI contour outline.
 
     Returns:
         Absolute path to the rendered (or cached) MP4, or *None* on failure.
@@ -453,19 +448,6 @@ def generate_grid_video(
 
     black_cell = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
 
-    # Pre-load mask h5 dimensions once (to scale bbox)
-    mask_shape: Optional[Tuple[int, int]] = None
-    if mask_h5_path and os.path.exists(mask_h5_path):
-        try:
-            import h5py
-            with h5py.File(mask_h5_path, 'r') as f:
-                # Peek at the first key to learn the mask shape
-                first_key = next(iter(f), None)
-                if first_key is not None:
-                    mask_shape = f[first_key][()].shape  # (H, W)
-        except Exception as exc:
-            logger.debug("Could not peek mask shape from %s: %s", mask_h5_path, exc)
-
     for frame_offset in range(n_frames):
         grid_rows_imgs = []
         for row in range(grid_cols):
@@ -493,7 +475,7 @@ def generate_grid_video(
                         cell_img = black_cell.copy()
                         cell_img[:rh, :rw] = frame_resized
 
-                        # --- ROI overlay for actual bout frames ---
+                        # --- ROI contour overlay for actual bout frames ---
                         if (
                             mask_h5_path
                             and os.path.exists(mask_h5_path)
@@ -501,34 +483,24 @@ def generate_grid_video(
                         ):
                             # Map bin → representative video frame index
                             video_frame_idx = int(bin_idx) * bin_size + bin_size // 2
-                            bbox = _load_mask_bbox(mask_h5_path, video_frame_idx)
-                            if bbox is not None and mask_shape is not None:
-                                mask_h_dim, mask_w_dim = mask_shape
-                                row_min, col_min, row_max, col_max = bbox
-                                # Scale bbox from mask space → frame space → cell space
-                                # frame (fw, fh) may differ from mask dims
-                                sx = fw / mask_w_dim
-                                sy = fh / mask_h_dim
-                                # Then scale from frame space to cell space
-                                cell_sx = rw / fw
-                                cell_sy = rh / fh
-                                x1 = int(col_min * sx * cell_sx)
-                                y1 = int(row_min * sy * cell_sy)
-                                x2 = int(col_max * sx * cell_sx)
-                                y2 = int(row_max * sy * cell_sy)
-                                # Clamp to cell bounds
-                                x1 = max(0, min(x1, rw - 1))
-                                y1 = max(0, min(y1, rh - 1))
-                                x2 = max(0, min(x2, rw - 1))
-                                y2 = max(0, min(y2, rh - 1))
-                                if x2 > x1 and y2 > y1:
-                                    # cell_img is RGB; draw in RGB green (0, 255, 0)
-                                    draw_dashed_rect(
-                                        cell_img, x1, y1, x2, y2,
+                            result = _load_mask_contours(mask_h5_path, video_frame_idx)
+                            if result is not None:
+                                contours, (mask_h_dim, mask_w_dim) = result
+                                # Scale: mask space → frame space → cell space
+                                sx = (fw / mask_w_dim) * (rw / fw)
+                                sy = (fh / mask_h_dim) * (rh / fh)
+                                for cnt in contours:
+                                    scaled = cnt.copy().astype(np.float64)
+                                    scaled[:, :, 0] *= sx
+                                    scaled[:, :, 1] *= sy
+                                    scaled = np.clip(
+                                        scaled.astype(np.int32),
+                                        0, [rw - 1, rh - 1],
+                                    )
+                                    _draw_dashed_contour(
+                                        cell_img, scaled,
                                         color=(0, 255, 0),
                                         thickness=1,
-                                        dash_len=5,
-                                        gap_len=3,
                                     )
                     else:
                         cell_img = black_cell.copy()

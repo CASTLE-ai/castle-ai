@@ -9,7 +9,10 @@ to eliminate code duplication (C-07).
 import os
 import cv2
 import numpy as np
-from typing import List, Dict
+from typing import TYPE_CHECKING, List, Dict
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from castle.utils.h5_io import H5IO
 from castle.utils.plot import generate_mix_image, generate_mask_image

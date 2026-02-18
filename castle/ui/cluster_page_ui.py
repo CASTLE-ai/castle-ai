@@ -14,8 +14,6 @@ import json
 
 import gradio as gr
 
-logger = logging.getLogger(__name__)
-
 from castle.core.cluster import auto_generate_cluster_name
 
 # Import from split modules
@@ -37,6 +35,7 @@ from castle.ui.cluster_handlers import (
     check_session_exists,
 )
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------
 # Templates & Presets (UI Config)

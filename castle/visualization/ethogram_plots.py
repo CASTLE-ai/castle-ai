@@ -53,7 +53,7 @@ def plot_ethogram_raster(
     colors = _get_cluster_colors(ethogram.cluster_names, n)
     cmap = ListedColormap(colors)
 
-    mapped = np.array([id_to_idx.get(int(l), 0) for l in labels])
+    mapped = np.array([id_to_idx.get(int(lbl), 0) for lbl in labels])
 
     fig, ax = plt.subplots(figsize=figsize)
     time_s = np.arange(len(labels)) / ethogram.fps

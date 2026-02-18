@@ -88,7 +88,7 @@ def save_frame_to_knowledge(storage_path, project_name, source_video, frame_inde
         
         # Check if mask file exists
         if not os.path.exists(mask_list_path):
-            return False, f"Mask file not found. Please run tracking first."
+            return False, "Mask file not found. Please run tracking first."
         
         # Load frame and mask
         frame = source_video[frame_index]

@@ -85,8 +85,8 @@ def rotate_based_on_deg(frame, deg, flags=cv2.INTER_LINEAR):
 def crop(frame, crop_h, crop_w):
     h, w = frame.shape[:2]
     u, d = int(h // 2 - crop_h // 2), int(h // 2 + crop_h // 2)
-    l, r = int(w // 2 - crop_w // 2), int(w // 2 + crop_w // 2)
-    return frame[u:d, l:r]
+    left, r = int(w // 2 - crop_w // 2), int(w // 2 + crop_w // 2)
+    return frame[u:d, left:r]
 
 
 

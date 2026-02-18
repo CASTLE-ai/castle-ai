@@ -12,11 +12,11 @@ from castle.core.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
-from ..utils.h5_io import H5IO
-from ..utils.plot import generate_mix_image
-from ..utils.video_io import ReadArray, WriteArray
-from ..utils.tracking_manager import ROITracker, read_roi_labels
-from ..utils.analysis_utils import compute_roi_info, save_kinematic_csv
+from ..utils.h5_io import H5IO  # noqa: E402
+from ..utils.plot import generate_mix_image  # noqa: E402
+from ..utils.video_io import ReadArray, WriteArray  # noqa: E402
+from ..utils.tracking_manager import ROITracker, read_roi_labels  # noqa: E402
+from ..utils.analysis_utils import compute_roi_info, save_kinematic_csv  # noqa: E402
 
 
 def update_video_count(storage_path_val, project_name_val):
@@ -331,7 +331,7 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
     progress(1.0, desc="Batch tracking completed")
     
     result_msg = f"\n🎉 Batch tracking completed! Successfully processed {success_count}/{total_videos_to_process} videos"
-    result_msg += f"\n📊 CSV analysis files and 🎬 mix videos generated for successful tracks"
+    result_msg += "\n📊 CSV analysis files and 🎬 mix videos generated for successful tracks"
     if failed_videos:
         result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"
     
@@ -438,19 +438,6 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
                 )
     
     # Event bindings
-    # 移除原有的 project_name.change 事件，這些將由 batch_tracking_tab.select 處理
-    # project_name.change(
-    #     fn=update_video_count,
-    #     inputs=[storage_path, project_name],
-    #     outputs=ui["video_count_display"]
-    # )
-    
-    # project_name.change(
-    #     fn=refresh_gallery,
-    #     inputs=[storage_path, project_name],
-    #     outputs=[states["label_list_state"], ui["gallery"]]
-    # )
-    
     # Gallery selection event
     ui["gallery"].select(
         fn=get_select_index,

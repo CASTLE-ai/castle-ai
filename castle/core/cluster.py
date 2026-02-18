@@ -132,7 +132,8 @@ class LatentAggregator:
         if 'latent' in project_config:
             for filename, video_source_name in project_config['latent'].items():
                 # Check 1: Must match ROI ID
-                if roi_key not in filename: continue
+                if roi_key not in filename:
+                    continue
                 
                 # Check 2: Must match Model Name OR exist in model-specific directory
                 # Rotation latent filenames don't contain model_name, but are stored

@@ -7,9 +7,9 @@ warnings.warn(
     stacklevel=2
 )
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-from castle.core.config import PALETTE_HEX
+from castle.core.config import PALETTE_HEX  # noqa: E402
 
 _palette = PALETTE_HEX * 5
 
@@ -88,7 +88,7 @@ class Latent:
             
         
     def change_name(self, cid, name):
-        assert not name in self.lookformeta, 'This name already be used.'
+        assert name not in self.lookformeta, 'This name already be used.'
         self.meta[cid]['name'] = name
         return True
         

@@ -19,7 +19,7 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
 
-    rois_results_path = os.path.join(track_dir_path, f'mask_list.h5')
+    rois_results_path = os.path.join(track_dir_path, 'mask_list.h5')
     if not os.path.exists(rois_results_path):
         gr.Warning(f"Mask file not found: {rois_results_path}")
         return None, None, None, None, None
@@ -36,10 +36,13 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
 
 
 def generate_mask_video(storage_path, project_name, source_video):
+    if source_video is None:
+        gr.Warning("Please select a video first.")
+        return None
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
-    rois_results_path = os.path.join(track_dir_path, f'mask_list.h5')
+    rois_results_path = os.path.join(track_dir_path, 'mask_list.h5')
     video_name_wo_extension = video_name.split('.')[0]
     output_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-rois.mp4')
     if not os.path.exists(rois_results_path):
@@ -59,10 +62,13 @@ def generate_mask_video(storage_path, project_name, source_video):
 
 
 def generate_mix_video(storage_path, project_name, source_video):
+    if source_video is None:
+        gr.Warning("Please select a video first.")
+        return None
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     track_dir_path = os.path.join(project_path, 'track', video_name)
-    rois_results_path = os.path.join(track_dir_path, f'mask_list.h5')
+    rois_results_path = os.path.join(track_dir_path, 'mask_list.h5')
     video_name_wo_extension = video_name.split('.')[0]
     output_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-mix.mp4')
     if not os.path.exists(rois_results_path):

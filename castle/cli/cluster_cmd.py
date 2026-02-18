@@ -53,7 +53,7 @@ def run(
 ):
     """Run full clustering pipeline: UMAP + DBSCAN + auto-label + submit."""
     storage = get_storage(storage)
-    console.print(f"[bold]Initializing clustering session...[/bold]")
+    console.print("[bold]Initializing clustering session...[/bold]")
 
     def notify(msg, level="info"):
         if level == "error":
@@ -304,7 +304,7 @@ def auto_cmd(
         console.print(f"[red]✗[/red] {result.get('error', 'unknown')}")
         raise typer.Exit(1)
     
-    console.print(f"\n[green]✓[/green] Hierarchical clustering complete!")
+    console.print("\n[green]✓[/green] Hierarchical clustering complete!")
     console.print(f"  Leaf clusters: {result['total_leaves']}")
     console.print(f"  Split operations: {result['total_splits']}")
     console.print(f"  Max depth reached: {result['max_depth_reached']}")

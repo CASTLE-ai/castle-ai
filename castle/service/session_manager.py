@@ -63,7 +63,8 @@ class SessionManager:
         """Get the currently active session ID."""
         active_file = os.path.join(self.sessions_path, '_active.txt')
         if os.path.exists(active_file):
-            return open(active_file).read().strip()
+            with open(active_file) as f:
+                return f.read().strip()
         return None
     
     def set_active_session(self, session_id: str):

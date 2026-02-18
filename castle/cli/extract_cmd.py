@@ -41,7 +41,7 @@ def extract(
 
     # A-06: Parse advanced extraction options
     parsed_scales = [int(s.strip()) for s in scales.split(',') if s.strip()] if scales else None
-    parsed_layers = [int(l.strip()) for l in layers.split(',') if l.strip()] if layers else None
+    parsed_layers = [int(lay.strip()) for lay in layers.split(',') if lay.strip()] if layers else None
 
     extra_info = ""
     if pooling == 'multiscale':

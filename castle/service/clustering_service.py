@@ -11,8 +11,13 @@ No gradio imports.
 import os
 import json
 import logging
+from typing import List, Optional, Callable, Any
+
 import numpy as np
 import pandas as pd
+
+from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
+from castle.utils.latent_explorer import LocalLatent
 
 
 def _tree_to_dict(node) -> dict:
@@ -32,10 +37,6 @@ def _tree_to_dict(node) -> dict:
     if node.children:
         d['children'] = [_tree_to_dict(c) for c in node.children]
     return d
-from typing import List, Optional, Callable, Any
-
-from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
-from castle.utils.latent_explorer import LocalLatent
 
 logger = logging.getLogger(__name__)
 

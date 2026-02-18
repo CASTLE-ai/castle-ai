@@ -192,7 +192,7 @@ def extract_run(
         from castle.service.extraction_service import extract_latent
 
         scales = [int(s) for s in pooling_scales.split(",") if s.strip()]
-        layers = [int(l) for l in feature_layers.split(",") if l.strip()] or None
+        layers = [int(lay) for lay in feature_layers.split(",") if lay.strip()] or None
         pooling_method = "multiscale" if len(scales) > 1 else "weighted_average"
 
         paths = extract_latent(

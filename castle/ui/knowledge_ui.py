@@ -32,7 +32,6 @@ def read_label_to_gallery(
     ]
     return label_list, gallery_list
 
-import os
 
 def delete_file_if_exists(file_path):
     """如果檔案存在則刪除"""
@@ -44,8 +43,8 @@ def delete_file_if_exists(file_path):
 
 
 def delete_selected(storage_path, project_name, label_list, index):
-    # print(label_list[index], index)
-    if index >= len(label_list): return []
+    if index >= len(label_list):
+        return []
     target_file = label_list[index]["index"] # this index is display name, not index
     project_path = Path(storage_path) / project_name
     label_dir = os.path.join(project_path, "label")

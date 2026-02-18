@@ -224,8 +224,11 @@ def load_annotator_data(
                             video_bins[video_name] = (
                                 video_bins.get(video_name, 0) + n_bins_v
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not read latent file %s for bin count: %s",
+                                latent_fname, exc
+                            )
                         break
 
             videos_meta.clear()

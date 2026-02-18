@@ -7,17 +7,16 @@ Delegates all logic to castle.core.extractor.
 import logging
 import os
 import gradio as gr
-from tqdm import tqdm # 新增: 匯入 tqdm
-
-logger = logging.getLogger(__name__)
+from tqdm import tqdm  # 新增: 匯入 tqdm
 
 from castle.core.data import Preprocess
 from castle.core.extractor import extract_roi_latent_from_video, extract_roi_crop_video, extract_roi_rotation_latent_from_video
-
 from castle.utils.video_manager import get_project_config
 from castle.utils.video_io import VideoReader
 from castle.utils.h5_io import H5IO
 from castle.utils.plot import generate_mix_image
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------
 # Helpers

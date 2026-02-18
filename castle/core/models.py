@@ -198,9 +198,12 @@ class DINOv2Encoder(VisualEncoder):
         self.model_name = 'dinov2_vitb14_reg' if 'reg' in model_type else model_type
         self.batch_size = 16 # Default
         
-        if 'vitb14' in self.model_name: self.n_feature = 768
-        elif 'vitl14' in self.model_name: self.n_feature = 1024
-        elif 'vits14' in self.model_name: self.n_feature = 384
+        if 'vitb14' in self.model_name:
+            self.n_feature = 768
+        elif 'vitl14' in self.model_name:
+            self.n_feature = 1024
+        elif 'vits14' in self.model_name:
+            self.n_feature = 384
         
         self.resolution = 518
         self.patch_len = self.resolution // 14 # 37
@@ -253,10 +256,11 @@ class DINOv2Encoder(VisualEncoder):
              scales: list of ints for multiscale, e.g. [1, 2, 4].
              layers: list of layer indices. None = last layer only.
          """
-         if self.model is None: self.load_model()
-         
+         if self.model is None:
+             self.load_model()
+
          x = self.preprocess_batch(frame_batch, mask_batch, roi_id)
-         
+
          if not isinstance(mask_batch, torch.Tensor):
              mask_batch = torch.from_numpy(np.stack(mask_batch, axis=0))
          masks_t = (mask_batch.to(self.device) == roi_id).to(dtype=torch.float32)
@@ -294,8 +298,10 @@ class DINOv3Encoder(VisualEncoder):
         self.filename = DINOV3_CONSTANTS['MODEL_TO_CKPT_FILENAME'].get(model_type, "")
         self.n_layers = DINOV3_CONSTANTS['MODEL_TO_NUM_LAYERS'].get(model_type, 12)
         
-        if 'vitl' in model_type: self.n_feature = 1024
-        else: self.n_feature = 768 # vitb usually 768
+        if 'vitl' in model_type:
+            self.n_feature = 1024
+        else:
+            self.n_feature = 768  # vitb usually 768
         
         # DINOv3 constants
         self.patch_size = DINOV3_CONSTANTS['PATCH_SIZE']
@@ -332,8 +338,10 @@ class DINOv3Encoder(VisualEncoder):
         
         state_dict = checkpoint
         if isinstance(checkpoint, dict):
-            if 'state_dict' in checkpoint: state_dict = checkpoint['state_dict']
-            elif 'model' in checkpoint: state_dict = checkpoint['model']
+            if 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
 
         self.model.load_state_dict(state_dict, strict=False)
         self.model.to(self.device).eval()
@@ -384,8 +392,10 @@ class DINOv3Encoder(VisualEncoder):
             processed = []
             for frame in frame_list:
                 if isinstance(frame, np.ndarray):
-                     if frame.dtype != np.uint8 and frame.max() <= 1.0: frame = (frame * 255).astype(np.uint8)
-                     elif frame.dtype != np.uint8: frame = frame.astype(np.uint8)
+                     if frame.dtype != np.uint8 and frame.max() <= 1.0:
+                         frame = (frame * 255).astype(np.uint8)
+                     elif frame.dtype != np.uint8:
+                         frame = frame.astype(np.uint8)
                      img_pil = Image.fromarray(frame)
                 else:
                      img_pil = frame
@@ -436,10 +446,11 @@ class DINOv3Encoder(VisualEncoder):
             scales: list of ints for multiscale, e.g. [1, 2, 4].
             layers: list of layer indices. None = last layer only.
         """
-        if self.model is None: self.load_model()
-        
+        if self.model is None:
+            self.load_model()
+
         x = self.preprocess_batch(frame_batch, mask_batch, roi_id)
-        
+
         if not isinstance(mask_batch, torch.Tensor):
             mask_batch = torch.from_numpy(np.stack(mask_batch, axis=0))
         masks_t = (mask_batch.to(self.device) == roi_id).to(dtype=torch.float32)

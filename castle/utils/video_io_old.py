@@ -5,6 +5,6 @@ warnings.warn(
     DeprecationWarning,
     stacklevel=2
 )
-from castle.utils.video_io import VideoReader as ReadArray, VideoWriter as WriteArray  # noqa: F401
+from castle.utils.video_io import VideoReader as ReadArray, VideoWriter as WriteArray  # noqa: E402, F401
 
 __all__ = ["ReadArray", "WriteArray"]

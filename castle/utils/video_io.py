@@ -164,8 +164,9 @@ class VideoReader:
         self.path = Path(video_path)
         if not self.path.exists():
             raise FileNotFoundError(f"影片檔案不存在: {video_path}")
-        
-        
+
+        self._closed = False  # Set early so __del__ / close() is always safe
+
         try:
             # 開啟影片容器
             self.container = av.open(str(self.path))
@@ -189,7 +190,7 @@ class VideoReader:
             self._frame_cache = {}
             self._cache_size = cache_size
             self._cache_order = []  # Track insertion order for LRU eviction
-            self._closed = False
+            # Note: self._closed is set before the try block (line above av.open)
             
             logger.debug(f"影片讀取器初始化完成: {self.path}")
             logger.debug(f"影片資訊: {self.width}x{self.height}, {self.fps:.2f}fps, {self.frame_count} frames")
@@ -280,7 +281,7 @@ class VideoReader:
         
         # 特殊處理影格 0，確保容器位於起始位置
         if frame_index == 0:
-            logger.debug(f"正在嘗試直接讀取影格 0")
+            logger.debug("正在嘗試直接讀取影格 0")
             try:
                 # 重新 seek 到時間 0，確保從頭開始
                 self.container.seek(0, stream=self.video_stream, backward=True, any_frame=False)

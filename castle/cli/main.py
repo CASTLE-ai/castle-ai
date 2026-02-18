@@ -13,10 +13,10 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-# Register subcommands
-from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd, mcp_cmd
-from castle.cli.ethogram_cmd import app as ethogram_app
-from castle.cli.compare_cmd import app as compare_app
+# Register subcommands — must appear after app is created (CLI pattern)
+from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd, mcp_cmd  # noqa: E402
+from castle.cli.ethogram_cmd import app as ethogram_app  # noqa: E402
+from castle.cli.compare_cmd import app as compare_app  # noqa: E402
 
 app.add_typer(project_cmd.app, name="project", help="Project management")
 app.add_typer(cluster_cmd.app, name="cluster", help="Clustering operations")
@@ -44,7 +44,8 @@ def gui(
     project: str = typer.Option(None, "--project", "-p", help="Project name to open"),
 ):
     """Launch the Desktop GUI."""
-    import subprocess, sys
+    import subprocess
+    import sys
     cmd = [sys.executable, "-m", "castle.desktop", "--storage", storage]
     if project:
         cmd += ["--project", project]

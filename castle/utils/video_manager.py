@@ -4,6 +4,8 @@ import os
 import shutil
 import logging
 
+from castle.core.project import get_project_config, save_project_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,10 +24,6 @@ def is_video_file(file_path):
     """
     _, ext = os.path.splitext(file_path)
     return ext.lower() in VIDEO_EXTENSIONS
-
-
-
-from castle.core.project import get_project_config, save_project_config
 
 
 

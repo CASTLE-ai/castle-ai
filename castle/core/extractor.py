@@ -13,6 +13,7 @@ from castle.core.data import VideoDataset, Preprocess
 from castle.core.config import SUPPORTED_MODELS, ERROR_MESSAGES
 from castle.core.environment import get_num_workers
 from castle.core.logging_config import setup_logger
+from castle.core.models import get_visual_encoder
 from castle.core.project import get_project_config, save_project_config
 from castle.utils.video_io import VideoWriter, VideoReader
 from castle.utils.h5_io import H5IO
@@ -20,8 +21,6 @@ from castle.utils.video_align import center_roi, get_roi_closest_point_safe, bla
 
 # Setup logger
 logger = setup_logger(__name__)
-
-from castle.core.models import get_visual_encoder
 
 
 # --- Protocol Definition ---
@@ -118,14 +117,16 @@ def extract_roi_latent_from_video(
     
     # Tags logic
     tags = []
-    if preprocess_config.center_roi_switch: tags.append("ctr")
-    if preprocess_config.remove_background_switch: tags.append("rmbg")
+    if preprocess_config.center_roi_switch:
+        tags.append("ctr")
+    if preprocess_config.remove_background_switch:
+        tags.append("rmbg")
     # A-06: Add pooling/layer tags to filename
     if pooling_method == 'multiscale' and pooling_scales:
         scales_str = "x".join(str(s) for s in sorted(pooling_scales))
         tags.append(f"spp{scales_str}")
     if feature_layers:
-        layers_str = "x".join(str(l) for l in sorted(feature_layers))
+        layers_str = "x".join(str(layer) for layer in sorted(feature_layers))
         tags.append(f"L{layers_str}")
     
     suffix = "_".join([model_name] + tags)
@@ -297,7 +298,8 @@ def extract_roi_crop_video(
                     h, w = frame.shape[:2]
                     writer.write_frame(blank_page(h, w))
     finally:
-        if writer: writer.close()
+        if writer:
+            writer.close()
         # H5IO usually doesn't need explicit close but good practice if available
     
     return out_video_path

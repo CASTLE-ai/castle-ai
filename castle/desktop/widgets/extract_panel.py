@@ -245,10 +245,14 @@ class ExtractPanel(QWidget):
         # A-06: Collect advanced extraction options
         pooling_method = self._pooling_combo.currentText()
         pooling_scales = []
-        if self._scale_1_cb.isChecked(): pooling_scales.append(1)
-        if self._scale_2_cb.isChecked(): pooling_scales.append(2)
-        if self._scale_4_cb.isChecked(): pooling_scales.append(4)
-        if self._scale_8_cb.isChecked(): pooling_scales.append(8)
+        if self._scale_1_cb.isChecked():
+            pooling_scales.append(1)
+        if self._scale_2_cb.isChecked():
+            pooling_scales.append(2)
+        if self._scale_4_cb.isChecked():
+            pooling_scales.append(4)
+        if self._scale_8_cb.isChecked():
+            pooling_scales.append(8)
         feature_layers = None
         layers_text = self._layers_edit.text().strip()
         if layers_text:

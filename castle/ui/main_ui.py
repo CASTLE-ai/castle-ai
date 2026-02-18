@@ -8,6 +8,8 @@ from .edit_ui import create_edit_ui
 from .extract_ui import create_extract_ui
 from .cluster_page_ui import create_cluster_page_ui
 from .annotator_ui import create_annotator_ui
+from .analysis_ui import create_analysis_ui
+from .export_ui import create_export_ui
 
 
 def toggle_tab_visibility(project_name, object_count):
@@ -75,11 +77,21 @@ def create_ui(OS_SYS, root=''):
                         storage_path, project_name, annotator_tab,
                     )
 
+                # Sub-tab: Analysis (ethogram + quality metrics)
+                with gr.Tab(label='Analysis') as analysis_tab:
+                    _analysis_ui = create_analysis_ui(
+                        storage_path, project_name, analysis_tab,
+                    )
+
             cluster_ui_object_count = gr.State(len(cluster_ui))
             cluster_page_tab.select(
                 fn=toggle_tab_visibility,
                 inputs=[project_ui['project_name'], cluster_ui_object_count],
                 outputs=[v for k, v in cluster_ui.items()]
             )
+
+        # Export tab (Stage 5)
+        with gr.Tab(label='5. Export'):
+            create_export_ui(storage_path, project_name)
 
     return app

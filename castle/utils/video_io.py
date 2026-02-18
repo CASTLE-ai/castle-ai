@@ -551,7 +551,7 @@ class VideoReader:
     
     def close(self) -> None:
         """關閉影片讀取器並釋放資源"""
-        if not self._closed:
+        if not getattr(self, '_closed', True):
             try:
                 if hasattr(self, 'container') and self.container:
                     self.container.close()
@@ -704,7 +704,7 @@ class VideoWriter:
     
     def close(self) -> None:
         """關閉影片寫入器並完成編碼"""
-        if self._closed:
+        if getattr(self, '_closed', True):
             return
         
         try:

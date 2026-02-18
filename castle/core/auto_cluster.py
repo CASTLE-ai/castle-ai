@@ -162,8 +162,8 @@ def score_clustering(labels: np.ndarray, embedding: np.ndarray = None,
             from sklearn.metrics import calinski_harabasz_score, davies_bouldin_score
             ch_score = calinski_harabasz_score(embedding[valid_mask], labels[valid_mask])
             db_score = davies_bouldin_score(embedding[valid_mask], labels[valid_mask])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("sklearn cluster metrics unavailable: %s", exc)
     
     ch_normalized = min(ch_score / 1000.0, 1.0) if ch_score > 0 else 0.0
     

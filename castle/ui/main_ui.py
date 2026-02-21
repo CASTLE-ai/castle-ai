@@ -10,6 +10,7 @@ from .cluster_page_ui import create_cluster_page_ui
 from .annotator_ui import create_annotator_ui
 from .analysis_ui import create_analysis_ui
 from .export_ui import create_export_ui
+from .wizard_ui import WizardUI
 
 
 def toggle_tab_visibility(project_name, object_count):
@@ -28,7 +29,20 @@ def toggle_tab_visibility(project_name, object_count):
 
 def create_ui(OS_SYS, root=''):
     """Create the main Gradio UI with multiple tabs."""
-    with gr.Blocks() as app:      
+    with gr.Blocks() as app:
+
+        # ------------------------------------------------------------------
+        # Quick Start Wizard — Tab 0 (shown prominently to new users)
+        # ------------------------------------------------------------------
+        # We create shared State placeholders here so the wizard can read and
+        # write the same storage/project states used by the rest of the UI.
+        _storage_placeholder = gr.State("projects/")
+        _project_placeholder = gr.State(None)
+
+        with gr.Tab(label="🧭 Quick Start"):
+            wizard = WizardUI(_storage_placeholder, _project_placeholder)
+            wizard.build()
+
         # Project configuration tab
         with gr.Tab(label='0. Project'):
             project_ui = create_project_ui(OS_SYS, root)

@@ -1,23 +1,276 @@
 """
 CASTLE Desktop - Tracking Panel (Tab 2)
 
-ROI tracking using the service layer.
+ROI tracking and stabilized camera preprocessing using the service layer.
 """
 
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QGroupBox, QListWidget, QProgressBar,
-    QCheckBox, QTextEdit, QMessageBox
+    QCheckBox, QTextEdit, QMessageBox, QTabWidget,
+    QSpinBox, QDoubleSpinBox, QFormLayout,
 )
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from castle.service.project_service import get_project_info as svc_get_project_info
 from castle.service.tracking_service import get_tracking_status as svc_tracking_status
 from castle.desktop.services.worker_threads import TrackingWorker
 
 
+class _PreprocessWorker(QThread):
+    """Background worker for stabilized camera preprocessing."""
+
+    progress = pyqtSignal(int, str)    # (percent 0-100, message)
+    finished = pyqtSignal(dict)        # result dict
+    error = pyqtSignal(str)            # error message
+
+    def __init__(
+        self,
+        storage_path: str,
+        project_name: str,
+        video_name: str,
+        body_roi_id: int,
+        head_roi_id: int,
+        fc: float = 0.25,
+        order: int = 2,
+        margin: int = 75,
+        min_crop: int = 300,
+        output_size: int = 518,
+        preview_duration: float = 10.0,
+    ) -> None:
+        super().__init__()
+        self._storage = storage_path
+        self._project = project_name
+        self._video = video_name
+        self._body_roi = body_roi_id
+        self._head_roi = head_roi_id
+        self._fc = fc
+        self._order = order
+        self._margin = margin
+        self._min_crop = min_crop
+        self._output_size = output_size
+        self._preview_duration = preview_duration
+
+    def run(self) -> None:  # noqa: D102
+        try:
+            from castle.service.preprocessing_service import preprocess_stabilized_camera
+
+            def _cb(fraction: float, description: str = "") -> None:
+                pct = max(0, min(100, int(fraction * 100)))
+                self.progress.emit(pct, description or "Processing…")
+
+            result = preprocess_stabilized_camera(
+                storage_path=self._storage,
+                project_name=self._project,
+                video_name=self._video,
+                body_roi_id=self._body_roi,
+                head_roi_id=self._head_roi,
+                fc=self._fc,
+                order=self._order,
+                margin=self._margin,
+                min_crop=self._min_crop,
+                output_size=self._output_size,
+                preview_duration=self._preview_duration,
+                progress_callback=_cb,
+            )
+            self.finished.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class _PreprocessPanel(QWidget):
+    """Stabilized camera preprocessing sub-panel inside TrackingPanel."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._storage_path: str | None = None
+        self._project_name: str | None = None
+        self._workers: list[QThread] = []
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        # ---- ROI / Video selection ----
+        roi_group = QGroupBox("Input")
+        roi_form = QFormLayout(roi_group)
+
+        self._video_combo = QComboBox()
+        roi_form.addRow("Video:", self._video_combo)
+
+        self._body_roi_spin = QSpinBox()
+        self._body_roi_spin.setMinimum(1)
+        self._body_roi_spin.setValue(1)
+        roi_form.addRow("Body ROI ID:", self._body_roi_spin)
+
+        self._head_roi_spin = QSpinBox()
+        self._head_roi_spin.setMinimum(1)
+        self._head_roi_spin.setValue(2)
+        roi_form.addRow("Head ROI ID:", self._head_roi_spin)
+
+        layout.addWidget(roi_group)
+
+        # ---- Advanced parameters ----
+        adv_group = QGroupBox("Filter / Crop Parameters")
+        adv_form = QFormLayout(adv_group)
+
+        self._fc_spin = QDoubleSpinBox()
+        self._fc_spin.setDecimals(3)
+        self._fc_spin.setMinimum(0.001)
+        self._fc_spin.setMaximum(50.0)
+        self._fc_spin.setValue(0.25)
+        self._fc_spin.setSuffix(" Hz")
+        adv_form.addRow("Low-pass cutoff (fc):", self._fc_spin)
+
+        self._order_spin = QSpinBox()
+        self._order_spin.setMinimum(1)
+        self._order_spin.setMaximum(10)
+        self._order_spin.setValue(2)
+        adv_form.addRow("Filter order:", self._order_spin)
+
+        self._margin_spin = QSpinBox()
+        self._margin_spin.setMinimum(0)
+        self._margin_spin.setMaximum(2000)
+        self._margin_spin.setValue(75)
+        self._margin_spin.setSuffix(" px")
+        adv_form.addRow("Crop margin:", self._margin_spin)
+
+        self._min_crop_spin = QSpinBox()
+        self._min_crop_spin.setMinimum(64)
+        self._min_crop_spin.setMaximum(4096)
+        self._min_crop_spin.setValue(300)
+        self._min_crop_spin.setSuffix(" px")
+        adv_form.addRow("Min crop size:", self._min_crop_spin)
+
+        self._output_size_spin = QSpinBox()
+        self._output_size_spin.setMinimum(64)
+        self._output_size_spin.setMaximum(4096)
+        self._output_size_spin.setValue(518)
+        self._output_size_spin.setSuffix(" px")
+        adv_form.addRow("Output frame size:", self._output_size_spin)
+
+        self._preview_dur_spin = QDoubleSpinBox()
+        self._preview_dur_spin.setMinimum(1.0)
+        self._preview_dur_spin.setMaximum(3600.0)
+        self._preview_dur_spin.setValue(10.0)
+        self._preview_dur_spin.setSuffix(" s")
+        adv_form.addRow("Preview duration:", self._preview_dur_spin)
+
+        layout.addWidget(adv_group)
+
+        # ---- Run button ----
+        btn_row = QHBoxLayout()
+        self._run_btn = QPushButton("▶ Run Stabilized Camera")
+        self._run_btn.setObjectName("primaryButton")
+        self._run_btn.clicked.connect(self._run)
+        btn_row.addWidget(self._run_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        # ---- Progress & log ----
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setVisible(False)
+        layout.addWidget(self._progress_bar)
+
+        self._log_text = QTextEdit()
+        self._log_text.setReadOnly(True)
+        self._log_text.setPlaceholderText("Preprocessing log…")
+        layout.addWidget(self._log_text, stretch=1)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def set_project(self, storage_path: str, project_name: str) -> None:
+        """Update project context and refresh the video list."""
+        self._storage_path = storage_path
+        self._project_name = project_name
+        self._refresh_videos()
+
+    def _refresh_videos(self) -> None:
+        self._video_combo.clear()
+        if not self._storage_path or not self._project_name:
+            return
+        try:
+            info = svc_get_project_info(self._storage_path, self._project_name)
+            for vname in info.get("videos", []):
+                self._video_combo.addItem(vname)
+        except Exception as exc:
+            self._log_text.append(f"Error loading videos: {exc}")
+
+    # ------------------------------------------------------------------
+    # Slots
+    # ------------------------------------------------------------------
+
+    def _run(self) -> None:
+        if not self._storage_path or not self._project_name:
+            QMessageBox.warning(self, "Error", "No project loaded.")
+            return
+        video_name = self._video_combo.currentText()
+        if not video_name:
+            QMessageBox.warning(self, "Error", "No video selected.")
+            return
+        body_roi = self._body_roi_spin.value()
+        head_roi = self._head_roi_spin.value()
+        if body_roi == head_roi:
+            QMessageBox.warning(self, "Error", "body_roi_id and head_roi_id must be different.")
+            return
+
+        self._progress_bar.setVisible(True)
+        self._progress_bar.setValue(0)
+        self._run_btn.setEnabled(False)
+        self._log_text.append(f"Starting preprocessing for: {video_name}")
+
+        worker = _PreprocessWorker(
+            storage_path=self._storage_path,
+            project_name=self._project_name,
+            video_name=video_name,
+            body_roi_id=body_roi,
+            head_roi_id=head_roi,
+            fc=self._fc_spin.value(),
+            order=self._order_spin.value(),
+            margin=self._margin_spin.value(),
+            min_crop=self._min_crop_spin.value(),
+            output_size=self._output_size_spin.value(),
+            preview_duration=self._preview_dur_spin.value(),
+        )
+        worker.progress.connect(self._on_progress)
+        worker.finished.connect(self._on_done)
+        worker.error.connect(self._on_error)
+        self._workers.append(worker)
+        worker.start()
+
+    def _on_progress(self, pct: int, msg: str) -> None:
+        self._progress_bar.setValue(pct)
+        if msg:
+            self._log_text.append(f"  [{pct}%] {msg}")
+
+    def _on_done(self, result: dict) -> None:
+        self._progress_bar.setValue(100)
+        self._progress_bar.setVisible(False)
+        self._run_btn.setEnabled(True)
+        diag = result.get("diagnostics", {})
+        self._log_text.append("✅ Preprocessing complete!")
+        self._log_text.append(f"  Video   : {result.get('preprocessed_video_path', '')}")
+        self._log_text.append(f"  Preview : {result.get('preview_path', '')}")
+        self._log_text.append(f"  Frames  : {result.get('n_frames', 0)}")
+        self._log_text.append(
+            f"  HP residual RMS : {diag.get('hp_residual_rms', float('nan')):.2f} px  |  "
+            f"% at min_crop : {diag.get('pct_at_min_crop', float('nan')):.1f}%  |  "
+            f"speed-crop r : {diag.get('speed_crop_correlation', float('nan')):.3f}"
+        )
+
+    def _on_error(self, err: str) -> None:
+        self._progress_bar.setVisible(False)
+        self._run_btn.setEnabled(True)
+        self._log_text.append(f"❌ Error: {err}")
+        QMessageBox.critical(self, "Preprocessing Error", err)
+
+
 class TrackingPanel(QWidget):
-    """Panel for ROI tracking."""
+    """Panel for ROI tracking and preprocessing (Tab 2)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,7 +280,15 @@ class TrackingPanel(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._sub_tabs = QTabWidget()
+        self._sub_tabs.setDocumentMode(True)
+
+        # ---- Tracking sub-tab ----
+        tracking_widget = QWidget()
+        layout = QVBoxLayout(tracking_widget)
         layout.setSpacing(10)
 
         # --- Config ---
@@ -86,12 +347,21 @@ class TrackingPanel(QWidget):
 
         layout.addWidget(progress_group)
 
+        self._sub_tabs.addTab(tracking_widget, "ROI Tracking")
+
+        # ---- Preprocessing sub-tab ----
+        self._preprocess_panel = _PreprocessPanel(self)
+        self._sub_tabs.addTab(self._preprocess_panel, "Preprocessing")
+
+        outer_layout.addWidget(self._sub_tabs)
+
     # --- Public API ---
 
     def set_project(self, storage_path: str, project_name: str):
         self._storage_path = storage_path
         self._project_name = project_name
         self._refresh()
+        self._preprocess_panel.set_project(storage_path, project_name)
 
     def _refresh(self):
         self._video_list.clear()

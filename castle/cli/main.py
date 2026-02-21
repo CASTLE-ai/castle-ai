@@ -17,6 +17,7 @@ app = typer.Typer(
 from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd, mcp_cmd  # noqa: E402
 from castle.cli.ethogram_cmd import app as ethogram_app  # noqa: E402
 from castle.cli.compare_cmd import app as compare_app  # noqa: E402
+from castle.cli.preprocess_cmd import app as preprocess_app  # noqa: E402
 
 app.add_typer(project_cmd.app, name="project", help="Project management")
 app.add_typer(cluster_cmd.app, name="cluster", help="Clustering operations")
@@ -25,6 +26,7 @@ app.add_typer(ethogram_app, name="ethogram")
 app.add_typer(compare_app, name="compare")
 app.registered_commands += track_cmd.app.registered_commands
 app.registered_commands += extract_cmd.app.registered_commands
+app.registered_commands += preprocess_app.registered_commands
 
 
 # Top-level alias: `castle info` → shortcut for project info

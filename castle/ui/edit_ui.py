@@ -12,6 +12,7 @@ from .knowledge_ui import create_knowledge_ui
 from .track_ui import create_track_ui
 from .post_track_ui import create_post_track_ui
 from .batch_track_ui import create_batch_track_ui
+from .preprocess_ui import create_preprocess_ui
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def unlock_select_video_edit_btn():
     return gr.update(interactive=True)
 
 
-def handle_edit_click(storage_path, project_name, video_name, view_ui_count, label_ui_count, knowledge_ui_count, track_ui_count, post_track_ui_count):
+def handle_edit_click(storage_path, project_name, video_name, view_ui_count, label_ui_count, knowledge_ui_count, track_ui_count, post_track_ui_count, preprocess_ui_count):
     """
     Handles all actions when the 'Edit' button is clicked.
     Merges logic from load_video_for_editing, unlock_ui, and collapse_source_detail
@@ -37,7 +38,7 @@ def handle_edit_click(storage_path, project_name, video_name, view_ui_count, lab
 
     if not storage_path or not project_name or not video_name:
         gr.Warning("Please select a project and video first.")
-        n_total = 9 + 1 + view_ui_count + label_ui_count + knowledge_ui_count + track_ui_count + post_track_ui_count
+        n_total = 9 + 1 + view_ui_count + label_ui_count + knowledge_ui_count + track_ui_count + post_track_ui_count + preprocess_ui_count
         return tuple([None] * n_total)
     
     # 1. Logic from load_video_for_editing
@@ -67,13 +68,15 @@ def handle_edit_click(storage_path, project_name, video_name, view_ui_count, lab
     knowledge_ui_updates = [gr.update(visible=True) for _ in range(knowledge_ui_count)]
     track_ui_updates = [gr.update(visible=True) for _ in range(track_ui_count)]
     post_track_ui_updates = [gr.update(visible=True) for _ in range(post_track_ui_count)]
-    
+    preprocess_ui_updates = [gr.update(visible=True) for _ in range(preprocess_ui_count)]
+
     unlock_outputs = (
         view_ui_updates +
         label_ui_updates +
         knowledge_ui_updates +
         track_ui_updates +
-        post_track_ui_updates
+        post_track_ui_updates +
+        preprocess_ui_updates
     )
     
     return tuple(load_video_outputs + collapse_output + unlock_outputs)
@@ -153,7 +156,10 @@ def create_edit_ui(storage_path, project_name, edit_tab):
         
         with gr.Tab(label='Analysis'):
             post_track_ui = create_post_track_ui(storage_path, project_name, source_video)
-    
+
+        with gr.Tab(label='Preprocessing') as preprocess_sub_tab:
+            preprocess_ui = create_preprocess_ui(storage_path, project_name, preprocess_sub_tab)
+
     with gr.Tab(label='Batch Videos Tracking') as batch_tracking_tab:
         batch_tracking_ui, batch_tracking_states = create_batch_track_ui(storage_path, project_name, batch_tracking_tab)
 
@@ -162,6 +168,7 @@ def create_edit_ui(storage_path, project_name, edit_tab):
     knowledge_ui_object_count = gr.State(len(knowledge_ui))
     track_ui_object_count = gr.State(len(track_ui))
     post_track_ui_object_count = gr.State(len(post_track_ui))
+    preprocess_ui_object_count = gr.State(len(preprocess_ui))
     
     all_ui_to_show_on_select = [
         ui['guidance_accordion'],
@@ -200,9 +207,10 @@ def create_edit_ui(storage_path, project_name, edit_tab):
         label_ui_object_count,
         knowledge_ui_object_count,
         track_ui_object_count,
-        post_track_ui_object_count
+        post_track_ui_object_count,
+        preprocess_ui_object_count,
     ]
-    
+
     edit_button_outputs = [
         source_video,
         ui['select_video'],
@@ -214,7 +222,7 @@ def create_edit_ui(storage_path, project_name, edit_tab):
         label_ui['display_view'],
         label_ui['select_frame'],
         ui['source_accordion'],
-    ] + list(view_ui.values()) + list(label_ui.values()) + list(knowledge_ui.values()) + list(track_ui.values()) + list(post_track_ui.values())
+    ] + list(view_ui.values()) + list(label_ui.values()) + list(knowledge_ui.values()) + list(track_ui.values()) + list(post_track_ui.values()) + list(preprocess_ui.values())
 
     ui['select_video_edit_btn'].click(
         fn=handle_edit_click,

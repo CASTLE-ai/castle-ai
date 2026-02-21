@@ -707,3 +707,220 @@ removed = cleanup_deleted_videos("/data/projects/my_project")
     options:
       show_root_heading: true
       show_source: true
+
+---
+
+## Phase 3 Simplification Modules 🔷
+
+### ProjectData + VideoInfo
+
+`ProjectData` consolidates all project path computation in one place, eliminating scattered `os.path.join(storage_path, project_name, …)` calls throughout the codebase.
+
+::: castle.core.project_data
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - VideoInfo
+        - ProjectData
+        - ProjectData.from_path
+        - ProjectData.from_storage
+        - ProjectData.sources_dir
+        - ProjectData.track_dir
+        - ProjectData.latent_dir
+        - ProjectData.cluster_dir
+        - ProjectData.preprocessed_dir
+        - ProjectData.config_path
+        - ProjectData.video_track_dir
+        - ProjectData.mask_h5_path
+        - ProjectData.latent_model_dir
+        - ProjectData.cluster_session_dir
+        - ProjectData.list_videos
+        - ProjectData.load_config
+        - ProjectData.ensure_dirs
+
+Quick reference:
+
+```python
+from castle.core.project_data import ProjectData, VideoInfo
+
+# Load from existing project directory (must contain config.json)
+pd = ProjectData.from_path("/data/projects/my_project")
+
+# Legacy (storage_path, project_name) API is still supported
+pd = ProjectData.from_storage("/data/projects", "my_project")
+
+# Standard path helpers — no more manual os.path.join
+pd.sources_dir           # Path("/data/projects/my_project/sources")
+pd.mask_h5_path("v.mp4") # Path(".../track/v.mp4/mask_list.h5")
+pd.latent_model_dir("dinov2_vitb14")
+pd.cluster_session_dir("session_001")
+
+# List source videos with metadata
+videos: list[VideoInfo] = pd.list_videos()
+for v in videos:
+    print(v.name, v.fps, v.width, v.height, v.n_frames)
+
+# Ensure standard directory tree
+pd.ensure_dirs()
+
+# Read project config
+config: dict = pd.load_config()
+```
+
+---
+
+### ClusterData
+
+`ClusterData` consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, and `annotations.csv` into a single typed container.
+
+::: castle.core.cluster_data
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - ClusterData
+        - ClusterData.load
+        - ClusterData.from_arrays
+        - ClusterData.save
+        - ClusterData.get_cluster_frames
+        - ClusterData.n_clusters
+
+Quick reference:
+
+```python
+from castle.core.cluster_data import ClusterData
+import numpy as np
+
+# Load from project cluster directory
+cd = ClusterData.load("/data/projects/my_project/cluster")
+
+# Load with per-session annotations
+cd = ClusterData.load(
+    "/data/projects/my_project/cluster",
+    session_id="session_001",
+)
+
+# Query
+print(cd.n_clusters())                   # → int (excludes label -1)
+frames = cd.get_cluster_frames(2)        # → np.ndarray of frame indices
+print(cd.names[0], cd.colors[0])         # → "grooming", (255, 0, 0)
+
+# Construct from freshly computed arrays
+embeddings = np.random.randn(1000, 128)
+cluster_ids = np.random.randint(0, 5, 1000)
+cd2 = ClusterData.from_arrays(embeddings, cluster_ids)
+
+# Persist to disk
+cd2.save("/data/projects/my_project/cluster")
+cd2.save("/data/projects/my_project/cluster", session_id="session_002")
+```
+
+| Method | Description |
+|--------|-------------|
+| `ClusterData.load(cluster_dir, session_id=None)` | Load from project cluster directory |
+| `ClusterData.from_arrays(embeddings, cluster_ids, hierarchy=None)` | Create from raw arrays |
+| `.save(cluster_dir, session_id=None)` | Write `id.csv`, `cluster_data.npz`, `annotations.csv` |
+| `.get_cluster_frames(cluster_id)` | Frame indices for a given cluster |
+| `.n_clusters()` | Count of distinct non-negative cluster IDs |
+
+---
+
+### DeviceFactory
+
+`DeviceFactory` centralises device detection and provides ML algorithm factory methods that automatically choose GPU-accelerated or CPU implementations.
+
+::: castle.core.device_factory
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - DeviceFactory
+        - DeviceFactory.get_device
+        - DeviceFactory.set_device
+        - DeviceFactory.reset
+        - DeviceFactory.get_torch_device
+        - DeviceFactory.to_tensor
+        - DeviceFactory.get_umap
+        - DeviceFactory.get_dbscan
+        - DeviceFactory.get_hdbscan
+
+Quick reference:
+
+```python
+from castle.core.device_factory import DeviceFactory
+
+# Device detection — cached on first call (CUDA > MPS > CPU)
+device = DeviceFactory.get_device()     # → 'cuda' | 'mps' | 'cpu'
+t_device = DeviceFactory.get_torch_device()  # → torch.device(...)
+
+# Override (useful in tests or when user picks a device)
+DeviceFactory.set_device("cpu")
+DeviceFactory.reset()   # clear cache, re-detect on next call
+
+# Algorithm factories — GPU (cuml) on CUDA, sklearn/umap-learn elsewhere
+umap   = DeviceFactory.get_umap(n_neighbors=300, min_dist=0.0, n_components=2)
+dbscan = DeviceFactory.get_dbscan(eps=0.5, min_samples=5)
+hdbscan = DeviceFactory.get_hdbscan(min_cluster_size=10)
+
+# NumPy → Tensor on current device
+tensor = DeviceFactory.to_tensor(my_array)                 # float32
+tensor = DeviceFactory.to_tensor(my_array, dtype=torch.float16)
+```
+
+| Method | GPU (CUDA) | CPU / MPS |
+|--------|-----------|-----------|
+| `get_umap(**kw)` | `cuml.manifold.UMAP` | `umap.UMAP` |
+| `get_dbscan(**kw)` | `cuml.cluster.DBSCAN` | `sklearn.cluster.DBSCAN` |
+| `get_hdbscan(**kw)` | `cuml.cluster.HDBSCAN` | `sklearn.cluster.HDBSCAN` or `hdbscan` pkg |
+
+---
+
+### SimpleVideoReader
+
+`SimpleVideoReader` provides a clean, dependency-minimal PyAV-based video reader for the common case: open a file, read metadata, fetch frames.
+
+::: castle.utils.video_reader_simple
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - SimpleVideoReader
+        - SimpleVideoReader.get_frame
+        - SimpleVideoReader.iter_frames
+        - SimpleVideoReader.close
+
+Quick reference:
+
+```python
+from castle.utils.video_reader_simple import SimpleVideoReader
+
+with SimpleVideoReader("video.mp4") as r:
+    print(r.fps, r.width, r.height, len(r))  # metadata
+
+    # Random access
+    frame = r.get_frame(42)          # (H, W, 3) BGR uint8
+
+    # Sequential iteration (no per-frame seek — most efficient)
+    for idx, frame in r.iter_frames():
+        process(frame)
+
+    # Range + step
+    for idx, frame in r.iter_frames(start=100, end=500, step=5):
+        process(frame)
+```
+
+**Constructor raises:**
+
+* `FileNotFoundError` — if *path* does not exist
+* `RuntimeError` — if no video stream is found in the container
+
+**`get_frame(index)` raises:**
+
+* `IndexError` — if *index* is out of `[0, n_frames)`
+* `RuntimeError` — if the frame cannot be decoded
+
+**`iter_frames(start, end, step)` notes:**
+
+* `step=1` uses fully sequential decoding (no seek per frame)
+* `step>1` seeks to each frame individually via `get_frame()`

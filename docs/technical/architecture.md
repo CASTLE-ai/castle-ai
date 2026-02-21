@@ -55,6 +55,13 @@
 │                          cleanup between stages ⚡             │
 │  pipeline_parallel.py  — 3-stage threaded extractor ⚡         │
 │  cache.py              — Content-hash PipelineCache ⚡         │
+│  ── Phase 3 Simplification Modules 🔷 ──────────────────────── │
+│  project_data.py       — ProjectData + VideoInfo dataclasses   │
+│                          (unified path computation)            │
+│  cluster_data.py       — ClusterData dataclass (unified        │
+│                          cluster artefact container)           │
+│  device_factory.py     — DeviceFactory (centralized device     │
+│                          management, UMAP/DBSCAN factories)    │
 └──────────────────────────┬─────────────────────────────────────┘
                            │ uses
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -75,6 +82,7 @@
 │  roi_manager.py           — ROI utilities                      │
 │  download.py              — Checkpoint download (gdown)        │
 │  profiler.py              — GPU/CPU performance profiling      │
+│  video_reader_simple.py   — SimpleVideoReader (Phase 3 🔷)     │
 └──────────────────────────┬─────────────────────────────────────┘
                            │
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -148,6 +156,7 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module.
 | `analysis_ui.py` | 5. Analysis | Ethogram, Quality Metrics sub-tabs, Group Comparison placeholder |
 | `export_ui.py` | 6. Export | ZIP download with selectable data components |
 | `plot_mask_info.py` | (component) | Mask info / contour overlay utilities |
+| `HANDLER_GUIDE.md` 🔷 | (guide) | UI handler pattern guide — thin-handler / fat-service convention, anti-patterns, error handling contract |
 
 ### `castle/desktop/` — PyQt6 Desktop Application
 
@@ -222,6 +231,9 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `pipeline.py` ⚡ | `Pipeline` + `PipelineConfig` — full tracking → extraction orchestrator with per-stage GPU cleanup and VRAM logging |
 | `pipeline_parallel.py` ⚡ | `ParallelExtractor` — 3-stage producer-consumer pipeline (I/O thread → CPU preprocess thread → GPU inference) |
 | `cache.py` ⚡ | `PipelineCache` — SHA-256 content-addressed cache; manifest persisted as JSON; stale-entry auto-invalidation |
+| `project_data.py` 🔷 | `ProjectData` + `VideoInfo` dataclasses — unified project path computation, eliminating scattered `os.path.join` calls |
+| `cluster_data.py` 🔷 | `ClusterData` dataclass — consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, `annotations.csv` into one typed container |
+| `device_factory.py` 🔷 | `DeviceFactory` — centralised device detection and algorithm factory (UMAP, DBSCAN, HDBSCAN) with GPU/CPU/MPS dispatch |
 
 ### `castle/utils/` — Utility Layer
 
@@ -241,6 +253,7 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `roi_manager.py` | ROI color management and utilities |
 | `download.py` | Checkpoint download via gdown |
 | `profiler.py` | `Profiler`, `TimeBlock`, `SystemMonitor` for performance monitoring |
+| `video_reader_simple.py` 🔷 | `SimpleVideoReader` — simplified PyAV-based video reader (no LRU cache, no cv2 fallback); clean `get_frame()` / `iter_frames()` API |
 
 ### `castle/visualization/` — Visualization Layer
 
@@ -461,3 +474,180 @@ pending = get_unprocessed_videos("/data/projects/my_project")
 # After the user deletes some source videos — removes latent, cluster, and cache data
 removed = cleanup_deleted_videos("/data/projects/my_project")
 ```
+
+---
+
+## Phase 3 Simplification Architecture 🔷
+
+Phase 3 adds three `castle/core/` modules and one `castle/utils/` module focused on **code clarity**, **reducing scattered path logic**, and **clean algorithm dispatch**.
+
+### Unified Project Data (`ProjectData` + `VideoInfo`)
+
+```python
+from castle.core.project_data import ProjectData
+
+# Old way (scattered across many files)
+mask_path = os.path.join(storage_path, project_name, "track", video_name, "mask_list.h5")
+
+# Phase 3 way — no more manual path joining
+pd = ProjectData.from_path("/data/projects/my_project")
+mask_path = pd.mask_h5_path("animal01.mp4")   # <root>/track/animal01.mp4/mask_list.h5
+
+# List all source videos with metadata
+for video in pd.list_videos():
+    print(video.name, video.fps, video.width, video.height, video.n_frames)
+
+# Ensure standard directory tree exists
+pd.ensure_dirs()
+```
+
+**`VideoInfo`** — lightweight metadata container returned by `list_videos()`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Video filename (basename) |
+| `path` | `Path` | Absolute path to the video file |
+| `fps` | `float` | Frames per second (0.0 if unknown) |
+| `width` | `int` | Frame width in pixels |
+| `height` | `int` | Frame height in pixels |
+| `n_frames` | `int` | Total frame count (0 if unknown) |
+
+**`ProjectData`** standard directories and path helpers:
+
+| Property / Method | Returns |
+|-------------------|---------|
+| `.sources_dir` | `<root>/sources/` |
+| `.track_dir` | `<root>/track/` |
+| `.latent_dir` | `<root>/latent/` |
+| `.cluster_dir` | `<root>/cluster/` |
+| `.preprocessed_dir` | `<root>/preprocessed/` |
+| `.config_path` | `<root>/config.json` |
+| `.video_track_dir(name)` | `<root>/track/<name>/` |
+| `.mask_h5_path(name)` | `<root>/track/<name>/mask_list.h5` |
+| `.latent_model_dir(model)` | `<root>/latent/<model>/` |
+| `.cluster_session_dir(sid)` | `<root>/cluster/sessions/<sid>/` |
+
+---
+
+### Unified Cluster Data (`ClusterData`)
+
+```python
+from castle.core.cluster_data import ClusterData
+
+# Load from existing project cluster directory
+cd = ClusterData.load("/data/projects/my_project/cluster")
+print(cd.n_clusters())           # → int
+frames = cd.get_cluster_frames(0)  # → np.ndarray of frame indices
+
+# Construct from freshly computed arrays
+cd2 = ClusterData.from_arrays(embeddings, cluster_ids, hierarchy=tree)
+
+# Persist back to disk
+cd2.save("/data/projects/my_project/cluster")
+```
+
+**`ClusterData`** fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `labels` | `np.ndarray (N,)` | Flat cluster ID per temporal bin; `-1` = unassigned |
+| `hierarchy` | `dict` | Optional hierarchical tree from clustering |
+| `names` | `dict[int, str]` | Cluster ID → human-readable name |
+| `colors` | `dict[int, tuple]` | Cluster ID → `(R, G, B)` tuple |
+| `annotations` | `dict[int, str]` | Cluster ID → annotation label string |
+
+`ClusterData.load()` reads files in order of precedence:
+1. `id.csv` → names + colors
+2. `cluster_*.npz` → flat label array + hierarchy
+3. `time_series_*.csv` → fallback label source
+4. `annotations.csv` (or `sessions/<session_id>/annotations.csv`)
+
+---
+
+### Centralised Device Management (`DeviceFactory`)
+
+```python
+from castle.core.device_factory import DeviceFactory
+
+# Auto-detect device (cached after first call)
+device = DeviceFactory.get_device()   # → 'cuda' | 'mps' | 'cpu'
+
+# Get UMAP for the current device (cuml on GPU, umap-learn otherwise)
+umap = DeviceFactory.get_umap(n_neighbors=300, min_dist=0.0, n_components=2)
+
+# Get DBSCAN (cuml on GPU, sklearn otherwise)
+dbscan = DeviceFactory.get_dbscan(eps=0.5, min_samples=5)
+
+# Get HDBSCAN (cuml on GPU, sklearn ≥1.3 or hdbscan package otherwise)
+hdbscan = DeviceFactory.get_hdbscan(min_cluster_size=10)
+
+# Convert NumPy array to device tensor
+tensor = DeviceFactory.to_tensor(my_array)
+```
+
+Detection order: **CUDA > MPS (Apple Silicon) > CPU**.  
+Override with `DeviceFactory.set_device("cpu")` (e.g. in tests).
+
+---
+
+### Simplified Video Reader (`SimpleVideoReader`)
+
+```python
+from castle.utils.video_reader_simple import SimpleVideoReader
+
+with SimpleVideoReader("video.mp4") as r:
+    print(r.fps, r.width, r.height, len(r))
+
+    # Random access — seeks to keyframe then decodes to target
+    frame = r.get_frame(42)          # (H, W, 3) BGR uint8
+
+    # Sequential iteration — no per-frame seek, most efficient
+    for idx, frame in r.iter_frames(start=0, end=500):
+        process(frame)
+
+    # Strided iteration — seeks per frame
+    for idx, frame in r.iter_frames(start=0, end=500, step=5):
+        process(frame)
+```
+
+`SimpleVideoReader` vs `VideoReader` (from `castle.utils.video_io`):
+
+| Feature | `SimpleVideoReader` | `VideoReader` |
+|---------|---------------------|---------------|
+| Dependency | PyAV only | PyAV + optional cv2 |
+| LRU frame cache | ✗ | ✓ |
+| Binary-search fallback | ✗ | ✓ |
+| Sequential read optimisation | ✓ | ✓ |
+| Use case | Simple pipelines, tests | Production, caching |
+
+---
+
+### UI Handler Pattern (`castle/ui/HANDLER_GUIDE.md`)
+
+Phase 3 establishes a mandatory **thin-handler / fat-service** convention for all Gradio UI handlers.
+
+```
+Gradio Input
+    │
+    ▼
+[Handler]          # ≤ 15 lines; zero business logic
+    │  calls once
+    ▼
+[Service Layer]    # algorithm, I/O, validation
+    │  returns
+    ▼
+[Handler unpacks]  # Gradio output tuple + gr.Error on exception
+    │
+    ▼
+Gradio Output
+```
+
+**Error-handling contract:**
+
+| Exception | Handler action |
+|-----------|----------------|
+| `ValueError` (bad input) | `raise gr.Error(str(e))` |
+| `FileNotFoundError` | `raise gr.Error(f"File not found: {e}")` |
+| Unexpected / bug | log + `raise gr.Error("Unexpected error — check logs")` |
+
+See `castle/ui/HANDLER_GUIDE.md` for full examples and anti-patterns.

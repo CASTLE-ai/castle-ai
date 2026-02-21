@@ -30,6 +30,13 @@
 - [API Reference](https://castle-ai.github.io/castle-ai/reference/api/)
 
 ## Latest Updates
+- **2026-02: Phase 3 — Simplification & Code Clarity**
+  - **`ProjectData` + `VideoInfo`** (`castle/core/project_data.py`): Unified project path dataclass — eliminates all scattered `os.path.join(storage_path, project_name, …)` calls. Single `from_path()` constructor computes every standard directory and per-video path.
+  - **`ClusterData`** (`castle/core/cluster_data.py`): Typed dataclass that consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, and `annotations.csv` into one container with `load()`, `save()`, `from_arrays()`, `get_cluster_frames()`, and `n_clusters()`.
+  - **`DeviceFactory`** (`castle/core/device_factory.py`): Centralised device detection (CUDA > MPS > CPU) with cached result. Factory methods `get_umap()`, `get_dbscan()`, `get_hdbscan()` automatically dispatch to GPU-accelerated cuML on CUDA or sklearn/umap-learn on CPU/MPS — no more scattered `if cuda … elif mps … else` branches.
+  - **`SimpleVideoReader`** (`castle/utils/video_reader_simple.py`): Clean PyAV-based video reader with no cv2 dependency, no LRU cache complexity. Provides `get_frame(index)`, `iter_frames(start, end, step)`, and context-manager support. Sequential iteration uses no per-frame seeks for maximum throughput.
+  - **UI Handler Pattern Guide** (`castle/ui/HANDLER_GUIDE.md`): Documents the target thin-handler / fat-service convention for all Gradio UI callbacks — handler ≤ 15 lines, zero algorithmic logic, one service call, convert domain exceptions to `gr.Error`.
+
 - **2026-02: Developer Branch - Major Architecture Overhaul**
   - **Stabilized Camera Preprocessing** (Phase 0): Zero-phase Butterworth low-pass filtering of centroid trajectories + dynamic crop extraction → 518×518 stabilised MP4 ready for DINOv2 (`castle preprocess`)
   - **Service Layer**: Clean separation between UI and business logic

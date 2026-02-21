@@ -105,6 +105,37 @@ class StabilizedCamera:
     # Private helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _interpolate_nans(data: np.ndarray) -> np.ndarray:
+        """Replace NaN values with linear interpolation.
+
+        For leading/trailing NaNs, uses nearest valid value (forward/back fill).
+        """
+        if data.ndim == 1:
+            mask = np.isnan(data)
+            if not mask.any():
+                return data
+            valid = np.where(~mask)[0]
+            if len(valid) == 0:
+                data[:] = 0.0
+                return data
+            data[mask] = np.interp(
+                np.where(mask)[0], valid, data[valid]
+            )
+        else:
+            for col in range(data.shape[1]):
+                mask = np.isnan(data[:, col])
+                if not mask.any():
+                    continue
+                valid = np.where(~mask)[0]
+                if len(valid) == 0:
+                    data[:, col] = 0.0
+                    continue
+                data[mask, col] = np.interp(
+                    np.where(mask)[0], valid, data[valid, col]
+                )
+        return data
+
     def _apply_zero_phase_lowpass(self, data: np.ndarray) -> np.ndarray:
         """Apply zero-phase (filtfilt) Butterworth low-pass filter.
 
@@ -164,8 +195,12 @@ class StabilizedCamera:
             self.order,
         )
 
-        self.pos_filtered = self._apply_zero_phase_lowpass(self.positions)
-        self.angle_filtered = self._apply_zero_phase_lowpass(self.angles)
+        # Interpolate NaN values before filtering
+        pos_clean = self._interpolate_nans(self.positions.copy())
+        ang_clean = self._interpolate_nans(self.angles.copy())
+
+        self.pos_filtered = self._apply_zero_phase_lowpass(pos_clean)
+        self.angle_filtered = self._apply_zero_phase_lowpass(ang_clean)
 
         # Vectorised crop-size computation
         residuals = self.positions - self.pos_filtered  # (N, 2)

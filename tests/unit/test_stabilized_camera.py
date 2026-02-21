@@ -298,8 +298,8 @@ class TestEdgeCases:
         """Different fc values should produce different crop size distributions."""
         N = 300
         t = np.arange(N) / fps
-        x = 500 + 40 * np.sin(2 * np.pi * 3 * t)
-        y = 400 + 40 * np.sin(2 * np.pi * 3 * t)
+        x = 500 + 200 * np.sin(2 * np.pi * 3 * t)
+        y = 400 + 200 * np.sin(2 * np.pi * 3 * t)
         positions = np.stack([x, y], axis=1)
         angles = np.zeros(N)
 
@@ -333,10 +333,13 @@ class TestEdgeCases:
 
 
 class TestExtractCentroids:
-    def _make_h5_with_mask(self, path, mask_array, key="body"):
-        """Write a simple H5 file with a single mask dataset."""
+    @staticmethod
+    def _make_h5io_masks(path, masks):
+        """Write masks in H5IO format: keys are string frame indices."""
         with h5py.File(path, "w") as f:
-            f.create_dataset(key, data=mask_array)
+            for i in range(len(masks)):
+                f.create_dataset(str(i), data=masks[i], dtype="uint8",
+                                 compression="gzip", compression_opts=3)
 
     def test_extract_centroids_from_masks_known_position(self, tmp_path):
         """
@@ -344,127 +347,124 @@ class TestExtractCentroids:
         """
         H, W = 200, 200
         N = 5
-        # Create binary mask with a square at (cx=100, cy=80)
+        roi_id = 1
         masks = np.zeros((N, H, W), dtype=np.uint8)
-        masks[:, 70:91, 90:111] = 1  # 21×21 square, centroid ≈ (100, 80)
+        masks[:, 70:91, 90:111] = roi_id  # 21×21 square, centroid ≈ (100, 80)
 
         h5_path = str(tmp_path / "masks.h5")
-        self._make_h5_with_mask(h5_path, masks, key="body")
+        self._make_h5io_masks(h5_path, masks)
 
-        centroids = extract_centroids_from_masks(h5_path, key="body")
+        centroids = extract_centroids_from_masks(h5_path, roi_id=roi_id, n_frames=N)
         assert centroids.shape == (N, 2)
 
-        expected_x = 100.0  # col centre of [90:111]
-        expected_y = 80.0   # row centre of [70:91]
+        expected_x = 100.0
+        expected_y = 80.0
         npt.assert_allclose(centroids[:, 0], expected_x, atol=1.0)
         npt.assert_allclose(centroids[:, 1], expected_y, atol=1.0)
 
     def test_extract_centroids_empty_mask(self, tmp_path):
-        """All-zero mask → centroid should be NaN or (0,0), should not crash."""
+        """All-zero mask → should raise ValueError (no valid centroids)."""
         H, W, N = 100, 100, 3
         masks = np.zeros((N, H, W), dtype=np.uint8)
 
         h5_path = str(tmp_path / "empty.h5")
-        self._make_h5_with_mask(h5_path, masks, key="body")
+        self._make_h5io_masks(h5_path, masks)
 
-        # Should not raise
-        centroids = extract_centroids_from_masks(h5_path, key="body")
-        assert centroids.shape == (N, 2)
+        with pytest.raises(ValueError, match="No valid centroids"):
+            extract_centroids_from_masks(h5_path, roi_id=1, n_frames=N)
 
     def test_extract_centroids_multiple_frames(self, tmp_path):
         """Each frame has centroid at a different location — all should be recovered."""
         H, W, N = 300, 300, 4
+        roi_id = 1
         masks = np.zeros((N, H, W), dtype=np.uint8)
         expected_centres = [(50, 60), (150, 100), (200, 250), (80, 200)]
         for i, (cx, cy) in enumerate(expected_centres):
-            masks[i, cy - 5 : cy + 6, cx - 5 : cx + 6] = 1
+            masks[i, cy - 5 : cy + 6, cx - 5 : cx + 6] = roi_id
 
         h5_path = str(tmp_path / "multi.h5")
-        self._make_h5_with_mask(h5_path, masks, key="body")
+        self._make_h5io_masks(h5_path, masks)
 
-        centroids = extract_centroids_from_masks(h5_path, key="body")
+        centroids = extract_centroids_from_masks(h5_path, roi_id=roi_id, n_frames=N)
         for i, (cx, cy) in enumerate(expected_centres):
             npt.assert_allclose(centroids[i, 0], cx, atol=1.0)
             npt.assert_allclose(centroids[i, 1], cy, atol=1.0)
 
 
 class TestExtractOrientations:
-    def _make_orientation_h5(self, path, body_masks, head_masks):
+    @staticmethod
+    def _make_h5io_masks(path, masks):
+        """Write masks in H5IO format: keys are string frame indices."""
         with h5py.File(path, "w") as f:
-            f.create_dataset("body", data=body_masks)
-            f.create_dataset("head", data=head_masks)
+            for i in range(len(masks)):
+                f.create_dataset(str(i), data=masks[i], dtype="uint8",
+                                 compression="gzip", compression_opts=3)
 
     def test_extract_orientations_rightward(self, tmp_path):
         """
         Body centroid at (100,100), head centroid at (150,100) → angle ≈ 0°
-        (pointing right along +x).
         """
         H, W, N = 200, 200, 3
-        body = np.zeros((N, H, W), dtype=np.uint8)
-        head = np.zeros((N, H, W), dtype=np.uint8)
-
-        body[:, 95:106, 95:106] = 1  # centroid ≈ (100, 100)
-        head[:, 95:106, 145:156] = 1  # centroid ≈ (150, 100)
+        body_id, head_id = 1, 2
+        masks = np.zeros((N, H, W), dtype=np.uint8)
+        masks[:, 95:106, 95:106] = body_id   # body centroid ≈ (100, 100)
+        masks[:, 95:106, 145:156] = head_id   # head centroid ≈ (150, 100)
 
         h5_path = str(tmp_path / "orient.h5")
-        self._make_orientation_h5(h5_path, body, head)
+        self._make_h5io_masks(h5_path, masks)
 
         angles = extract_orientations_from_masks(
-            h5_path, body_key="body", head_key="head"
+            h5_path, body_roi_id=body_id, head_roi_id=head_id, n_frames=N
         )
         assert angles.shape == (N,)
-        # Angle pointing right (+x): atan2(dy=0, dx=50) = 0°
         npt.assert_allclose(angles % 360, 0.0, atol=5.0)
 
     def test_extract_orientations_upward(self, tmp_path):
         """
-        Head above body → angle ≈ -90° (or 270°) depending on convention.
-        We just verify it's consistent and not NaN.
+        Head above body → angle should be consistent and not NaN.
         """
         H, W, N = 200, 200, 3
-        body = np.zeros((N, H, W), dtype=np.uint8)
-        head = np.zeros((N, H, W), dtype=np.uint8)
-
-        body[:, 120:131, 95:106] = 1  # centroid ≈ col=100, row=125
-        head[:, 70:81, 95:106] = 1   # centroid ≈ col=100, row=75 (above)
+        body_id, head_id = 1, 2
+        masks = np.zeros((N, H, W), dtype=np.uint8)
+        masks[:, 120:131, 95:106] = body_id
+        masks[:, 70:81, 95:106] = head_id
 
         h5_path = str(tmp_path / "up.h5")
-        self._make_orientation_h5(h5_path, body, head)
+        self._make_h5io_masks(h5_path, masks)
 
         angles = extract_orientations_from_masks(
-            h5_path, body_key="body", head_key="head"
+            h5_path, body_roi_id=body_id, head_roi_id=head_id, n_frames=N
         )
         assert angles.shape == (N,)
         assert not np.any(np.isnan(angles))
 
     def test_extract_orientations_returns_unwrapped(self, tmp_path):
         """
-        Returned angles should be unwrapped (no ±180° jumps between consecutive frames
-        when motion is continuous).
+        Returned angles should be unwrapped (no ±180° jumps).
         """
         H, W = 200, 200
         N = 20
-        body = np.zeros((N, H, W), dtype=np.uint8)
-        head = np.zeros((N, H, W), dtype=np.uint8)
+        body_id, head_id = 1, 2
 
-        # Rotate angle slowly from 0° to 180° in small steps
+        masks_list = []
         for i in range(N):
-            rad = np.deg2rad(i * 9)  # 0° to 171° in 9° steps
+            rad = np.deg2rad(i * 9)
             bx, by = 100, 100
             hx = int(bx + 30 * np.cos(rad))
             hy = int(by - 30 * np.sin(rad))
-            body[i, by - 5 : by + 6, bx - 5 : bx + 6] = 1
+            mask = np.zeros((H, W), dtype=np.uint8)
+            mask[by - 5 : by + 6, bx - 5 : bx + 6] = body_id
             hx = max(5, min(W - 6, hx))
             hy = max(5, min(H - 6, hy))
-            head[i, hy - 5 : hy + 6, hx - 5 : hx + 6] = 1
+            mask[hy - 5 : hy + 6, hx - 5 : hx + 6] = head_id
+            masks_list.append(mask)
 
         h5_path = str(tmp_path / "unwrap.h5")
-        self._make_orientation_h5(h5_path, body, head)
+        self._make_h5io_masks(h5_path, np.array(masks_list))
 
         angles = extract_orientations_from_masks(
-            h5_path, body_key="body", head_key="head"
+            h5_path, body_roi_id=body_id, head_roi_id=head_id, n_frames=N
         )
-        # Consecutive jumps should be small (<= 15°) if unwrapped
         jumps = np.abs(np.diff(angles))
         assert np.all(jumps <= 15.0), f"Max jump {jumps.max():.1f}° suggests wrapping"
 

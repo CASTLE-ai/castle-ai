@@ -1,48 +1,71 @@
-# Git
+# Version control
 .git
 .gitignore
-.github
+.gitattributes
 
-# Python
+# Python cache
 __pycache__
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv
+*.pycache
 .pytest_cache
-.coverage
-htmlcov/
+*.egg-info
 dist/
 build/
-*.egg-info/
+.eggs/
 
-# IDE
-.vscode
-.idea
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Development & CI
+tests/
+.github/
+.ruff_cache/
+.mypy_cache/
+.tox/
+*.coverage
+.coverage
+htmlcov/
+junit.xml
+pytest.ini
+qc-report.md
+
+# Documentation sources (keep assets/ for the app)
+docs/
+mkdocs.yml
+notebooks/
+
+# Markdown docs (not needed at runtime)
+*.md
+CONTRIBUTING.md
+INSTALLATION.md
+LICENSE.txt
+
+# Large checkpoints (mounted via volume at runtime)
+ckpt/
+*.pth
+*.pt
+*.safetensors
+*.onnx
+*.bin
+
+# Local projects data (mounted via volume)
+projects/
+
+# Editor & OS artefacts
+.DS_Store
+.idea/
+.vscode/
 *.swp
 *.swo
 *~
-.DS_Store
 
-# Documentation
-*.md
-docs/
-
-# Projects and notebooks (optional, uncomment if needed)
-projects/
-notebooks/
-
-# Gradio temporary files
-.gradio
-
-# Large files
-*.pth
-*.pt
-*.ckpt
-
-# Logs
-logs/
-*.log
+# Install helpers (not needed in image)
+install.sh
+install.ps1
+activate.sh
+download_ckpt.sh

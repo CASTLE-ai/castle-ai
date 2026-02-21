@@ -1,0 +1,36 @@
+# CASTLE AI — Docker Compose (CPU-only)
+# Usage: docker compose -f docker-compose.cpu.yml up --build
+# No GPU or NVIDIA drivers required.
+
+services:
+  castle:
+    build:
+      context: .
+      args:
+        DEVICE: cpu
+        CUDA_IMAGE: ubuntu:22.04    # plain Ubuntu, no CUDA layer
+    image: castle-ai/castle:cpu
+    container_name: castle-cpu
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./projects:/data
+      - castle-models-cpu:/models
+      - ./demo:/app/demo:ro
+    environment:
+      - CASTLE_DEVICE=cpu
+      - CASTLE_DATA=/data
+      - HDF5_USE_FILE_LOCKING=FALSE
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7860/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  castle-models-cpu:
+    driver: local

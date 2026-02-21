@@ -94,6 +94,47 @@
         └── SwinB_DeAOTL_PRE_YTB_DAV.pth
     ```
 
+### Option 3 (Docker — GPU recommended)
+
+> **Requirements**: [Docker](https://docs.docker.com/get-docker/) ≥ 24, and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) for GPU mode.
+
+#### GPU (recommended)
+
+```bash
+# Pull or build
+git clone https://github.com/CASTLE-ai/castle-ai.git && cd castle-ai
+
+# Build + run with GPU support
+docker compose up --build
+```
+
+The Gradio UI will be available at [http://localhost:7860](http://localhost:7860).  
+Model checkpoints are downloaded automatically on first start and cached in a Docker volume.
+
+#### CPU-only (no NVIDIA GPU required)
+
+```bash
+docker compose -f docker-compose.cpu.yml up --build
+```
+
+#### Quick one-liner (pre-built image)
+
+```bash
+# GPU (recommended)
+docker run --gpus all -p 7860:7860 -v $(pwd)/projects:/data castle-ai/castle
+
+# CPU only
+docker run -p 7860:7860 -v $(pwd)/projects:/data castle-ai/castle:cpu
+```
+
+#### Pre-embed checkpoints at build time (~4 GB larger image, zero first-run delay)
+
+```bash
+docker build --build-arg DOWNLOAD_CKPT=1 -t castle-ai/castle .
+```
+
+---
+
 ## Run App
 
 === "Gradio Web UI"

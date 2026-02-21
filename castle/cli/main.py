@@ -18,12 +18,14 @@ from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd, mcp_cmd
 from castle.cli.ethogram_cmd import app as ethogram_app  # noqa: E402
 from castle.cli.compare_cmd import app as compare_app  # noqa: E402
 from castle.cli.preprocess_cmd import app as preprocess_app  # noqa: E402
+from castle.cli.batch_cmd import app as batch_app  # noqa: E402
 
 app.add_typer(project_cmd.app, name="project", help="Project management")
 app.add_typer(cluster_cmd.app, name="cluster", help="Clustering operations")
 app.add_typer(mcp_cmd.app, name="mcp", help="MCP (Model Context Protocol) server")
 app.add_typer(ethogram_app, name="ethogram")
 app.add_typer(compare_app, name="compare")
+app.add_typer(batch_app, name="batch", help="Batch processing across multiple experiments")
 app.registered_commands += track_cmd.app.registered_commands
 app.registered_commands += extract_cmd.app.registered_commands
 app.registered_commands += preprocess_app.registered_commands

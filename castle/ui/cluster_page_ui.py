@@ -213,8 +213,27 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             interactive=True,
             visible=True
         )
-        ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", info="ex: 1,2,3.", visible=True)
-        ui['bin_size'] = gr.Number(label='Time window (frame)', value=1, interactive=True, visible=True)
+        ui['select_roi_id'] = gr.Textbox(
+            label="Enter ROI ID",
+            value="1",
+            info=(
+                "ROI (Region of Interest) ID(s) for clustering. "
+                "Use the same ROI as used during feature extraction (Step 3). "
+                "Example: 1, or 1,2,3 for multiple ROIs."
+            ),
+            visible=True,
+        )
+        ui['bin_size'] = gr.Number(
+            label='Time window (frame)',
+            value=1,
+            interactive=True,
+            visible=True,
+            info=(
+                "Number of frames aggregated into one behavior bin. Default: 1. "
+                "Larger values create smoother but less temporally precise analysis. "
+                "Use the same value for all sessions in a project."
+            ),
+        )
         ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
         
     # State Holders
@@ -231,7 +250,20 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
-            ui['eps'] = gr.Number(label='epsilon-neighborhood radius', interactive=True, visible=True, value=1, step=0.1, minimum=0.1, maximum=10)
+            ui['eps'] = gr.Number(
+                label='epsilon-neighborhood radius',
+                interactive=True,
+                visible=True,
+                value=1,
+                step=0.1,
+                minimum=0.1,
+                maximum=10,
+                info=(
+                    "DBSCAN neighborhood radius. Larger values = fewer, bigger clusters; "
+                    "smaller values = more, finer-grained clusters. Default: 1.0. "
+                    "Adjust based on the density of the embedding scatter plot."
+                ),
+            )
             ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
             ui['label_cluster_id'] = gr.Number(label='Cluster id', interactive=True, visible=True)
             ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=True)

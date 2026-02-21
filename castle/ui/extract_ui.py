@@ -63,7 +63,7 @@ def init_select_video_list(storage_path, project_name):
     ])
 
     if not storage_path or not project_name:
-        gr.Warning("No project selected.")
+        gr.Warning("No project selected. Please create or open a project in the 'Project' tab first.")
         return updates # 返回預設的隱藏狀態
 
     try:
@@ -103,11 +103,17 @@ def init_select_video_list(storage_path, project_name):
             updates[18] = gr.update(visible=True) # extract_rotation_latent_btn
             updates[19] = gr.update(visible=True) # latent_file_list
         else:
-            gr.Warning("No videos found in the selected project.")
+            gr.Warning(
+                "No videos found in this project. Please add videos in the "
+                "'Source' tab before extracting features."
+            )
             # updates 已經是預設的隱藏狀態，無需額外操作
 
     except Exception as e:
-        gr.Warning(f"Error loading project videos: {e}")
+        gr.Warning(
+            f"Failed to load video list. Please check that the project is correctly "
+            f"configured. Details: {e}"
+        )
         # updates 已經是預設的隱藏狀態，無需額外操作
 
     return updates
@@ -460,19 +466,65 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                 value="dinov2_vitb14_reg4_pretrain",
                 visible=False
             )
-            ui['select_roi_id'] = gr.Textbox(label="Enter ROI ID", value="1", visible=False)
-            ui['batch_size'] = gr.Textbox(label="Batch size", value="32", visible=False)
+            ui['select_roi_id'] = gr.Textbox(
+                label="Enter ROI ID",
+                value="1",
+                visible=False,
+                info=(
+                    "ROI (Region of Interest) ID to extract features from. "
+                    "Default: 1 (the animal body). Must match the ROI tracked in Step 2."
+                ),
+            )
+            ui['batch_size'] = gr.Textbox(
+                label="Batch size",
+                value="32",
+                visible=False,
+                info=(
+                    "Number of frames processed simultaneously. Default: 32. "
+                    "Larger values are faster but use more GPU memory. "
+                    "Reduce to 8 or 16 if you get out-of-memory errors."
+                ),
+            )
             ui['select_video'] = gr.Dropdown(label="Select Target Video", value=None, visible=False)
             ui['video_count'] = gr.Number(label="Project Video Count", value=0, interactive=False, visible=False) # 新增的 UI 元件
             ui['skip_existing'] = gr.Checkbox(label="Skip existing files", value=True, visible=False)
             
         with gr.Column(scale=2):
             ui['center_roi_switch'] = gr.Checkbox(label="Center ROI", value=False, visible=False)
-            ui['center_roi_id'] = gr.Number(label="Center ROI ID", value=1, visible=False)
-            ui['center_roi_crop_width'] = gr.Number(label="width", value=300, visible=False)
-            ui['center_roi_crop_height'] = gr.Number(label="height", value=300, visible=False)
+            ui['center_roi_id'] = gr.Number(
+                label="Center ROI ID",
+                value=1,
+                visible=False,
+                info="ROI ID used to center the crop region. Default: 1 (body centroid).",
+            )
+            ui['center_roi_crop_width'] = gr.Number(
+                label="width",
+                value=300,
+                visible=False,
+                info=(
+                    "Crop region width in pixels. Default: 300. "
+                    "Larger values include more context but increase processing time."
+                ),
+            )
+            ui['center_roi_crop_height'] = gr.Number(
+                label="height",
+                value=300,
+                visible=False,
+                info=(
+                    "Crop region height in pixels. Default: 300. "
+                    "Keep width and height equal for square crops."
+                ),
+            )
             ui['rotate_roi_tail_switch'] = gr.Checkbox(label="Rotate based on Tail", value=False, visible=False)
-            ui['rotate_roi_tail_id'] = gr.Number(label="Tail ROI ID", value=2, visible=False)
+            ui['rotate_roi_tail_id'] = gr.Number(
+                label="Tail ROI ID",
+                value=2,
+                visible=False,
+                info=(
+                    "ROI ID for the tail/reference point used to compute body orientation. "
+                    "Default: 2. Requires the tail to be tracked."
+                ),
+            )
             ui['remove_background_switch'] = gr.Checkbox(label="Remove Background", value=False, visible=False)
             ui['apply_preprocess'] = gr.Button("Apply", visible=False)
             

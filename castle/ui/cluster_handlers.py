@@ -133,7 +133,7 @@ def embedding_plot_click(aggregator, Z_plt, evt: gr.SelectData):
     if hasattr(evt, 'index'):
         emb_plot = Z_plt.click(evt.index[0], evt.index[1])
     else:
-        gr.Info('click event error')
+        gr.Info('Embedding click failed. Please try clicking on a data point again.')
         return None, None
         
     index = Z_plt.selected_index
@@ -158,7 +158,7 @@ def update_select_cluster_list(latents):
         return gr.update(choices=[], value=None)
     
     if not hasattr(latents, 'cluster_meta') or not hasattr(latents, 'cluster'):
-        gr.Info('Latent init error, please wait.')
+        gr.Info('Session not ready yet. Please wait for initialization to complete, then try again.')
         return gr.update(choices=[], value=None)
     
     choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
@@ -166,15 +166,28 @@ def update_select_cluster_list(latents):
 
 
 def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
+    if latents is None:
+        gr.Info(
+            "Session not initialized. Please click '⚙️ New Session' to initialize "
+            "before generating an embedding."
+        )
+        return None, None, None
+
     try:
         cfg = json.loads(cfg_str)
     except (json.JSONDecodeError, ValueError, KeyError) as e:
-        gr.Info(f'UMAP config JSON format error: {e}')
+        gr.Info(
+            f"Invalid UMAP configuration. Please check the JSON format and try again. "
+            f"Details: {e}"
+        )
         return None, None, None
-    
+
     local_latents = latents.select(selected_cluster=cluster_name)
     if len(local_latents.data) == 0:
-        gr.Info('This Cluster is empty.')
+        gr.Info(
+            "This cluster has no data points. Select a different cluster or run "
+            "clustering again with adjusted parameters."
+        )
         return None, None, None
     
     # C-05: Report progress between UMAP stages
@@ -189,10 +202,19 @@ def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
 
 
 def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
+    if local_latents is None:
+        gr.Info(
+            "No embedding available. Please click 'Generate Embedding' to run UMAP first."
+        )
+        return None, None, history
+
     try:
         cfg = json.loads(dbscan_config_template)
     except (json.JSONDecodeError, ValueError, KeyError) as e:
-        gr.Info(f'Cluster JSON format error: {e}')
+        gr.Info(
+            f"Invalid cluster configuration JSON. Please check the template format. "
+            f"Details: {e}"
+        )
         return None, None, history
 
     if history is None:
@@ -212,7 +234,7 @@ def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
 
 def label_local_cluster(local_latents, cluster_id, cluster_name, history):
     if not cluster_name:
-        gr.Info('Name is empty')
+        gr.Info('Please enter a name for the cluster before clicking Enter.')
         return history
 
     if history is None:
@@ -292,7 +314,10 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
         history = HistoryManager()
 
     if not hasattr(local_latents, 'cluster'):
-        gr.Warning("Please run Generate Cluster first before submitting.")
+        gr.Warning(
+            "No clusters available to submit. Please click 'Generate Cluster' to "
+            "create clusters before submitting."
+        )
         return (None, None, None, None, None, None, None, None, history)
 
     # Save state including parent (for undo of submit)
@@ -433,7 +458,10 @@ def restore_session(storage_path, project_name, select_roi_id, bin_size, select_
     try:
         return _do_restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id, notify_callback)
     except Exception as e:
-        gr.Warning(f"Restore failed: {e}")
+        gr.Warning(
+            f"Failed to restore session. Your saved session files may be missing or "
+            f"corrupted. Try initializing a new session instead. Details: {e}"
+        )
         return _empty
 
 
@@ -519,7 +547,7 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
     try:
         latents.import_local_latent(local_latents)
     except Exception as e:
-        gr.Info(f'Import error: {e}')
+        gr.Info(f'Failed to import cluster results into the session. Details: {e}')
         return (None,) * 8
 
     # Plot syllables with one video per row
@@ -602,7 +630,10 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
         session_info = check_session_exists(storage_path, project_name)
         return aggregator, latents, session_info
     except Exception as e:
-        gr.Warning(f"Initialization Failed: {e}")
+        gr.Warning(
+            f"Session initialization failed. Please ensure latent features have been "
+            f"extracted (Step 3) and the ROI ID is correct. Details: {e}"
+        )
         return None, None, None
 
 
@@ -613,14 +644,14 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
 def handle_undo(local_latents, latents, history):
     """Undo the last clustering operation and redraw the plot."""
     if history is None or not history.can_undo:
-        gr.Info("Nothing to undo")
+        gr.Info("Nothing to undo — no recorded actions yet.")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
 
     desc = history.undo(local_latents, parent=latents)
-    
+
     # Check if restored state is valid before plotting
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
-        gr.Info("No previous state to restore")
+        gr.Info("Cannot undo: no valid previous state found.")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
     
     gr.Info(f"Undone: {desc}")
@@ -640,14 +671,14 @@ def handle_undo(local_latents, latents, history):
 def handle_redo(local_latents, latents, history):
     """Redo the last undone clustering operation and redraw the plot."""
     if history is None or not history.can_redo:
-        gr.Info("Nothing to redo")
+        gr.Info("Nothing to redo — no undone actions available.")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
 
     desc = history.redo(local_latents, parent=latents)
-    
+
     # Check if restored state is valid before plotting
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
-        gr.Info("No previous state to restore")
+        gr.Info("Cannot redo: no valid next state found.")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
     
     gr.Info(f"Redone: {desc}")
@@ -711,7 +742,10 @@ def run_auto_cluster(storage_path, project_name, latents, mulvideo, max_depth, m
     _empty = (None, None, None, None, None, None, None, None, "**❌ Auto-cluster failed.**")
 
     if latents is None or mulvideo is None:
-        gr.Warning("Please initialise the session first (⚙️ New Session).")
+        gr.Warning(
+            "Session not initialized. Please click '⚙️ New Session' and initialize "
+            "before running Auto-Cluster."
+        )
         return _empty
 
     from castle.service.clustering_service import ClusteringSession
@@ -743,7 +777,10 @@ def run_auto_cluster(storage_path, project_name, latents, mulvideo, max_depth, m
         )
     except Exception as exc:
         logger.exception("Auto-cluster failed")
-        gr.Warning(f"Auto-cluster failed: {exc}")
+        gr.Warning(
+            f"Auto-clustering failed. Try reducing 'Max Depth' or increasing "
+            f"'Min Frames' and try again. Details: {exc}"
+        )
         return _empty
 
     # After clustering, commit results back
@@ -757,7 +794,10 @@ def run_auto_cluster(storage_path, project_name, latents, mulvideo, max_depth, m
         )
     except Exception as exc:
         logger.exception("Auto-cluster commit failed")
-        gr.Warning(f"Auto-cluster completed but commit failed: {exc}")
+        gr.Warning(
+            f"Auto-clustering succeeded but saving results failed. Your cluster "
+            f"assignments may not be saved — try clicking 'Submit' manually. Details: {exc}"
+        )
         commit_result = (None, None, None, None, None, None, None, None)
 
     progress(1.0, desc="Done!")
@@ -797,11 +837,17 @@ def save_cluster_model(storage_path, project_name):
         gr.Info(f"Cluster model saved: {os.path.basename(model_path)}")
         return gr.update(value=model_path, visible=True), f"**✅ Model saved:** `{model_path}`"
     except FileNotFoundError as exc:
-        gr.Warning(str(exc))
+        gr.Warning(
+            "Cluster model files not found. Please complete the clustering step and "
+            "submit clusters before saving a model."
+        )
         return gr.update(value=None, visible=False), f"**❌ Save failed:** {exc}"
     except Exception as exc:
         logger.exception("save_cluster_model failed")
-        gr.Warning(f"Save model failed: {exc}")
+        gr.Warning(
+            f"Failed to save cluster model. Check that the project folder is "
+            f"accessible and clustering has been completed. Details: {exc}"
+        )
         return gr.update(value=None, visible=False), f"**❌ Save failed:** {exc}"
 
 
@@ -836,9 +882,14 @@ def apply_cluster_model(storage_path, project_name, model_file):
         gr.Info(f"Cluster model applied: {n} frames classified.")
         return f"**✅ Model applied!** {n} frames classified. Output written to `{result.get('output_csv', '')}`"
     except FileNotFoundError as exc:
-        gr.Warning(str(exc))
+        gr.Warning(
+            "Cluster model file not found. Please upload a valid cluster_model.npz file."
+        )
         return f"**❌ Apply failed:** {exc}"
     except Exception as exc:
         logger.exception("apply_cluster_model failed")
-        gr.Warning(f"Apply model failed: {exc}")
+        gr.Warning(
+            f"Failed to apply cluster model. Ensure the model file matches the "
+            f"project's feature type and dimensions. Details: {exc}"
+        )
         return f"**❌ Apply failed:** {exc}"

@@ -266,7 +266,11 @@ class ExportPanel(QWidget):
     @pyqtSlot()
     def _run_export(self):
         if not self._storage_path or not self._project_name:
-            QMessageBox.warning(self, "Error", "No project selected.")
+            QMessageBox.warning(
+                self,
+                "No Project Selected",
+                "No project selected. Please open a project from the Project panel first.",
+            )
             return
 
         # Ask where to save
@@ -328,11 +332,20 @@ class ExportPanel(QWidget):
             self._result_label.setText(f"Saved: {save_path}")
             QMessageBox.information(self, "Export Complete", f"ZIP saved to:\n{save_path}")
         except Exception as exc:
-            QMessageBox.critical(self, "Export Error", f"Could not move ZIP: {exc}")
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                f"Failed to save export ZIP to the selected location.\n\n{exc}\n\n"
+                "Please check that the target directory is accessible and has enough disk space.",
+            )
 
     @pyqtSlot(str)
     def _on_export_error(self, err: str):
         self._progress_bar.setVisible(False)
         self._export_btn.setEnabled(True)
         self._status_edit.append(f"Error: {err}")
-        QMessageBox.critical(self, "Export Error", err)
+        QMessageBox.critical(
+            self,
+            "Export Error",
+            f"Export failed.\n\n{err}\n\nCheck the status log for details.",
+        )

@@ -119,7 +119,10 @@ def on_refresh_sessions(storage_path, project_name):
 def on_load_cluster_data(storage_path, project_name, session_id):
     """Load cluster data from disk and populate the cluster radio."""
     if not storage_path or not project_name:
-        gr.Warning("Select a project first.")
+        gr.Warning(
+            "No project selected. Please create or open a project in the "
+            "'Project' tab first."
+        )
         return None, gr.update(choices=[], value=None), "**Status:** No project selected"
 
     sid = session_id if session_id else None
@@ -128,11 +131,17 @@ def on_load_cluster_data(storage_path, project_name, session_id):
     try:
         annotator_data = load_annotator_data(storage_path, project_name, session_id=sid)
     except FileNotFoundError as exc:
-        gr.Warning(str(exc))
+        gr.Warning(
+            "Cluster data not found. Please complete the clustering step (Step 3) "
+            "and generate at least one session before annotating."
+        )
         return None, gr.update(choices=[], value=None), f"**Error:** {exc}"
     except Exception as exc:
         logger.exception("Failed to load cluster data")
-        gr.Warning(f"Failed to load: {exc}")
+        gr.Warning(
+            "Failed to load cluster data. Check that the clustering session exists "
+            "and try refreshing the session dropdown."
+        )
         return None, gr.update(choices=[], value=None), f"**Error:** {exc}"
 
     # Load annotations scoped to this session
@@ -237,12 +246,12 @@ def on_save_annotation(
 def on_save_custom_scheme(storage_path, project_name, custom_name, custom_labels_text):
     """Save a custom classification scheme from user input."""
     if not custom_name or not custom_labels_text:
-        gr.Info("Enter scheme name and labels (one per line).")
+        gr.Info("Please enter a scheme name and at least one label (one per line).")
         return gr.update()
 
     labels = [line.strip() for line in custom_labels_text.strip().split("\n") if line.strip()]
     if not labels:
-        gr.Info("No valid labels found.")
+        gr.Info("No valid labels found. Add at least one label (one per line) in the Labels field.")
         return gr.update()
 
     save_scheme(storage_path, project_name, custom_name, labels)
@@ -309,6 +318,11 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
                     value=3,
                     step=1,
                     interactive=True,
+                    info=(
+                        "Number of behavior clips per row/column in the preview grid. "
+                        "Default: 3 (3×3 = 9 clips). Larger grids show more variety "
+                        "but take longer to generate."
+                    ),
                 )
 
                 ui["speed_slider"] = gr.Slider(
@@ -318,6 +332,10 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
                     value=1.0,
                     step=0.1,
                     interactive=True,
+                    info=(
+                        "Video playback speed multiplier. Default: 1.0× (normal speed). "
+                        "Increase to quickly scan through fast behaviors."
+                    ),
                 )
 
                 ui["cluster_info"] = gr.Markdown("**Selected:** None")

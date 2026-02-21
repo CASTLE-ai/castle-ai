@@ -142,6 +142,11 @@ class ClusterPanel(QWidget):
         self._nn_spin.setMinimum(2)
         self._nn_spin.setMaximum(500)
         self._nn_spin.setValue(100)
+        self._nn_spin.setToolTip(
+            "UMAP n_neighbors: controls balance between local and global structure.\n"
+            "Default: 100. Higher = more global clusters; lower = more local detail.\n"
+            "Typical range: 25–200 depending on dataset size."
+        )
         nn_layout.addWidget(self._nn_spin)
         umap_layout.addLayout(nn_layout)
 
@@ -153,6 +158,11 @@ class ClusterPanel(QWidget):
         self._md_spin.setMaximum(1.0)
         self._md_spin.setSingleStep(0.05)
         self._md_spin.setValue(0.0)
+        self._md_spin.setToolTip(
+            "UMAP min_dist: minimum distance between points in the 2D embedding.\n"
+            "Default: 0.0. Higher values spread points more evenly; lower values "
+            "create tighter clusters."
+        )
         md_layout.addWidget(self._md_spin)
         umap_layout.addLayout(md_layout)
 
@@ -200,6 +210,12 @@ class ClusterPanel(QWidget):
         self._eps_spin.setMaximum(20.0)
         self._eps_spin.setSingleStep(0.1)
         self._eps_spin.setValue(1.0)
+        self._eps_spin.setToolTip(
+            "DBSCAN epsilon: neighborhood search radius.\n"
+            "Default: 1.0. Larger values = fewer, bigger clusters; "
+            "smaller values = more, finer-grained clusters.\n"
+            "Adjust based on the density visible in the embedding scatter plot."
+        )
         eps_layout.addWidget(self._eps_spin)
         dbscan_layout.addLayout(eps_layout)
 
@@ -307,7 +323,11 @@ class ClusterPanel(QWidget):
     @pyqtSlot()
     def _initialize(self):
         if not self._project_name:
-            QMessageBox.warning(self, "Error", "No project selected.")
+            QMessageBox.warning(
+                self,
+                "No Project Selected",
+                "No project selected. Please open a project from the Project panel first.",
+            )
             return
 
         self._progress_bar.setVisible(True)
@@ -345,12 +365,22 @@ class ClusterPanel(QWidget):
         self._progress_bar.setVisible(False)
         self._init_btn.setEnabled(True)
         self._status_text.append(f"❌ Init error: {err}")
-        QMessageBox.critical(self, "Initialization Error", err)
+        QMessageBox.critical(
+            self,
+            "Initialization Error",
+            f"Session initialization failed.\n\n{err}\n\n"
+            "Please check that latent features have been extracted (Step 3) "
+            "and the ROI ID is correct.",
+        )
 
     @pyqtSlot()
     def _restore_session(self):
         if self._session is None:
-            QMessageBox.warning(self, "Error", "Initialize first.")
+            QMessageBox.warning(
+                self,
+                "Not Initialized",
+                "Session not initialized. Please click 'Initialize' before restoring a session.",
+            )
             return
         try:
             result = self._session.restore()
@@ -363,7 +393,11 @@ class ClusterPanel(QWidget):
             else:
                 self._status_text.append(f"Restore failed: {result.get('error', 'unknown')}")
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(
+                self,
+                "Restore Failed",
+                f"Failed to restore session.\n\n{e}\n\nTry reinitializing instead.",
+            )
 
     @pyqtSlot(str)
     def _on_cluster_selected(self, cluster_name: str):
@@ -376,7 +410,11 @@ class ClusterPanel(QWidget):
 
         selected = self._cluster_tree.selected_cluster_name()
         if not selected:
-            QMessageBox.warning(self, "Error", "Select a cluster first.")
+            QMessageBox.warning(
+                self,
+                "No Cluster Selected",
+                "No cluster selected. Please select a cluster from the Cluster Hierarchy tree.",
+            )
             return
 
         # Try reading JSON config, else build from spinboxes
@@ -420,7 +458,13 @@ class ClusterPanel(QWidget):
         self._progress_bar.setVisible(False)
         self._run_umap_btn.setEnabled(True)
         self._status_text.append(f"❌ UMAP error: {err}")
-        QMessageBox.critical(self, "UMAP Error", err)
+        QMessageBox.critical(
+            self,
+            "UMAP Error",
+            f"UMAP dimensionality reduction failed.\n\n{err}\n\n"
+            "Try adjusting n_neighbors, selecting a different preset, "
+            "or choosing a different cluster.",
+        )
 
     @pyqtSlot()
     def _run_clustering(self):
@@ -448,7 +492,11 @@ class ClusterPanel(QWidget):
             else:
                 self._status_text.append(f"DBSCAN failed: {result.get('error', '')}")
         except Exception as e:
-            QMessageBox.critical(self, "DBSCAN Error", str(e))
+            QMessageBox.critical(
+                self,
+                "DBSCAN Error",
+                f"DBSCAN clustering failed.\n\n{e}\n\nTry adjusting the Epsilon value.",
+            )
 
     @pyqtSlot(int, float, float)
     def _on_embedding_click(self, local_index: int, x: float, y: float):
@@ -476,7 +524,11 @@ class ClusterPanel(QWidget):
         cid = self._cluster_id_spin.value()
         name = self._cluster_name_input.text().strip()
         if not name:
-            QMessageBox.warning(self, "Error", "Enter a cluster name.")
+            QMessageBox.warning(
+                self,
+                "No Cluster Name",
+                "Please enter a name for the cluster before clicking Label.",
+            )
             return
         try:
             self._session.label_cluster(cid, name)
@@ -486,7 +538,11 @@ class ClusterPanel(QWidget):
             )
             self._status_text.append(f"Labeled cluster {cid} → '{name}'")
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(
+                self,
+                "Label Error",
+                f"Failed to label cluster {cid}.\n\n{e}",
+            )
 
     @pyqtSlot()
     def _auto_label(self):
@@ -500,7 +556,11 @@ class ClusterPanel(QWidget):
             )
             self._status_text.append(f"Auto-labeled {count} clusters")
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(
+                self,
+                "Auto-Label Error",
+                f"Auto-labeling failed.\n\n{e}",
+            )
 
     @pyqtSlot()
     def _submit_all(self):
@@ -531,7 +591,11 @@ class ClusterPanel(QWidget):
             else:
                 self._status_text.append(f"Submit failed: {result.get('error', '')}")
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(
+                self,
+                "Submit Error",
+                f"Failed to submit clusters.\n\n{e}\n\nCheck the status log for details.",
+            )
 
     # ------------------------------------------------------------------
     # Helpers

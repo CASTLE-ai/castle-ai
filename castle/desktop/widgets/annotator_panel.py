@@ -180,7 +180,11 @@ class AnnotatorPanel(QWidget):
         self._grid_size_spin.setRange(1, 5)
         self._grid_size_spin.setValue(3)
         self._grid_size_spin.setSuffix("×N")
-        self._grid_size_spin.setToolTip("Grid columns/rows (e.g. 3 → 3×3 = 9 clips)")
+        self._grid_size_spin.setToolTip(
+            "Number of behavior clips per row/column in the preview grid.\n"
+            "Default: 3 (3×3 = 9 clips). Larger grids show more variety "
+            "but take longer to generate."
+        )
         controls_row.addWidget(self._grid_size_spin)
 
         controls_row.addSpacing(16)
@@ -190,7 +194,11 @@ class AnnotatorPanel(QWidget):
         self._speed_slider.setRange(1, 20)   # 0.1x → 2.0x in 0.1 steps
         self._speed_slider.setValue(10)       # default 1.0x
         self._speed_slider.setMaximumWidth(120)
-        self._speed_slider.setToolTip("Playback speed (0.1x – 2.0x)")
+        self._speed_slider.setToolTip(
+            "Video playback speed multiplier. Default: 1.0× (normal speed).\n"
+            "Increase to quickly scan through fast behaviors.\n"
+            "Range: 0.1× (slow motion) to 2.0× (double speed)."
+        )
         self._speed_slider.valueChanged.connect(self._on_speed_changed)
         controls_row.addWidget(self._speed_slider)
 
@@ -284,7 +292,11 @@ class AnnotatorPanel(QWidget):
     @pyqtSlot()
     def _load_cluster_data(self):
         if not self._storage_path or not self._project_name:
-            QMessageBox.warning(self, "Error", "No project selected.")
+            QMessageBox.warning(
+                self,
+                "No Project Selected",
+                "No project selected. Please open a project from the Project panel first.",
+            )
             return
 
         session_id = self._session_combo.currentData() or None
@@ -338,7 +350,11 @@ class AnnotatorPanel(QWidget):
         self._progress_bar.setVisible(False)
         self._load_btn.setEnabled(True)
         self._status_label.setText(f"Error: {err}")
-        QMessageBox.critical(self, "Load Error", err)
+        QMessageBox.critical(
+            self,
+            "Load Error",
+            f"Failed to load cluster data.\n\n{err}\n\nPlease complete the clustering step (Step 3) first.",
+        )
 
     def _populate_cluster_list(self):
         self._cluster_list.clear()
@@ -428,12 +444,20 @@ class AnnotatorPanel(QWidget):
     @pyqtSlot()
     def _save_annotation(self):
         if self._annotator_data is None:
-            QMessageBox.warning(self, "Error", "Load cluster data first.")
+            QMessageBox.warning(
+                self,
+                "Data Not Loaded",
+                "Cluster data not loaded. Please click 'Load Cluster Data' before annotating.",
+            )
             return
 
         current = self._cluster_list.currentItem()
         if current is None:
-            QMessageBox.warning(self, "Error", "Select a cluster first.")
+            QMessageBox.warning(
+                self,
+                "No Cluster Selected",
+                "No cluster selected. Please select a cluster from the list on the left.",
+            )
             return
 
         cluster_name = current.data(Qt.ItemDataRole.UserRole)
@@ -442,7 +466,11 @@ class AnnotatorPanel(QWidget):
         comment = self._comment_edit.text().strip()
 
         if not behavior_label:
-            QMessageBox.warning(self, "Error", "Select a behavior label.")
+            QMessageBox.warning(
+                self,
+                "No Label Selected",
+                "No behavior label selected. Please choose a behavior label from the dropdown.",
+            )
             return
 
         self._annotations[cluster_name] = {
@@ -470,18 +498,30 @@ class AnnotatorPanel(QWidget):
     @pyqtSlot()
     def _save_custom_scheme(self):
         if not self._storage_path or not self._project_name:
-            QMessageBox.warning(self, "Error", "No project selected.")
+            QMessageBox.warning(
+                self,
+                "No Project Selected",
+                "No project selected. Please open a project from the Project panel first.",
+            )
             return
 
         name = self._custom_scheme_name.text().strip()
         raw_labels = self._custom_labels_edit.toPlainText().strip()
         if not name or not raw_labels:
-            QMessageBox.warning(self, "Error", "Enter scheme name and labels.")
+            QMessageBox.warning(
+                self,
+                "Missing Input",
+                "Scheme name or labels missing. Please enter a scheme name and at least one label.",
+            )
             return
 
         labels = [ln.strip() for ln in raw_labels.split("\n") if ln.strip()]
         if not labels:
-            QMessageBox.warning(self, "Error", "No valid labels found.")
+            QMessageBox.warning(
+                self,
+                "No Valid Labels",
+                "No valid labels found. Add at least one label (one per line) in the Labels field.",
+            )
             return
 
         from castle.service.annotation_service import save_scheme
@@ -503,12 +543,20 @@ class AnnotatorPanel(QWidget):
     def _generate_grid_preview(self):
         """Generate a grid video for the currently selected cluster."""
         if self._annotator_data is None:
-            QMessageBox.warning(self, "Error", "Load cluster data first.")
+            QMessageBox.warning(
+                self,
+                "Data Not Loaded",
+                "Cluster data not loaded. Please click 'Load Cluster Data' before generating a preview.",
+            )
             return
 
         current = self._cluster_list.currentItem()
         if current is None:
-            QMessageBox.warning(self, "Error", "Select a cluster first.")
+            QMessageBox.warning(
+                self,
+                "No Cluster Selected",
+                "No cluster selected. Please select a cluster from the list on the left.",
+            )
             return
 
         cluster_name = current.data(Qt.ItemDataRole.UserRole)
@@ -521,7 +569,11 @@ class AnnotatorPanel(QWidget):
                 break
 
         if cluster_id is None:
-            QMessageBox.warning(self, "Error", f"Cannot find cluster ID for '{cluster_name}'.")
+            QMessageBox.warning(
+                self,
+                "Cluster Not Found",
+                f"Cluster '{cluster_name}' not found. Try reloading the cluster data.",
+            )
             return
 
         grid_cols = self._grid_size_spin.value()
@@ -576,6 +628,10 @@ class AnnotatorPanel(QWidget):
     def _open_grid_video(self):
         """Open the generated grid video with the system default player."""
         if not self._grid_video_path or not os.path.exists(self._grid_video_path):
-            QMessageBox.warning(self, "No Video", "No grid video available.")
+            QMessageBox.warning(
+                self,
+                "No Grid Video",
+                "No grid video available. Generate a preview first by clicking '🎬 Generate Preview'.",
+            )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(self._grid_video_path))

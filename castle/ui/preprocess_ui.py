@@ -44,15 +44,20 @@ def _run_preprocessing(
 ) -> tuple[Any, str]:
     """Run stabilized camera preprocessing and return (preview_video, diag_text)."""
     if not storage_path or not project_name:
-        gr.Warning("Please open a project first.")
+        gr.Warning(
+            "No project open. Please create or open a project in the 'Project' tab first."
+        )
         return None, "No project selected."
 
     if not video_name:
-        gr.Warning("Please select a video.")
+        gr.Warning("No video selected. Please choose a video from the dropdown.")
         return None, "No video selected."
 
     if body_roi_id == head_roi_id:
-        gr.Warning("body_roi_id and head_roi_id must be different.")
+        gr.Warning(
+            "Body ROI ID and Head ROI ID must be different. "
+            "Please enter a different ROI ID for each field."
+        )
         return None, "body_roi_id == head_roi_id — please fix ROI ids."
 
     from castle.service.preprocessing_service import preprocess_stabilized_camera
@@ -77,7 +82,10 @@ def _run_preprocessing(
         )
     except Exception as exc:
         logger.exception("Stabilized camera preprocessing failed")
-        gr.Warning(f"Preprocessing failed: {exc}")
+        gr.Warning(
+            f"Stabilized camera preprocessing failed. Check that ROI tracking is "
+            f"complete for this video and the ROI IDs are correct. Details: {exc}"
+        )
         return None, f"Error: {exc}"
 
     diag = result["diagnostics"]
@@ -168,7 +176,11 @@ def create_preprocess_ui(
                         value=0.25,
                         minimum=0.001,
                         interactive=True,
-                        info="Butterworth cutoff frequency. Lower = smoother camera.",
+                        info=(
+                            "Butterworth low-pass filter cutoff frequency. Default: 0.25 Hz. "
+                            "Lower values = smoother camera movement (more filtering). "
+                            "Higher values = preserves more rapid motion."
+                        ),
                     )
                     ui["order"] = gr.Number(
                         label="Filter order",
@@ -176,6 +188,10 @@ def create_preprocess_ui(
                         precision=0,
                         minimum=1,
                         interactive=True,
+                        info=(
+                            "Butterworth filter order. Default: 2. "
+                            "Higher orders give a sharper cutoff but may introduce ringing."
+                        ),
                     )
                     ui["margin"] = gr.Number(
                         label="Crop margin (px)",
@@ -183,7 +199,10 @@ def create_preprocess_ui(
                         precision=0,
                         minimum=0,
                         interactive=True,
-                        info="Extra pixels added around the HP residual displacement.",
+                        info=(
+                            "Extra padding pixels added around the crop region. Default: 75 px. "
+                            "Increase if the animal moves to the edge of the visible area."
+                        ),
                     )
                     ui["min_crop"] = gr.Number(
                         label="Min crop size (px)",
@@ -191,6 +210,10 @@ def create_preprocess_ui(
                         precision=0,
                         minimum=64,
                         interactive=True,
+                        info=(
+                            "Minimum crop size in pixels. Default: 300 px. "
+                            "Prevents the crop from becoming too small when the animal is stationary."
+                        ),
                     )
                     ui["output_size"] = gr.Number(
                         label="Output frame size (px)",
@@ -198,7 +221,10 @@ def create_preprocess_ui(
                         precision=0,
                         minimum=64,
                         interactive=True,
-                        info="Side length of square output frames. 518 = DINOv2 ViT-B/14 optimal.",
+                        info=(
+                            "Output frame side length in pixels. Default: 518 px "
+                            "(optimal for DINOv2 ViT-B/14). Use 224 for smaller/faster models."
+                        ),
                     )
                     ui["preview_duration"] = gr.Number(
                         label="Preview duration (s)",

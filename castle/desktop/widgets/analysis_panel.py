@@ -207,7 +207,11 @@ class AnalysisPanel(QWidget):
     @pyqtSlot()
     def _load_data(self):
         if not self._storage_path or not self._project_name:
-            QMessageBox.warning(self, "Error", "No project selected.")
+            QMessageBox.warning(
+                self,
+                "No Project Selected",
+                "No project selected. Please open a project from the Project panel first.",
+            )
             return
 
         session_id = self._session_combo.currentData() or None
@@ -247,14 +251,22 @@ class AnalysisPanel(QWidget):
         self._progress_bar.setVisible(False)
         self._load_btn.setEnabled(True)
         self._status_label.setText(f"Error: {err}")
-        QMessageBox.critical(self, "Load Error", err)
+        QMessageBox.critical(
+            self,
+            "Load Error",
+            f"Failed to load analysis data.\n\n{err}\n\nPlease verify the session exists and clustering has been completed.",
+        )
 
     # ---- Ethogram ----
 
     @pyqtSlot()
     def _generate_ethogram(self):
         if self._annotator_data is None:
-            QMessageBox.warning(self, "Error", "Load data first.")
+            QMessageBox.warning(
+                self,
+                "Data Not Loaded",
+                "Data not loaded. Please click 'Load Data' to load the session data first.",
+            )
             return
 
         self._ethogram_btn.setEnabled(False)
@@ -355,7 +367,11 @@ class AnalysisPanel(QWidget):
     @pyqtSlot()
     def _compute_metrics(self):
         if self._annotator_data is None:
-            QMessageBox.warning(self, "Error", "Load data first.")
+            QMessageBox.warning(
+                self,
+                "Data Not Loaded",
+                "Data not loaded. Please click 'Load Data' to load the session data first.",
+            )
             return
 
         self._metrics_btn.setEnabled(False)
@@ -433,4 +449,8 @@ class AnalysisPanel(QWidget):
         self._ethogram_btn.setEnabled(True)
         self._metrics_btn.setEnabled(True)
         self._status_label.setText(f"Error: {err}")
-        QMessageBox.critical(self, "Error", err)
+        QMessageBox.critical(
+            self,
+            "Analysis Error",
+            f"Analysis computation failed.\n\n{err}\n\nPlease check that the data was loaded correctly.",
+        )

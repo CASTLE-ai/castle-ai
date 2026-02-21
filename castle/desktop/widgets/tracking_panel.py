@@ -122,12 +122,21 @@ class _PreprocessPanel(QWidget):
         self._fc_spin.setMaximum(50.0)
         self._fc_spin.setValue(0.25)
         self._fc_spin.setSuffix(" Hz")
+        self._fc_spin.setToolTip(
+            "Butterworth low-pass filter cutoff frequency. Default: 0.25 Hz.\n"
+            "Lower values = smoother camera movement (more filtering).\n"
+            "Higher values = preserves more rapid motion."
+        )
         adv_form.addRow("Low-pass cutoff (fc):", self._fc_spin)
 
         self._order_spin = QSpinBox()
         self._order_spin.setMinimum(1)
         self._order_spin.setMaximum(10)
         self._order_spin.setValue(2)
+        self._order_spin.setToolTip(
+            "Butterworth filter order. Default: 2.\n"
+            "Higher orders give a sharper cutoff but may introduce ringing artifacts."
+        )
         adv_form.addRow("Filter order:", self._order_spin)
 
         self._margin_spin = QSpinBox()
@@ -135,6 +144,10 @@ class _PreprocessPanel(QWidget):
         self._margin_spin.setMaximum(2000)
         self._margin_spin.setValue(75)
         self._margin_spin.setSuffix(" px")
+        self._margin_spin.setToolTip(
+            "Extra padding pixels added around the crop region. Default: 75 px.\n"
+            "Increase if the animal moves to the edge of the visible area."
+        )
         adv_form.addRow("Crop margin:", self._margin_spin)
 
         self._min_crop_spin = QSpinBox()
@@ -142,6 +155,10 @@ class _PreprocessPanel(QWidget):
         self._min_crop_spin.setMaximum(4096)
         self._min_crop_spin.setValue(300)
         self._min_crop_spin.setSuffix(" px")
+        self._min_crop_spin.setToolTip(
+            "Minimum crop size in pixels. Default: 300 px.\n"
+            "Prevents the crop from becoming too small when the animal is stationary."
+        )
         adv_form.addRow("Min crop size:", self._min_crop_spin)
 
         self._output_size_spin = QSpinBox()
@@ -149,6 +166,10 @@ class _PreprocessPanel(QWidget):
         self._output_size_spin.setMaximum(4096)
         self._output_size_spin.setValue(518)
         self._output_size_spin.setSuffix(" px")
+        self._output_size_spin.setToolTip(
+            "Output frame side length in pixels. Default: 518 px\n"
+            "(optimal for DINOv2 ViT-B/14). Use 224 for smaller/faster models."
+        )
         adv_form.addRow("Output frame size:", self._output_size_spin)
 
         self._preview_dur_spin = QDoubleSpinBox()
@@ -206,16 +227,29 @@ class _PreprocessPanel(QWidget):
 
     def _run(self) -> None:
         if not self._storage_path or not self._project_name:
-            QMessageBox.warning(self, "Error", "No project loaded.")
+            QMessageBox.warning(
+                self,
+                "No Project Loaded",
+                "No project loaded. Please open a project from the Project panel first.",
+            )
             return
         video_name = self._video_combo.currentText()
         if not video_name:
-            QMessageBox.warning(self, "Error", "No video selected.")
+            QMessageBox.warning(
+                self,
+                "No Video Selected",
+                "No video selected. Please select a video from the list.",
+            )
             return
         body_roi = self._body_roi_spin.value()
         head_roi = self._head_roi_spin.value()
         if body_roi == head_roi:
-            QMessageBox.warning(self, "Error", "body_roi_id and head_roi_id must be different.")
+            QMessageBox.warning(
+                self,
+                "Invalid ROI IDs",
+                "Body ROI ID and Head ROI ID cannot be the same. "
+                "Please enter a different value for each.",
+            )
             return
 
         self._progress_bar.setVisible(True)
@@ -266,7 +300,13 @@ class _PreprocessPanel(QWidget):
         self._progress_bar.setVisible(False)
         self._run_btn.setEnabled(True)
         self._log_text.append(f"❌ Error: {err}")
-        QMessageBox.critical(self, "Preprocessing Error", err)
+        QMessageBox.critical(
+            self,
+            "Preprocessing Error",
+            f"Preprocessing failed.\n\n{err}\n\n"
+            "Verify that ROI tracking has been completed for this video (Step 2) "
+            "and that the ROI IDs are correct.",
+        )
 
 
 class TrackingPanel(QWidget):
@@ -398,7 +438,11 @@ class TrackingPanel(QWidget):
     def _track_selected(self):
         vname = self._get_selected_video_name()
         if not vname:
-            QMessageBox.warning(self, "Error", "Select a video first.")
+            QMessageBox.warning(
+                self,
+                "No Video Selected",
+                "No video selected. Please select a video from the tracking list.",
+            )
             return
         self._run_tracking([vname])
 
@@ -408,7 +452,12 @@ class TrackingPanel(QWidget):
         info = svc_get_project_info(self._storage_path, self._project_name)
         videos = info.get('videos', [])
         if not videos:
-            QMessageBox.warning(self, "Error", "No videos in project.")
+            QMessageBox.warning(
+                self,
+                "No Videos",
+                "No videos found in this project. "
+                "Please add videos in the Source panel first.",
+            )
             return
         self._run_tracking(videos)
 

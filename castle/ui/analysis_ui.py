@@ -63,11 +63,17 @@ def _load_data(storage_path: str, project_name: str, session_id: str):
     try:
         data = load_annotator_data(storage_path, project_name, session_id=sid)
     except FileNotFoundError as exc:
-        gr.Warning(str(exc))
+        gr.Warning(
+            "Analysis data not found. Please complete the clustering and annotation "
+            "steps first, then reload."
+        )
         return None, f"**Error:** {exc}"
     except Exception as exc:
         logger.exception("Failed to load annotator data")
-        gr.Warning(f"Failed to load: {exc}")
+        gr.Warning(
+            "Failed to load analysis data. Please reload the session or check that "
+            "clustering has been completed for this project."
+        )
         return None, f"**Error:** {exc}"
 
     n_clusters = len(data.cluster_meta)
@@ -111,8 +117,12 @@ def export_ethogram_csv_handler(storage_path: str, project_name: str, session_id
 
     try:
         export_ethogram_csv(project_path=project_path, output_path=csv_dir)
-    except FileNotFoundError as exc:
-        return f"**❌ Export failed:** {exc}", gr.update(value=None, visible=False)
+    except FileNotFoundError:
+        return (
+            "**❌ Export failed:** Ethogram data not found. "
+            "Please generate the ethogram first by clicking '▶ Generate Ethogram'.",
+            gr.update(value=None, visible=False),
+        )
     except Exception as exc:
         logger.exception("Ethogram CSV export failed")
         return f"**❌ Export failed:** {exc}", gr.update(value=None, visible=False)
@@ -165,7 +175,10 @@ def generate_ethogram(annotator_data):
         ethogram = compute_ethogram_from_data(cluster_labels, fps=fps, cluster_names=cluster_names)
     except Exception as exc:
         logger.exception("compute_ethogram failed")
-        gr.Warning(f"Ethogram computation failed: {exc}")
+        gr.Warning(
+            "Ethogram computation failed. Make sure clusters are labeled before generating "
+            f"the ethogram (Step 4b). Details: {exc}"
+        )
         return None, None, None
 
     # --- A1: Transition matrix heatmap ---
@@ -226,7 +239,10 @@ def compute_quality_metrics(annotator_data):
         )
     except Exception as exc:
         logger.exception("evaluate_clustering failed")
-        gr.Warning(f"Metrics computation failed: {exc}")
+        gr.Warning(
+            "Quality metrics computation failed. Embedding data may be missing — "
+            f"try re-running UMAP to generate embeddings. Details: {exc}"
+        )
         return None
 
     def _fmt(v):

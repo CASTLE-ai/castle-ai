@@ -182,9 +182,19 @@ class ProjectPanel(QWidget):
             self._refresh_projects()
             self.project_opened.emit(self._storage_path, name)
         except FileExistsError:
-            QMessageBox.warning(self, "Error", f"Project '{name}' already exists.")
+            QMessageBox.warning(
+                self,
+                "Project Already Exists",
+                f"A project named '{name}' already exists. "
+                "Please choose a different name.",
+            )
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to create project: {e}")
+            QMessageBox.critical(
+                self,
+                "Create Project Error",
+                f"Failed to create project '{name}'.\n\n{e}\n\n"
+                "Check that the storage directory is accessible and writable.",
+            )
 
     def _delete_selected_project(self):
         item = self._project_list.currentItem()

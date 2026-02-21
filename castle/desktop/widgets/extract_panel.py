@@ -49,6 +49,10 @@ class ExtractPanel(QWidget):
         self._roi_spin.setMinimum(1)
         self._roi_spin.setMaximum(99)
         self._roi_spin.setValue(1)
+        self._roi_spin.setToolTip(
+            "ROI (Region of Interest) ID for feature extraction.\n"
+            "Default: 1 (the animal body). Must match the ROI tracked in Step 2."
+        )
         cfg.addWidget(self._roi_spin)
 
         cfg.addWidget(QLabel("Batch:"))
@@ -56,6 +60,11 @@ class ExtractPanel(QWidget):
         self._batch_spin.setMinimum(1)
         self._batch_spin.setMaximum(256)
         self._batch_spin.setValue(32)
+        self._batch_spin.setToolTip(
+            "Frames processed simultaneously. Default: 32.\n"
+            "Larger values are faster but use more GPU memory.\n"
+            "Reduce to 8 or 16 if you get out-of-memory errors."
+        )
         cfg.addWidget(self._batch_spin)
 
         self._skip_cb = QCheckBox("Skip existing")
@@ -91,6 +100,9 @@ class ExtractPanel(QWidget):
         self._center_id_spin.setMinimum(1)
         self._center_id_spin.setMaximum(99)
         self._center_id_spin.setValue(1)
+        self._center_id_spin.setToolTip(
+            "ROI ID used to center the crop region. Default: 1 (body centroid)."
+        )
         row1.addWidget(self._center_id_spin)
 
         row1.addWidget(QLabel("Crop W:"))
@@ -98,6 +110,10 @@ class ExtractPanel(QWidget):
         self._crop_w_spin.setMinimum(50)
         self._crop_w_spin.setMaximum(1000)
         self._crop_w_spin.setValue(300)
+        self._crop_w_spin.setToolTip(
+            "Crop region width in pixels. Default: 300.\n"
+            "Larger values include more context but increase processing time."
+        )
         row1.addWidget(self._crop_w_spin)
 
         row1.addWidget(QLabel("H:"))
@@ -105,6 +121,10 @@ class ExtractPanel(QWidget):
         self._crop_h_spin.setMinimum(50)
         self._crop_h_spin.setMaximum(1000)
         self._crop_h_spin.setValue(300)
+        self._crop_h_spin.setToolTip(
+            "Crop region height in pixels. Default: 300.\n"
+            "Keep width and height equal for square crops."
+        )
         row1.addWidget(self._crop_h_spin)
 
         row1.addStretch()
@@ -119,6 +139,10 @@ class ExtractPanel(QWidget):
         self._tail_id_spin.setMinimum(1)
         self._tail_id_spin.setMaximum(99)
         self._tail_id_spin.setValue(2)
+        self._tail_id_spin.setToolTip(
+            "ROI ID for the tail/reference point used to compute body orientation.\n"
+            "Default: 2. Requires the tail to be tracked in Step 2."
+        )
         row2.addWidget(self._tail_id_spin)
 
         self._rmbg_cb = QCheckBox("Remove Background")
@@ -226,12 +250,20 @@ class ExtractPanel(QWidget):
 
     def _run_extraction(self):
         if not self._storage_path or not self._project_name:
-            QMessageBox.warning(self, "Error", "Open a project first.")
+            QMessageBox.warning(
+                self,
+                "No Project Open",
+                "No project open. Please open or create a project from the Project panel first.",
+            )
             return
 
         video_name = self._video_combo.currentText()
         if not video_name:
-            QMessageBox.warning(self, "Error", "Select a video.")
+            QMessageBox.warning(
+                self,
+                "No Video Selected",
+                "No video selected. Please select a target video from the dropdown.",
+            )
             return
 
         self._extract_btn.setEnabled(False)
@@ -259,7 +291,12 @@ class ExtractPanel(QWidget):
             try:
                 feature_layers = [int(x.strip()) for x in layers_text.split(',') if x.strip()]
             except ValueError:
-                QMessageBox.warning(self, "Error", f"Invalid layer format: '{layers_text}'")
+                QMessageBox.warning(
+                    self,
+                    "Invalid Layer Format",
+                    f"Invalid feature layer format: '{layers_text}'.\n"
+                    "Please use comma-separated integers, e.g. '3,7,11'.",
+                )
                 return
 
         self._worker = ExtractionWorker(
@@ -296,4 +333,10 @@ class ExtractPanel(QWidget):
         self._progress_bar.setVisible(False)
         self._extract_btn.setEnabled(True)
         self._log_text.append(f"❌ Error: {err}")
-        QMessageBox.critical(self, "Extraction Error", err)
+        QMessageBox.critical(
+            self,
+            "Extraction Error",
+            f"Feature extraction failed.\n\n{err}\n\n"
+            "Check that ROI tracking is complete and that you have "
+            "sufficient GPU memory (try reducing Batch size).",
+        )

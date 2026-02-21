@@ -136,7 +136,11 @@ class SourcePanel(QWidget):
 
     def _browse_videos(self):
         if not self._project_name:
-            QMessageBox.warning(self, "Error", "Open a project first.")
+            QMessageBox.warning(
+                self,
+                "No Project Open",
+                "No project open. Please open a project from the Project panel before adding videos.",
+            )
             return
 
         paths, _ = QFileDialog.getOpenFileNames(
@@ -158,12 +162,20 @@ class SourcePanel(QWidget):
 
     def _import_from_directory(self):
         if not self._project_name:
-            QMessageBox.warning(self, "Error", "Open a project first.")
+            QMessageBox.warning(
+                self,
+                "No Project Open",
+                "No project open. Please open a project from the Project panel before adding videos.",
+            )
             return
 
         directory = self._dir_input.text().strip()
         if not directory or not os.path.isdir(directory):
-            QMessageBox.warning(self, "Error", "Enter a valid directory path.")
+            QMessageBox.warning(
+                self,
+                "Invalid Directory",
+                "Invalid directory path. Please enter an accessible server directory path.",
+            )
             return
 
         result = svc_add_from_dir(self._storage_path, self._project_name, directory)

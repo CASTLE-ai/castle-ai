@@ -167,8 +167,85 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 
 ---
 
+---
+
+## 9. Batch Processing (Phase 4)
+
+If you have multiple experiments or projects to process in one go, use the batch pipeline.
+
+### Create an `experiments.yaml` file
+
+```yaml
+experiments:
+  - name: "Control Group"
+    project: "/data/control"
+    videos: ["mouse1.mp4", "mouse2.mp4"]
+    params:
+      fc: 0.25
+  - name: "Treatment Group"
+    project: "/data/treatment"
+    videos: ["mouse3.mp4", "mouse4.mp4"]
+
+parallel: false
+max_workers: 2
+```
+
+### Run the batch
+
+```bash
+# Process all projects
+castle batch run experiments.yaml
+
+# Check status of the last run
+castle batch status experiments.yaml
+
+# Generate HTML reports for each project
+castle batch report experiments.yaml --output reports/
+```
+
+!!! tip "Parallelism"
+    Set `parallel: true` and `max_workers: N` in the YAML (or use `--parallel --max-workers N`)
+    to run multiple projects concurrently on a multi-GPU or multi-core machine.
+
+---
+
+## 10. Multi-Subject Analysis (Phase 4)
+
+For videos containing **multiple animals**, CASTLE provides `MultiSubjectProject` to manage
+independent preprocessing, feature extraction, and clustering per subject, plus social feature
+analysis across subjects.
+
+```python
+from castle.core.multi_subject import MultiSubjectProject
+from castle.analysis.social_features import (
+    compute_pairwise_distance,
+    detect_social_events,
+)
+from castle.analysis.group_ethogram import build_group_ethogram, plot_group_ethogram
+
+# Register subjects by their ROI IDs in the mask HDF5
+project = MultiSubjectProject("/data/projects/social_session", "video01.mp4")
+project.add_subject(subject_id=0, body_roi=1, head_roi=2)
+project.add_subject(subject_id=1, body_roi=3, head_roi=4)
+project.process_all()
+
+tracks = project.get_subjects()
+
+# Social features
+dist   = compute_pairwise_distance(tracks)   # (N, S, S) pixel distances
+events = detect_social_events(tracks, distance_threshold=50, duration_threshold=15)
+
+# After setting labels on each track (from your clustering step):
+# track.set_labels(cluster_labels)
+ethogram = build_group_ethogram(tracks, fps=30.0)
+plot_group_ethogram(ethogram, output_path="/tmp/group_ethogram.png")
+```
+
+---
+
 ## What's Next?
 
 - **[Tutorials](../tutorials/overview.md)** — Detailed step-by-step guides for each stage of the pipeline
 - **[Technical Guide](../technical/architecture.md)** — Understand how CASTLE works under the hood
 - **[Configuration](../technical/configuration.md)** — Customize parameters for your experiments
+- **[API Reference](../reference/api.md)** — Full API docs for Phase 4 modules (batch, multi-subject, social features, reports)

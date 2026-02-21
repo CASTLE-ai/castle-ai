@@ -924,3 +924,291 @@ with SimpleVideoReader("video.mp4") as r:
 
 * `step=1` uses fully sequential decoding (no seek per frame)
 * `step>1` seeks to each frame individually via `get_frame()`
+
+---
+
+## Phase 4 Feature Modules 🟢
+
+### Multi-Subject Tracking
+
+`SubjectTrack` and `MultiSubjectProject` provide first-class support for videos containing
+multiple independently tracked animals.
+
+::: castle.core.multi_subject
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - SubjectTrack
+        - SubjectTrack.n_frames
+        - SubjectTrack.set_latents
+        - SubjectTrack.set_labels
+        - MultiSubjectProject
+        - MultiSubjectProject.add_subject
+        - MultiSubjectProject.process_all
+        - MultiSubjectProject.get_subjects
+        - MultiSubjectProject.get_subject
+
+Quick reference:
+
+```python
+from castle.core.multi_subject import MultiSubjectProject
+
+project = MultiSubjectProject("/data/projects/social_session", "video01.mp4")
+project.add_subject(subject_id=0, body_roi=1, head_roi=2)
+project.add_subject(subject_id=1, body_roi=3, head_roi=4)
+
+# Extracts positions + angles for all subjects from the shared mask HDF5
+project.process_all(
+    n_frames=None,            # auto-inferred from video metadata
+    progress_callback=lambda cur, total: print(f"{cur}/{total}"),
+)
+
+tracks = project.get_subjects()   # list[SubjectTrack], sorted by subject_id
+track0 = project.get_subject(0)   # single SubjectTrack
+
+print(track0.n_frames)        # → int
+print(track0.positions.shape) # → (N, 2)
+print(track0.angles.shape)    # → (N,)
+
+# Assign latents + labels after your extraction / clustering step
+track0.set_latents(latent_array)   # np.ndarray (N, D)
+track0.set_labels(cluster_labels)  # np.ndarray (N,)
+```
+
+---
+
+### Social Feature Extraction
+
+::: castle.analysis.social_features
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - compute_pairwise_distance
+        - compute_relative_orientation
+        - compute_approach_score
+        - detect_social_events
+
+Quick reference:
+
+```python
+from castle.analysis.social_features import (
+    compute_pairwise_distance,
+    compute_relative_orientation,
+    compute_approach_score,
+    detect_social_events,
+)
+
+# All functions take a list[SubjectTrack] — must be synchronised (same n_frames)
+
+dist = compute_pairwise_distance(tracks)
+# → np.ndarray shape (N, n_subjects, n_subjects), symmetric, diagonal=0
+
+orient = compute_relative_orientation(tracks)
+# → np.ndarray (N, S, S), degrees in (-180, 180]
+# orient[t, i, j] = 0° means subject i faces directly toward j at frame t
+
+approach = compute_approach_score(tracks, window=30)
+# → np.ndarray (N, S, S); positive = approaching, negative = receding
+
+events = detect_social_events(
+    tracks,
+    distance_threshold=50.0,  # px
+    duration_threshold=15,    # frames
+)
+# → list of dicts: {type, subjects, start_frame, end_frame, duration}
+```
+
+| Function | Output shape | Notes |
+|----------|-------------|-------|
+| `compute_pairwise_distance` | `(N, S, S)` | Euclidean pixel distance; symmetric |
+| `compute_relative_orientation` | `(N, S, S)` | Heading-relative angle in degrees |
+| `compute_approach_score(window=W)` | `(N, S, S)` | −mean(Δdist) over W frames; symmetric |
+| `detect_social_events(dist_thr, dur_thr)` | `list[dict]` | Sorted by `start_frame` |
+
+---
+
+### Group Ethogram
+
+::: castle.analysis.group_ethogram
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - build_group_ethogram
+        - plot_group_ethogram
+
+Quick reference:
+
+```python
+from castle.analysis.group_ethogram import build_group_ethogram, plot_group_ethogram
+
+# Build — requires track.labels to be set on every SubjectTrack
+ethogram = build_group_ethogram(
+    tracks,
+    fps=30.0,
+    cluster_names={0: "rest", 1: "groom", 2: "explore"},
+    distance_threshold=50.0,
+    duration_threshold=15,
+)
+
+# ethogram dict keys:
+#   fps, n_frames, n_subjects, subject_ids,
+#   per_subject: {sid: {ethogram, labels, cluster_names}},
+#   social_events: list[dict],
+#   time_axis: np.ndarray (N,) seconds
+
+# Visualise
+path = plot_group_ethogram(
+    ethogram,
+    output_path="/tmp/group_ethogram.png",
+    figsize=None,                # auto: (14, n_subjects*1.5 + 1.5)
+    bar_height=0.8,
+    social_event_color="#CC0000",
+    dpi=150,
+)
+print(path)   # absolute path to saved PNG
+```
+
+The figure contains one row per subject (colour-coded behaviour raster) plus a bottom row showing social interaction spans.
+
+---
+
+### Batch Config & Runner
+
+::: castle.core.batch
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - BatchConfig
+        - BatchConfig.from_yaml
+        - BatchRunner
+        - BatchRunner.run
+        - BatchRunner.generate_summary
+
+Quick reference:
+
+```python
+from castle.core.batch import BatchConfig, BatchRunner
+
+# Load from YAML
+config = BatchConfig.from_yaml("experiments.yaml")
+
+# Or construct programmatically
+config = BatchConfig(
+    projects=[
+        {"name": "ctrl", "project": "/data/ctrl", "videos": ["v1.mp4"], "params": {}},
+        {"name": "treat", "project": "/data/treat", "videos": [], "params": {"fc": 0.1}},
+    ],
+    parallel=True,
+    max_workers=2,
+)
+
+runner  = BatchRunner(config)
+results = runner.run(progress_callback=lambda frac, msg: print(f"{frac:.0%} {msg}"))
+
+# results: list[dict] with keys name, project, status, tracking, extraction, elapsed_s, error
+summary = runner.generate_summary(results)
+print(summary)
+```
+
+`BatchRunner.run()` delegates each project to `Pipeline` (from `castle.core.pipeline`).  
+With `parallel=True`, projects run concurrently in a `ThreadPoolExecutor`.
+
+**YAML format:**
+
+```yaml
+experiments:
+  - name: "Control Group"
+    project: "/data/control"
+    videos: ["mouse1.mp4", "mouse2.mp4"]   # empty = process all source videos
+    params:
+      fc: 0.25
+      n_clusters: 10
+
+parallel: false      # set true to run projects concurrently
+max_workers: 2
+```
+
+---
+
+### Batch CLI
+
+::: castle.cli.batch_cmd
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - batch_run
+        - batch_status
+        - batch_report
+
+Quick reference:
+
+```bash
+# Run all experiments defined in a YAML file
+castle batch run experiments.yaml
+
+# Run with parallelism
+castle batch run experiments.yaml --parallel --max-workers 4
+
+# Check status of the last batch run (reads .batch_result.json)
+castle batch status experiments.yaml
+
+# Generate HTML reports for each project
+castle batch report experiments.yaml --output reports/
+
+# Generate a single combined HTML report (first project)
+castle batch report experiments.yaml --output summary.html \
+    --include-ethogram --include-quality
+```
+
+| Sub-command | Description |
+|-------------|-------------|
+| `batch run` | Execute the full pipeline for all experiments |
+| `batch status` | Display status of the most recent run |
+| `batch report` | Generate HTML reports via `ReportGenerator` |
+
+---
+
+### HTML Report Generator
+
+::: castle.analysis.report
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - ReportGenerator
+        - ReportGenerator.generate
+
+Quick reference:
+
+```python
+from castle.analysis.report import ReportGenerator
+
+gen = ReportGenerator(
+    project_path="/storage/my_project",
+    session_id="exp01",          # optional — shown in report header
+)
+
+# Generate full report
+path = gen.generate(
+    output_path="report.html",   # None → auto path inside project/reports/
+    include_ethogram=True,       # ethogram plot + bout stats + transition matrix
+    include_quality=True,        # silhouette, CH, DB, inertia + embedding scatter
+    include_comparison=False,    # cross-project section (placeholder for single project)
+)
+print(f"Report saved to {path}")
+```
+
+The report is a **self-contained HTML file** — no external dependencies. Sections:
+
+| Section | Content | Requires |
+|---------|---------|---------|
+| Header | Metadata cards (project, session, frames, clusters, models) | Always |
+| Ethogram | Frequency bar chart + bout stats table + transition matrix | Cluster data |
+| Quality Metrics | Silhouette / CH / DB / inertia badges + 2-D embedding scatter | Cluster data |
+| Group Comparison | Placeholder with link to `BatchRunner.generate_summary()` | `include_comparison=True` |
+| Footer | Generation timestamp | Always |

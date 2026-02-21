@@ -126,6 +126,7 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 | `compare_cmd.py` | `castle compare run/fingerprint` |
 | `gui_cmd.py` | `castle gui` — launch the PyQt6 desktop app |
 | `mcp_cmd.py` | `castle mcp start` — start the MCP server |
+| `batch_cmd.py` 🟢 | `castle batch run/status/report` — batch processing across multiple experiments (P4) |
 
 ### `castle/ui/` — Gradio Web Interface
 
@@ -234,6 +235,18 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `project_data.py` 🔷 | `ProjectData` + `VideoInfo` dataclasses — unified project path computation, eliminating scattered `os.path.join` calls |
 | `cluster_data.py` 🔷 | `ClusterData` dataclass — consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, `annotations.csv` into one typed container |
 | `device_factory.py` 🔷 | `DeviceFactory` — centralised device detection and algorithm factory (UMAP, DBSCAN, HDBSCAN) with GPU/CPU/MPS dispatch |
+| `multi_subject.py` 🟢 | `SubjectTrack` + `MultiSubjectProject` — multi-subject tracking data containers and pipeline orchestration (P4) |
+| `batch.py` 🟢 | `BatchConfig` + `BatchRunner` — YAML-driven multi-project batch processing with optional parallelism and summary reporting (P4) |
+
+### `castle/analysis/` — Analysis Layer (Phase 4) 🟢
+
+Higher-level analysis modules that sit above `castle/core/` and operate on multi-subject tracking data.
+
+| Module | Purpose |
+|--------|---------|
+| `social_features.py` 🟢 | Pairwise distance, relative orientation, approach/avoidance score, social event detection for multi-subject recordings |
+| `group_ethogram.py` 🟢 | `build_group_ethogram` + `plot_group_ethogram` — synchronized multi-subject ethogram construction and publication-quality visualization |
+| `report.py` 🟢 | `ReportGenerator` — self-contained HTML report with ethogram plot, quality metrics, transition matrix, optional group comparison |
 
 ### `castle/utils/` — Utility Layer
 
@@ -651,3 +664,160 @@ Gradio Output
 | Unexpected / bug | log + `raise gr.Error("Unexpected error — check logs")` |
 
 See `castle/ui/HANDLER_GUIDE.md` for full examples and anti-patterns.
+
+---
+
+## Phase 4 Feature Modules 🟢
+
+Phase 4 adds social/multi-subject analysis, batch processing, and HTML report generation.
+
+### Multi-Subject Tracking (`castle/core/multi_subject.py`)
+
+```python
+from castle.core.multi_subject import SubjectTrack, MultiSubjectProject
+
+project = MultiSubjectProject("/data/projects/social_session", "video01.mp4")
+project.add_subject(subject_id=0, body_roi=1, head_roi=2)
+project.add_subject(subject_id=1, body_roi=3, head_roi=4)
+project.process_all()
+
+tracks = project.get_subjects()   # list[SubjectTrack]
+```
+
+**`SubjectTrack`** — immutable data container per individual:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `subject_id` | `int` | Unique identifier |
+| `body_roi_id` | `int` | Body ROI pixel value in mask HDF5 |
+| `head_roi_id` | `int` | Head ROI pixel value in mask HDF5 |
+| `positions` | `np.ndarray (N, 2)` | Raw centroid [x, y] per frame |
+| `angles` | `np.ndarray (N,)` | Unwrapped orientation (degrees) |
+| `latents` | `np.ndarray (N, D) or None` | Feature vectors (set after extraction) |
+| `labels` | `np.ndarray (N,) or None` | Cluster assignments (set after clustering) |
+
+**`MultiSubjectProject`** orchestrates per-subject preprocessing from the shared mask HDF5. Call `process_all()` to populate `positions` and `angles`; feature extraction and clustering are applied externally via `set_latents()` / `set_labels()`.
+
+---
+
+### Social Feature Extraction (`castle/analysis/social_features.py`)
+
+Operates on synchronised lists of `SubjectTrack` objects (same `n_frames`).
+
+```python
+from castle.analysis.social_features import (
+    compute_pairwise_distance,
+    compute_relative_orientation,
+    compute_approach_score,
+    detect_social_events,
+)
+
+dist    = compute_pairwise_distance(tracks)      # (N, S, S)
+orient  = compute_relative_orientation(tracks)   # (N, S, S) degrees
+approach = compute_approach_score(tracks, window=30)  # (N, S, S)
+events  = detect_social_events(tracks, distance_threshold=50, duration_threshold=15)
+```
+
+| Function | Output | Description |
+|----------|--------|-------------|
+| `compute_pairwise_distance` | `(N, S, S)` float | Symmetric pixel distance matrix per frame |
+| `compute_relative_orientation` | `(N, S, S)` float | Angle (°) from subject *i* heading toward *j*; 0° = facing |
+| `compute_approach_score` | `(N, S, S)` float | Negative Δdistance over sliding window; positive = approaching |
+| `detect_social_events` | `list[dict]` | Proximity events ≥ `duration_threshold` frames |
+
+Each event dict contains `type`, `subjects`, `start_frame`, `end_frame`, `duration`.
+
+---
+
+### Group Ethogram (`castle/analysis/group_ethogram.py`)
+
+```python
+from castle.analysis.group_ethogram import build_group_ethogram, plot_group_ethogram
+
+ethogram = build_group_ethogram(tracks, fps=30.0, cluster_names={0: "rest", 1: "groom"})
+path = plot_group_ethogram(ethogram, output_path="/tmp/group_ethogram.png")
+```
+
+`build_group_ethogram` returns a dict with `fps`, `n_frames`, `n_subjects`, `subject_ids`, `per_subject` (per-subject ethogram + labels), `social_events`, and `time_axis`.
+
+`plot_group_ethogram` renders a colour-coded raster (one row per subject) plus a social-event shading row at the bottom. Saved as PNG/SVG depending on the extension.
+
+---
+
+### Batch Processing (`castle/core/batch.py`)
+
+YAML-driven multi-project batch runner.
+
+```yaml
+# experiments.yaml
+experiments:
+  - name: "Control Group"
+    project: "/data/control"
+    videos: ["mouse1.mp4", "mouse2.mp4"]
+    params:
+      fc: 0.25
+      n_clusters: 10
+  - name: "Treatment Group"
+    project: "/data/treatment"
+    videos: ["mouse3.mp4"]
+
+parallel: false
+max_workers: 2
+```
+
+```python
+from castle.core.batch import BatchConfig, BatchRunner
+
+config  = BatchConfig.from_yaml("experiments.yaml")
+runner  = BatchRunner(config)
+results = runner.run(progress_callback=lambda f, m: print(f"{f:.0%} {m}"))
+print(runner.generate_summary(results))
+```
+
+Each result dict contains `name`, `project`, `status` (`done`/`error`/`skipped`), `tracking`, `extraction`, `elapsed_s`, `error`.  
+Set `config.parallel = True` + `config.max_workers = N` for concurrent project execution.
+
+---
+
+### Batch CLI (`castle/cli/batch_cmd.py`)
+
+```bash
+# Run all experiments
+castle batch run experiments.yaml [--parallel] [--max-workers 4]
+
+# Show status of last run
+castle batch status experiments.yaml
+
+# Generate HTML reports
+castle batch report experiments.yaml --output reports/
+castle batch report experiments.yaml --output combined.html
+```
+
+Results are persisted as `experiments.batch_result.json` alongside the YAML file.
+
+---
+
+### HTML Report Generator (`castle/analysis/report.py`)
+
+```python
+from castle.analysis.report import ReportGenerator
+
+gen  = ReportGenerator("/storage/my_project", session_id="exp01")
+path = gen.generate(
+    output_path="report.html",
+    include_ethogram=True,
+    include_quality=True,
+    include_comparison=False,
+)
+```
+
+Reports are **self-contained HTML files** (no external CSS/JS dependencies) with:
+- Project metadata cards (project name, session, frame count, cluster count, model names)
+- Inline base64 PNG ethogram frequency bar chart
+- Bout statistics table (frequency %, mean/median duration, CV)
+- Transition matrix with entropy and stationarity metrics
+- Clustering quality badges (Silhouette, Calinski-Harabász, Davies-Bouldin, Inertia)
+- Optional 2-D embedding scatter plot (if `embedding_2d` available from metrics service)
+- Group comparison placeholder (links to `BatchRunner.generate_summary()`)
+
+`generate()` falls back gracefully if `matplotlib` plots fail (e.g. no cluster data) — it logs a warning and omits the plot section rather than aborting the report.

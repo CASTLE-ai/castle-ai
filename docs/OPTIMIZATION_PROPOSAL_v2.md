@@ -132,7 +132,7 @@ Resize → 518 × 518 → DINOv2
 
 ---
 
-## 3. Phase 0: KIT/SKE 前處理整合
+## 3. Phase 0: KIT/SKE 前處理整合 ✅ DONE
 
 **優先級**: ★★★ 最高  
 **目標**: 將 Raiso 的 Stabilized Virtual Camera 前處理整合進 CASTLE，成為標準前處理選項
@@ -261,7 +261,7 @@ Agent-Docs0
 
 ---
 
-## 4. Phase 1: UX 大改善 + Docker 部署
+## 4. Phase 1: UX 大改善 + Docker 部署 ✅ DONE
 
 **優先級**: ★★ 高  
 **目標**: 冷啟動零障礙，國中生到 80 歲 PI 不需要問人不需要看文件
@@ -393,7 +393,7 @@ Agent-Docs1 → README Docker section, wizard tutorial, UX 指南
 
 ---
 
-## 5. Phase 2: 效能優化
+## 5. Phase 2: 效能優化 ✅ DONE
 
 **優先級**: ★★ 高  
 **目標**: 降低 VRAM usage, 提升 throughput, 避免重複計算
@@ -455,7 +455,7 @@ Agent-Docs2 → 效能調校文檔, GPU 需求說明
 
 ---
 
-## 6. Phase 3: 程式碼簡化
+## 6. Phase 3: 程式碼簡化 ✅ DONE
 
 **優先級**: ★ 中  
 **目標**: 更少的 code、更少的 bug surface、更好的可讀性
@@ -521,43 +521,40 @@ Agent-Docs3 → 更新 architecture.md, api.md
 
 ---
 
-## 7. Phase 4: 功能強化
+## 7. Phase 4: 功能強化 ✅ DONE
 
 **優先級**: 依功能決定  
 **決策**: P4-2 (Real-time streaming) 暫緩
 
-### P4-1: 多動物支援 (Multi-Subject)
+### P4-1: 多動物支援 (Multi-Subject) ✅ DONE
 
 ```
-Agent-4A
-├── P4-1a: 同一影片追蹤多個動物（各自獨立 ROI + latent）
-├── P4-1b: 社交行為 features（相對距離、朝向、接近/遠離）
-└── P4-1c: 群體 ethogram（多動物行為時間軸同步顯示）
+castle/core/multi_subject.py        — SubjectTrack, MultiSubjectProject
+castle/analysis/social_features.py  — pairwise distance, orientation, approach score, events
+castle/analysis/group_ethogram.py   — build_group_ethogram, plot_group_ethogram
 ```
 
-### P4-3: Batch Processing
+### P4-3: Batch Processing ✅ DONE
 
 ```
-Agent-4B
-├── P4-3a: experiments.yaml 定義多專案 pipeline
-├── P4-3b: castle batch run experiments.yaml
-└── P4-3c: 批次完成後自動產生摘要
+castle/core/batch.py       — BatchConfig (from_yaml), BatchRunner (run, generate_summary)
+castle/cli/batch_cmd.py    — castle batch run / status / report
 ```
 
-### P4-4: Report Generation
+### P4-4: Report Generation ✅ DONE
 
 ```
-Agent-4C
-├── P4-4a: 一鍵產生 PDF/HTML 分析報告
-├── P4-4b: 包含 ethogram、metrics、cluster info、統計圖
-└── P4-4c: 可自訂模板
+castle/analysis/report.py  — ReportGenerator (self-contained HTML with inline plots)
 ```
 
-### P4-QC + P4-Docs
+### P4-QC + P4-Docs ✅ DONE
 
 ```
-Agent-QC4 → 每個功能個別 QC
-Agent-Docs4 → 功能教學 + API
+docs/technical/architecture.md  — Phase 4 modules + API reference sections added
+docs/reference/api.md           — Full Phase 4 API documentation added
+README.md                       — Phase 4 changelog + CLI commands updated
+docs/getting-started/quickstart.md — Batch processing + multi-subject sections added
+docs/OPTIMIZATION_PROPOSAL_v2.md   — All phases marked ✅ DONE
 ```
 
 ---
@@ -716,4 +713,5 @@ Phase 4 (功能)          ░░░░░░░░░░░░░░░░░░
 ---
 
 *提案版本: v2.0 | 最後更新: 2026-02-21*  
+*完成狀態: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ — 全部完成*  
 *El Psy Kongroo.*

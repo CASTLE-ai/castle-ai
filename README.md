@@ -30,6 +30,13 @@
 - [API Reference](https://castle-ai.github.io/castle-ai/reference/api/)
 
 ## Latest Updates
+- **2026-02: Phase 4 — Multi-Subject, Batch Processing & Reports** 🟢
+  - **`SubjectTrack` + `MultiSubjectProject`** (`castle/core/multi_subject.py`): First-class support for videos with multiple animals. Each subject is defined by body + head ROI IDs in the shared mask HDF5. `process_all()` extracts per-subject positions and angles; the resulting `SubjectTrack` objects hold latents and cluster labels set by your extraction/clustering steps.
+  - **Social Feature Extraction** (`castle/analysis/social_features.py`): `compute_pairwise_distance`, `compute_relative_orientation`, `compute_approach_score`, and `detect_social_events` — all operating on synchronised `SubjectTrack` lists and returning `(N, S, S)` arrays or event dicts.
+  - **Group Ethogram** (`castle/analysis/group_ethogram.py`): `build_group_ethogram` assembles a synchronised multi-subject ethogram dict (per-subject bouts + shared social events). `plot_group_ethogram` renders a publication-quality colour-coded raster with social interaction spans.
+  - **Batch Processing** (`castle/core/batch.py` + `castle/cli/batch_cmd.py`): `BatchConfig.from_yaml("experiments.yaml")` + `BatchRunner.run()` executes the full CASTLE pipeline across multiple projects/experiments with optional parallelism. `castle batch run/status/report` CLI subcommands included.
+  - **HTML Report Generator** (`castle/analysis/report.py`): `ReportGenerator.generate()` produces self-contained HTML reports with inline base64 plots (ethogram frequency chart, 2-D embedding scatter), bout statistics, transition matrix, and quality metric badges — no external CSS/JS required.
+
 - **2026-02: Phase 3 — Simplification & Code Clarity**
   - **`ProjectData` + `VideoInfo`** (`castle/core/project_data.py`): Unified project path dataclass — eliminates all scattered `os.path.join(storage_path, project_name, …)` calls. Single `from_path()` constructor computes every standard directory and per-video path.
   - **`ClusterData`** (`castle/core/cluster_data.py`): Typed dataclass that consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, and `annotations.csv` into one container with `load()`, `save()`, `from_arrays()`, `get_cluster_frames()`, and `n_clusters()`.
@@ -182,6 +189,9 @@ castle cluster run <project>
 castle cluster auto <project>    # Recursive hierarchical auto-clustering
 castle ethogram analyze <project>
 castle compare run <project_a> <project_b>
+castle batch run experiments.yaml         # Batch: run full pipeline across experiments
+castle batch status experiments.yaml      # Batch: show last run status
+castle batch report experiments.yaml -o reports/  # Batch: generate HTML reports
 ```
 
 ## Performance Benchmarks

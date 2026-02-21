@@ -66,6 +66,53 @@ This guide walks you through a complete analysis using a demo video in under 5 m
 
 ---
 
+## 4.5. Preprocessing (Optional)
+
+Stabilized Camera Preprocessing normalises each frame around the tracked body centroid — removing camera drift and head orientation — to produce a clean 518×518 video optimal for DINOv2 feature extraction.
+
+=== "Gradio Web UI"
+
+    1. Switch to the **2. Tracking ROIs** tab
+    2. Open the **Preprocessing** sub-tab (inside the Tracking tab)
+    3. Select a video and enter the body ROI id and head ROI id
+    4. Adjust filter parameters if needed (defaults work well for most videos)
+    5. Click **Run Preprocessing**
+
+=== "CLI"
+
+    ```bash
+    castle preprocess <project> \
+        --video animal.mp4 --body-roi 1 --head-roi 2
+    ```
+
+    Full options:
+
+    ```bash
+    castle preprocess <project> \
+        --video animal.mp4 --body-roi 1 --head-roi 2 \
+        --fc 0.25 --order 2 --margin 75 \
+        --min-crop 300 --output-size 518
+    ```
+
+    | Option | Default | Description |
+    |--------|---------|-------------|
+    | `--fc` | `0.25` | Low-pass cutoff frequency (Hz). Period ≈ 4 s. |
+    | `--order` | `2` | Butterworth filter order |
+    | `--margin` | `75` | Spatial margin around HP residual (px) |
+    | `--min-crop` | `300` | Minimum crop side length (px) |
+    | `--output-size` | `518` | Output frame side length (px) — 518 for DINOv2 ViT-B/14 |
+
+!!! note "Output"
+    The stabilised video is saved to `{storage}/{project}/preprocessed/{video}/stabilized.mp4`.
+    A short 10-second preview clip is also generated at `stabilized_preview.mp4`.
+
+!!! tip "When to use preprocessing"
+    Use preprocessing when your animal moves freely in the arena and you want DINOv2 features
+    to capture **posture** rather than position or orientation. Skip it for fixed-camera or
+    already-cropped videos.
+
+---
+
 ## 5. Extract Features
 
 1. Switch to the **3. Extract Latent** tab

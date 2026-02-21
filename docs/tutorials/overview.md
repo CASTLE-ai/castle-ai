@@ -16,7 +16,7 @@ All of this is achieved **without any training data** — CASTLE leverages pretr
 ## The Pipeline
 
 ```
-Raw Video → SAM (segment) → DeAOT (track) → Align → DINOv2/v3 (features) → UMAP + DBSCAN (cluster)
+Raw Video → SAM (segment) → DeAOT (track) → Preprocess (stabilize) → DINOv2/v3 (features) → UMAP + DBSCAN (cluster)
 ```
 
 ![CASTLE Pipeline Flowchart](../assets/screenshots/flowchart.png)
@@ -37,6 +37,17 @@ The initial masks are propagated across all video frames using **DeAOT** (Decoup
 - Handles occlusion, deformation, and appearance changes
 - Real-time progress monitoring with cancel capability
 - Iterative refinement: add labels on failure frames and re-track
+
+### 2.5. Stabilized Camera Preprocessing *(optional — Phase 0)*
+
+Before feature extraction, the **StabilizedCamera** module normalises each frame around the tracked animal to eliminate camera drift and orientation variation:
+
+- **Zero-phase Butterworth low-pass filter** (`filtfilt`, fc = 0.25 Hz, order 2) applied to centroid x(t) and heading angle θ(t) — no temporal delay
+- **Dynamic crop window**: `max(300, 2 × (‖residual‖ + 75))` px, adapting to fast movements
+- **Output**: 518×518 px MP4 (optimal for DINOv2 ViT-B/14) saved to `preprocessed/{video}/stabilized.mp4`
+- Available via CLI (`castle preprocess`), Gradio UI (Tracking tab → Preprocessing sub-tab), and PyQt desktop app
+
+This ensures that DINOv2 features encode **posture and movement** rather than arena position or heading direction.
 
 ### 3. Video Alignment
 
@@ -106,7 +117,7 @@ Interactive web interface at `http://localhost:7860` with **7 tabs** following t
 |-----|------|---------|
 | 0 | Project | Create / open projects |
 | 1 | Upload Videos | Import video files |
-| 2 | Tracking ROIs | SAM labeling + DeAOT tracking + batch |
+| 2 | Tracking ROIs | SAM labeling + DeAOT tracking + batch + **Preprocessing** sub-tab |
 | 3 | Extract Latent | DINOv2/v3 feature extraction |
 | 4 | Behavior Microscope | UMAP + DBSCAN clustering + Cluster Annotator |
 | 5 | Analysis | Ethogram, Quality Metrics, Group Comparison |
@@ -157,9 +168,10 @@ Follow the tutorials in order:
 
 1. [**Create Project & Upload Videos**](step1-project.md)
 2. [**Track ROIs**](step2-tracking.md)
-3. [**Extract Features**](step3-extract.md)
-4. [**Behavior Analysis**](step4-analysis.md)
-5. [**Export Results**](step5-export.md)
+3. [**Stabilized Camera Preprocessing**](step2_5-preprocessing.md) *(optional)*
+4. [**Extract Features**](step3-extract.md)
+5. [**Behavior Analysis**](step4-analysis.md)
+6. [**Export Results**](step5-export.md)
 
 !!! note "Coming soon"
     Dedicated tutorials for the Cluster Annotator and Analysis tabs are planned.

@@ -31,6 +31,7 @@
 
 ## Latest Updates
 - **2026-02: Developer Branch - Major Architecture Overhaul**
+  - **Stabilized Camera Preprocessing** (Phase 0): Zero-phase Butterworth low-pass filtering of centroid trajectories + dynamic crop extraction → 518×518 stabilised MP4 ready for DINOv2 (`castle preprocess`)
   - **Service Layer**: Clean separation between UI and business logic
   - **CLI Frontend**: Full command-line interface via `castle` command
   - **Desktop App**: PyQt6 native 8-tab application with pyqtgraph visualization
@@ -122,6 +123,7 @@ castle --help
 # Key commands:
 castle project init <name>
 castle track <project>
+castle preprocess <project> --video <name> --body-roi 1 --head-roi 2
 castle extract <project>
 castle cluster run <project>
 castle cluster auto <project>    # Recursive hierarchical auto-clustering

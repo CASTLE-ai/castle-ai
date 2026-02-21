@@ -19,6 +19,7 @@
 │  extraction_service.py   — Feature extraction orchestration    │
 │  clustering_service.py   — UMAP + DBSCAN management           │
 │  tracking_service.py     — Tracking pipeline orchestration     │
+│  preprocessing_service.py — Stabilized camera preprocessing ★  │
 │  annotation_service.py   — Classification scheme management    │
 │  bout_service.py         — Behavioral bout analysis            │
 │  history_service.py      — Undo/Redo (Command Pattern)         │
@@ -31,19 +32,20 @@
 │                      castle/core/                              │
 │                   (Core Business Logic)                        │
 │                                                                │
-│  extractor.py        — Feature extraction engine               │
-│  cluster.py          — LatentAggregator, clustering logic      │
-│  data.py             — Preprocess, VideoDataset                │
-│  models.py           — VisualEncoder abstraction (DINOv2/v3)   │
-│  config.py           — Constants, model paths                  │
-│  project.py          — Project config I/O (file inventory)     │
-│  project_config.py   — ProjectConfig dataclass (B-05)          │
-│  environment.py      — Device detection, worker count          │
-│  mask_filter.py      — Post-tracking mask filtering (A-03)     │
-│  logging_config.py   — Centralized logging setup               │
-│  ethogram.py         — Ethogram analysis engine (P1)           │
-│  metrics.py          — Clustering quality metrics (P2)         │
-│  comparison.py       — Group comparison engine (P4)            │
+│  extractor.py          — Feature extraction engine             │
+│  cluster.py            — LatentAggregator, clustering logic    │
+│  data.py               — Preprocess, VideoDataset              │
+│  models.py             — VisualEncoder abstraction (DINOv2/v3) │
+│  config.py             — Constants, model paths                │
+│  project.py            — Project config I/O (file inventory)   │
+│  project_config.py     — ProjectConfig dataclass (B-05)        │
+│  environment.py        — Device detection, worker count        │
+│  mask_filter.py        — Post-tracking mask filtering (A-03)   │
+│  stabilized_camera.py  — StabilizedCamera + helpers (P0) ★    │
+│  logging_config.py     — Centralized logging setup             │
+│  ethogram.py           — Ethogram analysis engine (P1)         │
+│  metrics.py            — Clustering quality metrics (P2)       │
+│  comparison.py         — Group comparison engine (P4)          │
 └──────────────────────────┬─────────────────────────────────────┘
                            │ uses
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -101,6 +103,7 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 | `cluster_cmd.py` | `castle cluster run/export/save-model/apply-model/auto/evaluate` |
 | `extract_cmd.py` | `castle extract <project>` |
 | `track_cmd.py` | `castle track <project>` |
+| `preprocess_cmd.py` | `castle preprocess <project> --video … --body-roi … --head-roi …` ★ |
 | `info_cmd.py` | `castle info <project>` |
 | `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export/export-nwb` |
 | `compare_cmd.py` | `castle compare run/fingerprint` |
@@ -125,6 +128,7 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module.
 | `track_ui.py` | └─ Tracking | Run DeAOT tracking with progress |
 | `post_track_ui.py` | └─ Post-Track | Post-process and review tracking results |
 | `batch_track_ui.py` | └─ Batch | Process multiple videos |
+| `preprocess_ui.py` | └─ Preprocessing | Stabilized camera preprocessing (P0) ★ |
 | `extract_ui.py` | 3. Extract Latent | Configure and run feature extraction |
 | `cluster_page_ui.py` | 4. Behavior Microscope | UMAP + DBSCAN clustering workspace |
 | `embedding_scatter.py` | └─ (component) | Plotly embedding scatter widget |
@@ -169,6 +173,7 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `extraction_service.py` | Feature extraction orchestration |
 | `clustering_service.py` | UMAP + DBSCAN session management, recursive auto-clustering |
 | `tracking_service.py` | Tracking pipeline orchestration |
+| `preprocessing_service.py` | Stabilized camera preprocessing — `PreprocessingService` + `preprocess_stabilized_camera()` ★ |
 | `annotation_service.py` | Classification scheme management |
 | `annotator_loader.py` | `AnnotatorData` — loads cluster + video data for Annotator and Analysis UIs |
 | `session_manager.py` | `SessionManager` — list/create/activate clustering sessions |
@@ -194,6 +199,7 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `project_config.py` | `ProjectConfig` dataclass — typed processing parameters |
 | `environment.py` | Device detection (`cuda`/`mps`/`cpu`), worker count |
 | `mask_filter.py` | Post-tracking mask filtering — largest component, configurable threshold |
+| `stabilized_camera.py` | `StabilizedCamera`, `extract_centroids_from_masks`, `extract_orientations_from_masks`, `preview_stabilization` — Phase 0 preprocessing (P0) ★ |
 | `logging_config.py` | Centralized logging setup |
 | `temporal_smooth.py` | Temporal smoothing of cluster label sequences |
 | `interfaces.py` | Shared abstract interfaces / protocols |
@@ -257,10 +263,19 @@ Video File (.mp4)
 [2. DeAOT] Propagate masks → tracked masks (mask_list.h5)
     │
     ▼
-[3. Align] Center + rotate + crop → normalized frames
+[3. StabilizedCamera] ★ (optional — Phase 0)
+    │  ├─ extract_centroids_from_masks → body centroid x(t)
+    │  ├─ extract_orientations_from_masks → heading angle θ(t)
+    │  ├─ Zero-phase Butterworth LP (fc=0.25 Hz, filtfilt) → x_c(t), θ_c(t)
+    │  ├─ dynamic crop: max(300, 2×(‖x−x_c‖+75)) px
+    │  └─ warpAffine + resize → stabilized.mp4  (preprocessed/{video}/)
     │
     ▼
-[4. DINOv2/v3] Extract features → latent vectors (.npz)
+[4. Align] Center + rotate + crop → normalized frames
+    │        (or use preprocessed video directly as input)
+    │
+    ▼
+[5. DINOv2/v3] Extract features → latent vectors (.npz)
     │         ├─ weighted_average pooling (default) → 768-dim
     │         └─ multiscale SPP (A-06) → e.g. 21×768 = 16128-dim
     │              (spatial pyramid: 1×1 + 2×2 + 4×4 grids)
@@ -268,10 +283,10 @@ Video File (.mp4)
     │         └─ multi-layer (A-06) → concat e.g. layers [3,7,11]
     │
     ▼
-[5. UMAP] Dimensionality reduction → 2D embedding
+[6. UMAP] Dimensionality reduction → 2D embedding
     │
     ▼
-[6. DBSCAN] Clustering → behavioral syllables
+[7. DBSCAN] Clustering → behavioral syllables
     │
     ▼
 [Output] CSV labels, SRT subtitles, embedding NPZ
@@ -297,6 +312,10 @@ projects/my-project/
 ├── track/                                   # Tracking results (DeAOT output)
 │   └── video1.mp4/
 │       └── mask_list.h5                     # HDF5 with per-frame masks
+├── preprocessed/                            # Stabilized camera output (Phase 0) ★
+│   └── video1.mp4/
+│       ├── stabilized.mp4                   # Full-length stabilised video (518×518)
+│       └── stabilized_preview.mp4           # 10-second preview clip
 ├── crop/                                    # Cropped/aligned videos
 │   └── video1.mp4/
 │       └── video1_ROI_1_crop.mp4

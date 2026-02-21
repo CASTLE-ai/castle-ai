@@ -13,6 +13,7 @@ CASTLE is a **training-free** framework for unsupervised animal behavior analysi
 - 🎯 **Training-free** — no manual labeling or model training required
 - 🐭 **Cross-species** — works on mice, rats, flies, C. elegans, and more
 - 🧠 **Foundation model powered** — SAM + DeAOT + DINOv2/v3
+- 📹 **Stabilized Camera Preprocessing** — zero-phase Butterworth filtering of centroid trajectories with dynamic crop extraction, producing head-fixed 518×518 video optimal for DINOv2
 - 🖥️ **Interactive GUI** — Gradio web UI and native PyQt6 desktop app
 - 🔬 **Hierarchical analysis** — explore behavior at multiple magnification scales
 - 🏷️ **Cluster Annotator** — grid video browser with per-session labels, comment field, and auto-save
@@ -41,18 +42,19 @@ CASTLE is a **training-free** framework for unsupervised animal behavior analysi
 ## The Pipeline
 
 ```
-Raw Video → SAM (segment) → DeAOT (track) → Align → DINOv2/v3 (features) → UMAP + DBSCAN (cluster)
-              ↓                                                                        ↓
-         Annotator ←─────────────────── label / comment ─────────────────── Analysis / Export
+Raw Video → SAM (segment) → DeAOT (track) → Preprocess (stabilize) → DINOv2/v3 (features) → UMAP + DBSCAN (cluster)
+              ↓                                      ↓                                                   ↓
+         Annotator ←──────────────────────── label / comment ─────────────────────────────── Analysis / Export
 ```
 
 1. **Segment** regions of interest with point-and-click (SAM)
 2. **Track** ROIs across all video frames (DeAOT)
-3. **Extract** visual features from tracked regions (DINOv2/v3)
-4. **Analyze** behavior through dimensionality reduction and clustering (UMAP + DBSCAN)
-5. **Annotate** clusters with the Cluster Annotator (grid video, labels, comments, auto-save)
-6. **Analyze** further with Ethogram, Quality Metrics, and Group Comparison
-7. **Export** results as a ZIP archive with selectable components
+3. **Preprocess** *(optional)* — stabilize the virtual camera with zero-phase Butterworth filtering and dynamic crop extraction (`castle preprocess`)
+4. **Extract** visual features from tracked/preprocessed regions (DINOv2/v3)
+5. **Analyze** behavior through dimensionality reduction and clustering (UMAP + DBSCAN)
+6. **Annotate** clusters with the Cluster Annotator (grid video, labels, comments, auto-save)
+7. **Analyze** further with Ethogram, Quality Metrics, and Group Comparison
+8. **Export** results as a ZIP archive with selectable components
 
 ---
 

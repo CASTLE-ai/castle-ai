@@ -45,6 +45,15 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 ---
 
+### Preprocessing Service ★
+
+::: castle.service.preprocessing_service
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
+
 ### Annotation Service
 
 ::: castle.service.annotation_service
@@ -152,6 +161,24 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
     options:
       show_root_heading: true
       show_source: true
+
+---
+
+### Stabilized Camera (Phase 0) ★
+
+The `castle.core.stabilized_camera` module implements the **Phase 0 preprocessing** pipeline.
+It applies a zero-phase Butterworth low-pass filter to ROI centroid trajectories and orientation
+angles, then extracts dynamically-cropped and head-aligned frames resized to 518×518 for DINOv2.
+
+::: castle.core.stabilized_camera
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - StabilizedCamera
+        - extract_centroids_from_masks
+        - extract_orientations_from_masks
+        - preview_stabilization
 
 ---
 
@@ -372,6 +399,15 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 ---
 
 ## CLI Commands
+
+### Preprocess CLI ★
+
+::: castle.cli.preprocess_cmd
+    options:
+      show_root_heading: true
+      show_source: true
+
+---
 
 ### Ethogram CLI
 

@@ -121,6 +121,22 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 
 ![Extract latent features](../assets/screenshots/quickstart-extract.png)
 
+!!! tip "Auto Batch Size & Cache (Phase 2)"
+    CASTLE automatically selects a safe GPU batch size based on available VRAM, so you don't need to tune `batch_size` manually.
+    If a GPU out-of-memory error occurs mid-run the batch is halved and the extraction retries transparently.
+
+    Extraction results are also **cached by content hash** (video path + modification time + preprocessing config + model name).
+    Re-running extraction on an unchanged video is nearly instant — the cached `.npz` is reused without re-inferring.
+
+    To run extraction only on videos not yet processed (incremental mode):
+
+    ```python
+    from castle.service.incremental_service import get_unprocessed_videos
+
+    pending = get_unprocessed_videos("/data/projects/my_project")
+    # → only videos with no latent output yet
+    ```
+
 ---
 
 ## 6. Analyze Behavior

@@ -20,6 +20,7 @@
 │  clustering_service.py   — UMAP + DBSCAN management           │
 │  tracking_service.py     — Tracking pipeline orchestration     │
 │  preprocessing_service.py — Stabilized camera preprocessing ★  │
+│  incremental_service.py  — Incremental update helpers ⚡        │
 │  annotation_service.py   — Classification scheme management    │
 │  bout_service.py         — Behavioral bout analysis            │
 │  history_service.py      — Undo/Redo (Command Pattern)         │
@@ -46,6 +47,14 @@
 │  ethogram.py           — Ethogram analysis engine (P1)         │
 │  metrics.py            — Clustering quality metrics (P2)       │
 │  comparison.py         — Group comparison engine (P4)          │
+│  ── Phase 2 Performance Modules ────────────────────────────── │
+│  model_registry.py     — ModelRegistry singleton (lazy load,  │
+│                          VRAM cleanup between stages) ⚡        │
+│  auto_batch.py         — VRAM-aware batch size + OOM retry ⚡  │
+│  pipeline.py           — Full pipeline orchestrator with GPU  │
+│                          cleanup between stages ⚡             │
+│  pipeline_parallel.py  — 3-stage threaded extractor ⚡         │
+│  cache.py              — Content-hash PipelineCache ⚡         │
 └──────────────────────────┬─────────────────────────────────────┘
                            │ uses
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -183,6 +192,7 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `metrics_service.py` | Clustering quality evaluation: loads labels/embedding, delegates to `castle.core.metrics` |
 | `comparison_service.py` | Group comparison: loads per-video data, delegates to `castle.core.comparison` |
 | `nwb_service.py` | NWB (Neurodata Without Borders) export orchestration |
+| `incremental_service.py` ⚡ | `get_unprocessed_videos()` — detect pending videos; `cleanup_deleted_videos()` — remove orphaned latent / cluster / cache data |
 
 ### `castle/core/` — Core Business Logic
 
@@ -207,6 +217,11 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `metrics.py` | Clustering quality metrics — silhouette, CH, DB, temporal coherence, bout quality, external validation |
 | `comparison.py` | Group comparison — BFA test, behavioral fingerprint, energy distance, permutation tests, Hedges' g |
 | `nwb_export.py` | NWB file creation from CASTLE cluster data |
+| `model_registry.py` ⚡ | `ModelRegistry` singleton — lazy load, explicit unload, and CUDA memory accounting for SAM / DeAOT / DINOv2 / DINOv3 |
+| `auto_batch.py` ⚡ | `compute_optimal_batch_size()` — VRAM-aware batch size; `auto_retry_on_oom()` — automatic OOM retry with halved batch |
+| `pipeline.py` ⚡ | `Pipeline` + `PipelineConfig` — full tracking → extraction orchestrator with per-stage GPU cleanup and VRAM logging |
+| `pipeline_parallel.py` ⚡ | `ParallelExtractor` — 3-stage producer-consumer pipeline (I/O thread → CPU preprocess thread → GPU inference) |
+| `cache.py` ⚡ | `PipelineCache` — SHA-256 content-addressed cache; manifest persisted as JSON; stale-entry auto-invalidation |
 
 ### `castle/utils/` — Utility Layer
 
@@ -337,4 +352,112 @@ projects/my-project/
 │           ├── time_series_<session>.csv    # Frame assignments for this session
 │           └── analysis/                   # Ethogram / metrics outputs
 └── analysis/                                # Project-wide analysis outputs
+```
+
+---
+
+## Phase 2 Performance Architecture ⚡
+
+Phase 2 adds five `castle/core/` modules and one `castle/service/` module focused on **GPU memory management**, **throughput**, and **incremental processing**.
+
+### GPU Memory Pipeline
+
+```
+Pipeline.run()
+  │
+  ├── run_tracking_stage()          # SAM + DeAOT inference
+  │     └── track_video() × N
+  │
+  ├── _cleanup_tracking()           # ← ModelRegistry.unload_family("sam","deaot","aot")
+  │       torch.cuda.empty_cache()  #   + explicit CUDA cache flush
+  │
+  ├── run_extraction_stage()        # DINOv2/DINOv3 inference
+  │     └── extract_latent() × N
+  │         └── auto_retry_on_oom() wraps batch inference
+  │               (halves batch_size on OOM, retries until success or min_batch)
+  │
+  └── _cleanup_extraction()         # ← ModelRegistry.unload_family("dinov2","dinov3")
+          models._evict_model_cache()   + CUDA cache flush
+```
+
+VRAM utilisation is logged at every stage boundary (`pipeline-start`, `before-tracking-cleanup`, `after-tracking-cleanup`, `extraction-start`, `after-extraction-cleanup`, `pipeline-end`) and approximately every 100 video iterations during extraction.
+
+### ModelRegistry Singleton
+
+```python
+registry = ModelRegistry.instance()   # thread-safe singleton
+
+# Lazy load (cached on first call)
+model = registry.load("dinov2_vitb14")
+
+# Context manager — auto-unloads on exit
+with registry.use("dinov2_vitb14") as model:
+    latent = model.extract_tensor_batch(frames, masks, roi_id)
+
+# Bulk unload by family keyword
+registry.unload_family("sam", "deaot")
+
+# VRAM diagnostics
+stats = registry.get_memory_stats()
+# → {"device": "cuda:0", "allocated_mb": 340, "free_mb": 8100, ...}
+```
+
+### Auto Batch Size
+
+```python
+from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
+
+# Query VRAM and return recommended batch size
+batch = compute_optimal_batch_size("dinov2_vitb14", frame_size=(518, 518, 3))
+
+# Wrap any callable; retries with halved batch on OOM
+result = auto_retry_on_oom(extract_fn, frames, batch_size=batch)
+```
+
+`compute_optimal_batch_size` uses conservative per-model weight estimates and a 25 % VRAM safety margin. Falls back to **4** on CPU or when VRAM information is unavailable.
+
+### ParallelExtractor (3-Stage Pipeline)
+
+```
+Thread 1 (I/O)       Thread 2 (CPU)       Main thread (GPU)
+VideoReader.get_frame  StabilizedCamera     DINOv2 batched
+      │   → frame_queue →   .generate_frame   inference
+      │                      │  → tensor_queue → np.concatenate → (N, D)
+```
+
+- Uses `threading` (not `multiprocessing`) to avoid CUDA fork issues.
+- Bounded `queue.Queue(maxsize=32)` controls peak memory.
+- Preprocessing errors produce zero-filled frames; inference errors produce zero-filled latents — both logged as warnings so a single bad frame never aborts the run.
+
+### PipelineCache
+
+```python
+from castle.core.cache import PipelineCache
+
+cache = PipelineCache("/data/project/latent")
+key = cache.compute_key(video_path, preprocess_config, "dinov2_vitb14")
+
+if cache.is_cached(key):
+    path = cache.get(key)
+else:
+    path = run_extraction(...)
+    cache.put(key, path)
+```
+
+Key = SHA-256(abs_path + mtime + sorted config JSON + model_name).  
+Manifest is written atomically (`os.replace`) to `{cache_dir}/.cache_manifest.json`.
+
+### Incremental Processing
+
+```python
+from castle.service.incremental_service import (
+    get_unprocessed_videos,
+    cleanup_deleted_videos,
+)
+
+# Before a batch run — returns only videos without latent output
+pending = get_unprocessed_videos("/data/projects/my_project")
+
+# After the user deletes some source videos — removes latent, cluster, and cache data
+removed = cleanup_deleted_videos("/data/projects/my_project")
 ```

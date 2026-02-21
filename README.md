@@ -47,8 +47,13 @@
   - **260 Unit Tests**: Comprehensive test coverage
   - **Code Quality**: Zero ruff warnings in non-vendored code
 
-- **2025-12: Performance & Stability Update**
-  - **High-Performance Pipeline**: Optimized CPU/GPU batch processing for both Tracking and Extraction.
+- **2025-12: Phase 2 — Performance & GPU Memory Management**
+  - **ModelRegistry**: Thread-safe singleton for lazy model loading and explicit VRAM cleanup between pipeline stages (`castle/core/model_registry.py`)
+  - **Auto Batch Size**: VRAM-aware `compute_optimal_batch_size()` + `auto_retry_on_oom()` wrapper that halves batch size on GPU OOM and retries automatically (`castle/core/auto_batch.py`)
+  - **Pipeline Orchestrator**: `Pipeline` class with per-stage GPU memory cleanup — tracking cleanup before extraction, extraction cleanup after (`castle/core/pipeline.py`)
+  - **Parallel Extractor**: 3-stage threaded producer-consumer pipeline (I/O → CPU preprocess → GPU inference) for maximum throughput (`castle/core/pipeline_parallel.py`)
+  - **Content-Hash Cache**: `PipelineCache` with SHA-256 keying and atomic JSON manifest — skip already-computed extractions across runs (`castle/core/cache.py`)
+  - **Incremental Processing**: `get_unprocessed_videos()` and `cleanup_deleted_videos()` for efficient batch runs and orphan cleanup (`castle/service/incremental_service.py`)
 
 - **2024-09: Public Release**
   - Initial public release of the CASTLE tool.
@@ -186,6 +191,82 @@ The following benchmarks were measured on a workstation with **Intel i7-12700 + 
 > [!TIP]
 > **Hardware Scaling**: Higher-end GPUs like the **RTX 4090** are estimated to provide approximately **3.5x - 5x** speedup compared to the RTX 3060, enabling real-time processing for most modules.
 
+---
+
+## GPU Memory Management (Phase 2)
+
+CASTLE Phase 2 introduces a set of modules that keep VRAM usage predictable across long multi-video runs.
+
+### ModelRegistry — Singleton Model Lifecycle
+
+```python
+from castle.core.model_registry import ModelRegistry
+
+registry = ModelRegistry.instance()          # global singleton
+
+# Context manager: auto-unload on exit
+with registry.use("dinov2_vitb14") as model:
+    latents = model.extract_tensor_batch(frames, masks, roi_id)
+
+# Bulk unload by family keyword (e.g. after the tracking stage)
+registry.unload_family("sam", "deaot", "aot")
+
+# Check VRAM usage
+stats = registry.get_memory_stats()
+print(stats["free_mb"], "MB free on", stats["device"])
+```
+
+The `Pipeline` class calls `unload_family` automatically between the tracking and extraction stages, ensuring SAM/DeAOT weights are evicted before DINOv2 is loaded.
+
+### Auto Batch Size & OOM Retry
+
+```python
+from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
+
+# Queries free VRAM and returns a safe batch size for the given model + frame size
+batch = compute_optimal_batch_size("dinov2_vitb14", frame_size=(518, 518, 3))
+
+# If an OOM error occurs, halves the batch and retries automatically
+result = auto_retry_on_oom(extract_fn, frames, initial_batch=batch)
+```
+
+### Parallel Pipeline
+
+The `ParallelExtractor` runs video decoding, preprocessing, and GPU inference concurrently across three threads, saturating the GPU while the CPU prepares the next batch:
+
+```
+Thread 1 (I/O)       Thread 2 (CPU preprocess)      Main thread (GPU)
+VideoReader ──────▶ StabilizedCamera ──────────────▶ DINOv2 inference
+                     frame_queue (bounded)             tensor_queue (bounded)
+```
+
+```python
+from castle.core.pipeline_parallel import ParallelExtractor
+
+extractor = ParallelExtractor(
+    video_path="animal.mp4",
+    model=visual_encoder,
+    batch_size=8,
+)
+latents = extractor.run()   # → np.ndarray (N, D)
+```
+
+### Content-Hash Cache
+
+```python
+from castle.core.cache import PipelineCache
+
+cache = PipelineCache("projects/my_project/latent")
+key   = cache.compute_key(video_path, preprocess_config, "dinov2_vitb14")
+
+if not cache.is_cached(key):
+    path = run_extraction(...)
+    cache.put(key, path)
+```
+
+The cache key is `SHA-256(abs_path + mtime + config + model_name)`. Re-running extraction on an unchanged video is a near-instant cache hit.
+
+---
 
 ## About us
 

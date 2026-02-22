@@ -241,7 +241,7 @@ class LatentAggregator:
             # Calculate actual frame index (center of the bin)
             frame_idx = index * self.bin_size + self.bin_size // 2
             
-            self.notify(f'Retrieving frame from {video_name} at index {frame_idx}')
+            logger.debug('Retrieving frame from %s at index %d', video_name, frame_idx)
             try:
                 reader = self._get_cached_reader(video_path)
                 return reader.get_frame(frame_idx)

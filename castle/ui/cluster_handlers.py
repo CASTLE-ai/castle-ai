@@ -97,8 +97,67 @@ def _transcode_to_h264(video_path: str) -> None:
 # Event Handlers
 # ---------------------------
 
+def _get_bin_video_info(aggregator, bin_index):
+    """Return (video_name, frame_idx) for a given global bin index, or (None, None)."""
+    idx = bin_index
+    for n_bins_in_video, video_name in aggregator.videos_meta:
+        if idx >= n_bins_in_video:
+            idx -= n_bins_in_video
+            continue
+        frame_idx = idx * aggregator.bin_size + aggregator.bin_size // 2
+        return video_name, frame_idx
+    return None, None
+
+
+def _apply_roi_overlay(frame, mask_h5_path, frame_idx):
+    """Draw ROI contour outline on *frame* if a mask is available.
+
+    Loads the binary mask for *frame_idx* from the HDF5 file at
+    *mask_h5_path*, finds its external contours, scales them to the
+    frame dimensions, and draws a green outline.  Returns the original
+    frame unchanged if the mask file is missing or any error occurs.
+
+    Args:
+        frame: RGB numpy array (H, W, 3).
+        mask_h5_path: Path to ``mask_list.h5``.
+        frame_idx: Integer frame index key inside the HDF5 file.
+
+    Returns:
+        Modified RGB numpy array with ROI contour drawn, or the
+        original frame if no mask was found.
+    """
+    if not os.path.exists(mask_h5_path):
+        return frame
+    try:
+        import h5py
+        with h5py.File(mask_h5_path, 'r') as f:
+            key = str(frame_idx)
+            if key not in f:
+                return frame
+            mask = f[key][()]  # uint8 (H, W)
+        if mask.max() == 0:
+            return frame
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return frame
+        fh, fw = frame.shape[:2]
+        mask_h, mask_w = mask.shape[:2]
+        frame_out = frame.copy()
+        for cnt in contours:
+            scaled = cnt.copy().astype(np.float64)
+            scaled[:, :, 0] *= fw / mask_w
+            scaled[:, :, 1] *= fh / mask_h
+            scaled = scaled.astype(np.int32)
+            # Draw in green (RGB order since frames are RGB)
+            cv2.drawContours(frame_out, [scaled], -1, (0, 255, 0), 2)
+        return frame_out
+    except Exception:
+        logger.debug("ROI overlay failed for %s[%d]", mask_h5_path, frame_idx, exc_info=True)
+        return frame
+
+
 def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
-    """Generate a short H.264 MP4 clip around center_bin."""
+    """Generate a short H.264 MP4 clip around center_bin with ROI overlay."""
     half = n_frames // 2
     start = max(0, center_bin - half)
     end = start + n_frames
@@ -107,6 +166,14 @@ def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
     for i in range(start, end):
         frame = aggregator.get_frame(int(i))
         if frame is not None:
+            # Overlay ROI contour if mask_list.h5 exists for this bin
+            video_name, frame_idx = _get_bin_video_info(aggregator, int(i))
+            if video_name is not None:
+                video_base = os.path.splitext(os.path.basename(video_name))[0]
+                mask_path = os.path.join(
+                    aggregator.project_path, "track", video_base, "mask_list.h5"
+                )
+                frame = _apply_roi_overlay(frame, mask_path, frame_idx)
             frames.append(frame)
 
     if not frames:
@@ -194,7 +261,21 @@ def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
     def umap_progress(stage, total):
         progress(stage / total, desc=f"UMAP Stage {stage + 1}/{total}...")
 
-    local_latents.build_embedding(cfg, progress_callback=umap_progress)
+    try:
+        local_latents.build_embedding(cfg, progress_callback=umap_progress)
+    except Exception as e:
+        n_samples = len(local_latents.data)
+        first_cfg = cfg[0] if isinstance(cfg, list) else cfg
+        n_neighbors = first_cfg.get('n_neighbors', '?') if isinstance(first_cfg, dict) else '?'
+        err_str = str(e).lower()
+        if 'n_neighbors' in err_str or ('larger' in err_str and 'sample' in err_str) or not err_str:
+            gr.Warning(
+                f"UMAP failed: n_neighbors ({n_neighbors}) is larger than the number "
+                f"of data points ({n_samples}). Try reducing n_neighbors to less than {n_samples}."
+            )
+        else:
+            gr.Warning(f"UMAP failed: {e or type(e).__name__}")
+        return None, None, None
 
     progress(1.0, desc="Building plot...")
     Z_plt = EmbeddingScatterPlot(local_latents)

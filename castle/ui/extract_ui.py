@@ -50,15 +50,12 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False), # center_roi_id
         gr.update(visible=False), # center_roi_crop_width
         gr.update(visible=False), # center_roi_crop_height
-        gr.update(visible=False), # rotate_roi_tail_switch
-        gr.update(visible=False), # rotate_roi_tail_id
         gr.update(visible=False), # remove_background_switch
         gr.update(visible=False), # apply_preprocess
         gr.update(visible=False), # display
         gr.update(visible=False), # adv_accordion
         gr.update(visible=False), # extract_btn
         gr.update(visible=False), # extract_crop_video_btn
-        gr.update(visible=False), # extract_rotation_latent_btn
         gr.update(visible=False)  # latent_file_list
     ])
 
@@ -82,26 +79,23 @@ def init_select_video_list(storage_path, project_name):
             choices_with_all.append("All") # 確保 "All" 選項在有影片時才加入
             
             # 覆蓋預設的隱藏狀態，設定為可見
-            updates[0] = gr.update(visible=True) # select_model
-            updates[1] = gr.update(visible=True) # select_roi_id
-            updates[2] = gr.update(visible=True) # batch_size
-            updates[3] = gr.update(choices=choices_with_all, value="All", visible=True) # select_video
-            updates[4] = gr.update(value=video_count_val, visible=True) # video_count
-            updates[5] = gr.update(visible=True) # skip_existing
-            updates[6] = gr.update(visible=True) # center_roi_switch
-            updates[7] = gr.update(visible=True) # center_roi_id
-            updates[8] = gr.update(visible=True) # center_roi_crop_width
-            updates[9] = gr.update(visible=True) # center_roi_crop_height
-            updates[10] = gr.update(visible=True) # rotate_roi_tail_switch
-            updates[11] = gr.update(visible=True) # rotate_roi_tail_id
-            updates[12] = gr.update(visible=True) # remove_background_switch
-            updates[13] = gr.update(visible=True) # apply_preprocess
-            updates[14] = gr.update(visible=True) # display
-            updates[15] = gr.update(visible=True) # adv_accordion
-            updates[16] = gr.update(visible=True) # extract_btn
-            updates[17] = gr.update(visible=True) # extract_crop_video_btn
-            updates[18] = gr.update(visible=True) # extract_rotation_latent_btn
-            updates[19] = gr.update(visible=True) # latent_file_list
+            updates[0] = gr.update(visible=True)  # select_model
+            updates[1] = gr.update(visible=True)  # select_roi_id
+            updates[2] = gr.update(visible=True)  # batch_size
+            updates[3] = gr.update(choices=choices_with_all, value="All", visible=True)  # select_video
+            updates[4] = gr.update(value=video_count_val, visible=True)  # video_count
+            updates[5] = gr.update(visible=True)  # skip_existing
+            updates[6] = gr.update(visible=True)  # center_roi_switch
+            updates[7] = gr.update(visible=True)  # center_roi_id
+            updates[8] = gr.update(visible=True)  # center_roi_crop_width
+            updates[9] = gr.update(visible=True)  # center_roi_crop_height
+            updates[10] = gr.update(visible=True) # remove_background_switch
+            updates[11] = gr.update(visible=True) # apply_preprocess
+            updates[12] = gr.update(visible=True) # display
+            updates[13] = gr.update(visible=True) # adv_accordion
+            updates[14] = gr.update(visible=True) # extract_btn
+            updates[15] = gr.update(visible=True) # extract_crop_video_btn
+            updates[16] = gr.update(visible=True) # latent_file_list
         else:
             gr.Warning(
                 "No videos found in this project. Please add videos in the "
@@ -131,7 +125,8 @@ def ui_extract_roi_latent(
     select_video: str, 
     batch_size: str, 
     preprocess_args: Preprocess, 
-    skip_existing: bool, 
+    skip_existing: bool,
+    rotate_roi_tail_switch: bool = True,
     pooling_method: str = 'weighted_average',
     pooling_scales_list: list = None,
     feature_layers_str: str = '',
@@ -183,11 +178,6 @@ def ui_extract_roi_latent(
         latent_filename = f'{os.path.splitext(video_name)[0]}_ROI_{select_roi}_{suffix}.npz'
         output_path = os.path.join(latent_dir, latent_filename)
         
-        # A more robust check might be needed if the filename is more complex
-        # For now, we assume a simple naming convention.
-        # The core function `extract_roi_latent_from_video` should ideally return the path
-        # for a more accurate check, but that's a bigger refactor.
-        
         if skip_existing and os.path.exists(output_path):
              messages.append(f"  ⏩ Skipping existing: {video_name}")
              continue
@@ -217,7 +207,7 @@ def ui_extract_roi_latent(
                 model_name=select_model,
                 batch_size=int(batch_size),
                 preprocess_config=preprocess_args,
-                skip_existing=skip_existing, # The core function handles this, but we pre-check
+                skip_existing=skip_existing,
                 progress_callback=update_progress,
                 pooling_method=pooling_method,
                 pooling_scales=parsed_scales if pooling_method == 'multiscale' else None,
@@ -227,7 +217,6 @@ def ui_extract_roi_latent(
                 messages.append(f"  ✅ Success: Latent file saved to {os.path.basename(path)}")
                 success_count += 1
             else:
-                # This case might happen if the core function returns None without an error
                 messages.append(f"  ⚠️ Warning: Extraction returned no path for {video_name}, but no error was raised.")
 
         except Exception as e:
@@ -238,8 +227,41 @@ def ui_extract_roi_latent(
     summary_msg = f"\n\n🎉 Extraction Complete! \nSuccessfully processed {success_count}/{len(videos_to_process)} videos."
     if failed_videos:
         summary_msg += f"\n⚠️ Failed videos: {', '.join(failed_videos)}"
-    
     messages.append(summary_msg)
+
+    # --- Optional: Rotation Latent Extraction ---
+    if rotate_roi_tail_switch:
+        messages.append("\n\n--- Extracting Rotation Latents (Rotate based on Tail is ON) ---")
+        rot_success = 0
+        rot_failed = []
+        for video_name in tqdm(videos_to_process, desc="Extracting Rotation Latents"):
+            try:
+                messages.append(f"\nRotation: Processing {video_name}...")
+                rpath = extract_roi_rotation_latent_from_video(
+                    storage_path=storage_path,
+                    project_name=project_name,
+                    video_name=video_name,
+                    roi_id=int(select_roi),
+                    model_name=select_model,
+                    batch_size=int(batch_size),
+                    preprocess_config=preprocess_args,
+                    skip_existing=skip_existing,
+                    progress_callback=update_progress,
+                )
+                if rpath:
+                    messages.append(f"  ✅ Rotation latent saved to {os.path.basename(rpath)}")
+                    rot_success += 1
+                else:
+                    messages.append(f"  ⚠️ Rotation extraction returned no path for {video_name}.")
+            except Exception as e:
+                rot_failed.append(video_name)
+                messages.append(f"  ❌ Rotation error for {video_name}: {e}")
+
+        rot_summary = f"\n🎉 Rotation Extraction Complete! Processed {rot_success}/{len(videos_to_process)} videos."
+        if rot_failed:
+            rot_summary += f"\n⚠️ Failed: {', '.join(rot_failed)}"
+        messages.append(rot_summary)
+
     return "\n".join(messages)
 
 @handle_assertion_error
@@ -318,85 +340,6 @@ def ui_extract_roi_crop_video(
     messages.append(summary_msg)
     return "\n".join(messages)
 
-@handle_assertion_error
-def ui_extract_roi_rotation_latent(
-    storage_path: str, 
-    project_name: str, 
-    select_model: str, 
-    select_roi: str, 
-    select_video: str, 
-    batch_size: str, 
-    preprocess_args: Preprocess, 
-    skip_existing: bool, 
-    progress=gr.Progress()
-) -> str:
-    
-    messages = []
-    if not preprocess_args:
-        raise ValueError("Please click Apply on Preprocess settings first.")
-        
-    _, config = get_project_config(storage_path, project_name)
-    video_list = sorted(config['source']) if select_video == "All" else [select_video]
-    
-    # --- Pre-flight Check ---
-    videos_to_process = []
-    messages.append(f"Starting pre-flight check for {len(video_list)} videos for rotation latent extraction...")
-    for video_name in video_list:
-        # Construct the expected output path
-        latent_dir = os.path.join(storage_path, project_name, 'latent', video_name)
-        latent_filename = f'ROI_{select_roi}_rotation_latent.npz' # This might need adjustment
-        output_path = os.path.join(latent_dir, latent_filename)
-        
-        if skip_existing and os.path.exists(output_path):
-            messages.append(f"  ⏩ Skipping existing: {video_name}")
-            continue
-        videos_to_process.append(video_name)
-
-    if not videos_to_process:
-        messages.append("\n✅ All videos already have rotation latent files. Nothing to extract.")
-        return "\n".join(messages)
-
-    messages.append(f"\nFound {len(videos_to_process)} new videos to process.")
-    
-    # --- Execution ---
-    success_count = 0
-    failed_videos = []
-    
-    def update_progress(p, desc=None):
-        progress(p, desc=desc)
-
-    for video_name in tqdm(videos_to_process, desc="Extracting Rotation Latents"):
-        try:
-            messages.append(f"\nProcessing {video_name}...")
-            path = extract_roi_rotation_latent_from_video(
-                storage_path=storage_path,
-                project_name=project_name,
-                video_name=video_name,
-                roi_id=int(select_roi),
-                model_name=select_model,
-                batch_size=int(batch_size),
-                preprocess_config=preprocess_args,
-                skip_existing=skip_existing,
-                progress_callback=update_progress
-            )
-            if path:
-                messages.append(f"  ✅ Success: Rotation latent file saved to {os.path.basename(path)}")
-                success_count += 1
-            else:
-                messages.append(f"  ⚠️ Warning: Rotation extraction returned no path for {video_name}, but no error was raised.")
-
-        except Exception as e:
-            failed_videos.append(video_name)
-            messages.append(f"  ❌ Error processing {video_name}: {e}")
-
-    # --- Final Summary ---
-    summary_msg = f"\n\n🎉 Rotation Extraction Complete! \nSuccessfully processed {success_count}/{len(videos_to_process)} videos."
-    if failed_videos:
-        summary_msg += f"\n⚠️ Failed videos: {', '.join(failed_videos)}"
-    
-    messages.append(summary_msg)
-    return "\n".join(messages)
-
 
 @handle_assertion_error
 def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_switch, center_roi_id,
@@ -449,11 +392,6 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
 # ---------------------------
 # UI Construction
 # ---------------------------
-
-
-# ---------------------------
-# UI Construction
-# ---------------------------
 def create_extract_ui(storage_path, project_name, extract_tab):
     ui = {}
     preprocess_state = gr.State(None)
@@ -461,130 +399,151 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     with gr.Row(visible=True):
         with gr.Column(scale=2):
             ui['select_model'] = gr.Dropdown(
-                label="Select Visual Model",
+                label="Visual Model",
                 choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
                 value="dinov2_vitb14_reg4_pretrain",
-                visible=False
+                visible=False,
+                info="DINOv2/v3 backbone used for feature extraction.",
             )
             ui['select_roi_id'] = gr.Textbox(
-                label="Enter ROI ID",
+                label="ROI ID",
                 value="1",
                 visible=False,
                 info=(
-                    "ROI (Region of Interest) ID to extract features from. "
-                    "Default: 1 (the animal body). Must match the ROI tracked in Step 2."
+                    "Region of Interest ID to extract features from. "
+                    "Default: 1 (animal body). Must match the ROI tracked in Step 2."
                 ),
             )
             ui['batch_size'] = gr.Textbox(
-                label="Batch size",
+                label="Batch Size",
                 value="32",
                 visible=False,
                 info=(
-                    "Number of frames processed simultaneously. Default: 32. "
-                    "Larger values are faster but use more GPU memory. "
-                    "Reduce to 8 or 16 if you get out-of-memory errors."
+                    "Frames processed per GPU batch. Default: 32. "
+                    "Reduce to 8–16 if you encounter out-of-memory errors."
                 ),
             )
-            ui['select_video'] = gr.Dropdown(label="Select Target Video", value=None, visible=False)
-            ui['video_count'] = gr.Number(label="Project Video Count", value=0, interactive=False, visible=False) # 新增的 UI 元件
-            ui['skip_existing'] = gr.Checkbox(label="Skip existing files", value=True, visible=False)
+            ui['select_video'] = gr.Dropdown(
+                label="Target Video",
+                value=None,
+                visible=False,
+                info="Select a specific video or 'All' to process the entire project.",
+            )
+            ui['video_count'] = gr.Number(
+                label="Project Video Count",
+                value=0,
+                interactive=False,
+                visible=False,
+            )
+            ui['skip_existing'] = gr.Checkbox(
+                label="Skip existing files",
+                value=True,
+                visible=False,
+                info="Skip videos that already have a latent file saved to disk.",
+            )
             
         with gr.Column(scale=2):
-            ui['center_roi_switch'] = gr.Checkbox(label="Center ROI", value=False, visible=False)
+            ui['center_roi_switch'] = gr.Checkbox(
+                label="Center ROI",
+                value=False,
+                visible=False,
+                info="Crop each frame centred on the chosen ROI before extracting features.",
+            )
             ui['center_roi_id'] = gr.Number(
                 label="Center ROI ID",
                 value=1,
                 visible=False,
-                info="ROI ID used to center the crop region. Default: 1 (body centroid).",
+                info="ROI ID used as the crop centre. Default: 1 (body centroid).",
             )
             ui['center_roi_crop_width'] = gr.Number(
-                label="width",
+                label="Crop Width",
                 value=300,
                 visible=False,
-                info=(
-                    "Crop region width in pixels. Default: 300. "
-                    "Larger values include more context but increase processing time."
-                ),
+                info="Width of the crop region in pixels. Default: 300.",
             )
             ui['center_roi_crop_height'] = gr.Number(
-                label="height",
+                label="Crop Height",
                 value=300,
                 visible=False,
-                info=(
-                    "Crop region height in pixels. Default: 300. "
-                    "Keep width and height equal for square crops."
-                ),
+                info="Height of the crop region in pixels. Default: 300.",
             )
-            ui['rotate_roi_tail_switch'] = gr.Checkbox(label="Rotate based on Tail", value=False, visible=False)
-            ui['rotate_roi_tail_id'] = gr.Number(
-                label="Tail ROI ID",
-                value=2,
+            ui['remove_background_switch'] = gr.Checkbox(
+                label="Remove Background",
+                value=False,
                 visible=False,
-                info=(
-                    "ROI ID for the tail/reference point used to compute body orientation. "
-                    "Default: 2. Requires the tail to be tracked."
-                ),
+                info="Zero out pixels outside the ROI mask before extracting features.",
             )
-            ui['remove_background_switch'] = gr.Checkbox(label="Remove Background", value=False, visible=False)
             ui['apply_preprocess'] = gr.Button("Apply", visible=False)
             
         with gr.Column(scale=4):
             ui['display'] = gr.Image(label='Display', interactive=False, visible=False)
             
             with gr.Accordion("Advanced Extraction Options", open=False, visible=False) as adv_accordion:
+                ui['rotate_roi_tail_switch'] = gr.Checkbox(
+                    label="Rotate based on Tail",
+                    value=True,
+                    info=(
+                        "Automatically extract a rotation latent after the main extraction. "
+                        "Aligns frames by body orientation using the tail ROI as reference."
+                    ),
+                )
+                ui['rotate_roi_tail_id'] = gr.Number(
+                    label="Tail ROI ID",
+                    value=2,
+                    info=(
+                        "ROI ID for the tail used to compute body orientation. "
+                        "Default: 2. Requires the tail to be tracked in Step 2."
+                    ),
+                )
                 ui['pooling_method'] = gr.Radio(
                     choices=['weighted_average', 'multiscale'],
                     value='weighted_average',
                     label='Pooling Method',
-                    info='weighted_average=original single-vector; multiscale=spatial pyramid pooling'
+                    info='weighted_average: single vector; multiscale: spatial pyramid pooling.',
                 )
                 ui['pooling_scales'] = gr.CheckboxGroup(
                     choices=['1', '2', '4', '8'],
                     value=['1', '2', '4'],
-                    label='Multiscale Grid Sizes (only for multiscale pooling)',
-                    info='1=global, 2=2×2 grid, 4=4×4 grid, 8=8×8 grid'
+                    label='Multiscale Grid Sizes',
+                    info='Only used when Pooling Method is multiscale. 1=global, 2=2×2, 4=4×4, 8=8×8.',
                 )
                 ui['feature_layers'] = gr.Textbox(
                     value='',
-                    label='Feature Layers (comma-separated, empty=last only)',
-                    info='e.g. "3,7,11" for DINOv2/v3 layers 4, 8, 12',
-                    placeholder='Leave empty for default (last layer)'
+                    label='Feature Layers',
+                    info='Comma-separated layer indices to concatenate (e.g. "3,7,11"). Empty = last layer only.',
+                    placeholder='Leave empty for default (last layer)',
                 )
             ui['adv_accordion'] = adv_accordion
             
             ui['extract_btn'] = gr.Button("Extract", visible=False)
             ui['extract_crop_video_btn'] = gr.Button("Extract Crop Video", visible=False)
-            ui['extract_rotation_latent_btn'] = gr.Button("Extract Rotation Latent", visible=False) 
  
             ui['latent_file_list'] = gr.Textbox(
                 label="Log Output", 
                 visible=False,
                 lines=10,
-                max_lines=20
+                max_lines=20,
             )
 
-    # 收集所有需要控制可見性的 UI 元件
+    # 收集所有需要控制可見性的 UI 元件 (rotate/tail 元件在 accordion 內，不需要單獨控制)
     all_ui_elements_to_control = [
         ui['select_model'],
         ui['select_roi_id'],
         ui['batch_size'],
         ui['select_video'],
-        ui['video_count'], # 新增
+        ui['video_count'],
         ui['skip_existing'],
         ui['center_roi_switch'],
         ui['center_roi_id'],
         ui['center_roi_crop_width'],
         ui['center_roi_crop_height'],
-        ui['rotate_roi_tail_switch'],
-        ui['rotate_roi_tail_id'],
         ui['remove_background_switch'],
         ui['apply_preprocess'],
         ui['display'],
-        ui['adv_accordion'],  # A-06
+        ui['adv_accordion'],
         ui['extract_btn'],
         ui['extract_crop_video_btn'],
-        ui['extract_rotation_latent_btn'],
-        ui['latent_file_list']
+        ui['latent_file_list'],
     ]
 
     # Event Binding
@@ -602,22 +561,15 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui_extract_roi_latent,
         inputs=[storage_path, project_name, ui['select_model'], ui['select_roi_id'],
                 ui['select_video'], ui['batch_size'], preprocess_state, ui['skip_existing'],
+                ui['rotate_roi_tail_switch'],
                 ui['pooling_method'], ui['pooling_scales'], ui['feature_layers']],
         outputs=ui['latent_file_list']
     )
     
-    # Updated: Removed unnecessary inputs for crop
     ui['extract_crop_video_btn'].click(
         ui_extract_roi_crop_video,
         inputs=[storage_path, project_name, ui['select_roi_id'],
                 ui['select_video'], preprocess_state, ui['skip_existing']],
-        outputs=ui['latent_file_list']
-    )
-
-    ui['extract_rotation_latent_btn'].click(
-        ui_extract_roi_rotation_latent,
-        inputs=[storage_path, project_name, ui['select_model'], ui['select_roi_id'],
-                ui['select_video'], ui['batch_size'], preprocess_state, ui['skip_existing']],
         outputs=ui['latent_file_list']
     )
 

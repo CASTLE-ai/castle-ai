@@ -116,7 +116,7 @@ def export_ethogram_csv_handler(storage_path: str, project_name: str, session_id
     csv_dir = os.path.join(tmp_dir, "ethogram_csv")
 
     try:
-        export_ethogram_csv(project_path=project_path, output_path=csv_dir)
+        export_ethogram_csv(project_path=project_path, output_path=csv_dir, session_id=session_id or None)
     except FileNotFoundError:
         return (
             "**❌ Export failed:** Ethogram data not found. "
@@ -151,6 +151,7 @@ def export_ethogram_csv_handler(storage_path: str, project_name: str, session_id
 
 def generate_ethogram(annotator_data):
     """Compute ethogram from AnnotatorData and return (heatmap fig, stats df, raster fig)."""
+    import os
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -162,9 +163,29 @@ def generate_ethogram(annotator_data):
     cluster_labels = annotator_data.cluster
     fps = annotator_data.fps or 30.0
 
-    # Build cluster_names dict from cluster_meta
+    # Bug 11 fix: load annotations and format cluster names as
+    # "human_label — bm_name" when a human annotation exists, otherwise
+    # fall back to the BM clustering name.
+    annotations: dict = {}
+    try:
+        from castle.service.annotation_service import load_annotations as _load_ann
+        project_path = annotator_data.project_path
+        storage_path = os.path.dirname(project_path)
+        project_name = os.path.basename(project_path)
+        annotations = _load_ann(storage_path, project_name, session_id=annotator_data.session_id)
+    except Exception as _exc:
+        logger.warning("Could not load annotations for ethogram cluster names: %s", _exc)
+
+    def _display_name(bm_name: str) -> str:
+        """Return annotated display name or raw BM name."""
+        ann = annotations.get(bm_name)
+        if ann and ann.get("behavior_label"):
+            return f"{ann['behavior_label']} \u2014 {bm_name}"
+        return bm_name
+
+    # Build cluster_names dict from cluster_meta, applying annotation labels
     cluster_names = {
-        cid: meta["name"]
+        cid: _display_name(meta["name"])
         for cid, meta in annotator_data.cluster_meta.items()
     }
 

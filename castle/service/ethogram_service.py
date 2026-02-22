@@ -244,7 +244,11 @@ def compute_ethogram_from_data(labels, fps: float, cluster_names: dict = None):
     return compute_ethogram(labels, fps=fps, cluster_names=cluster_names or {})
 
 
-def export_ethogram_csv(project_path: str, output_path: str) -> str:
+def export_ethogram_csv(
+    project_path: str,
+    output_path: str,
+    session_id: str = None,
+) -> str:
     """Export ethogram data to CSV files.
 
     Creates:
@@ -253,9 +257,14 @@ def export_ethogram_csv(project_path: str, output_path: str) -> str:
       - ``transition_counts.csv`` — raw transition counts
       - ``bouts.csv`` — every individual bout
 
+    Cluster names in all output files follow the same convention as the
+    Analysis page (Bug 11): ``"human_label — bm_name"`` when a human
+    annotation exists, otherwise just the BM clustering name.
+
     Args:
         project_path: Project directory path.
         output_path: Directory to write CSV files into.
+        session_id: Optional session ID used to locate the annotations CSV.
 
     Returns:
         Path to the output directory.
@@ -264,7 +273,29 @@ def export_ethogram_csv(project_path: str, output_path: str) -> str:
 
     project_path = _resolve_project_path(project_path)
     data = _load_cluster_data(project_path)
-    ethogram = compute_ethogram(data["labels"], fps=30.0, cluster_names=data["cluster_names"])
+
+    # Apply annotation labels when available (Bug 11)
+    annotations: dict = {}
+    try:
+        storage_path = os.path.dirname(project_path)
+        project_name = os.path.basename(project_path)
+        from castle.service.annotation_service import load_annotations as _load_ann
+        annotations = _load_ann(storage_path, project_name, session_id=session_id)
+    except Exception as _exc:
+        logger.warning("Could not load annotations for ethogram CSV export: %s", _exc)
+
+    def _display_name(bm_name: str) -> str:
+        ann = annotations.get(bm_name)
+        if ann and ann.get("behavior_label"):
+            return f"{ann['behavior_label']} \u2014 {bm_name}"
+        return bm_name
+
+    annotated_names = {
+        cid: _display_name(name)
+        for cid, name in data["cluster_names"].items()
+    }
+
+    ethogram = compute_ethogram(data["labels"], fps=30.0, cluster_names=annotated_names)
 
     os.makedirs(output_path, exist_ok=True)
 

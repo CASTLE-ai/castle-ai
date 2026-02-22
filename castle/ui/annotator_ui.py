@@ -158,14 +158,20 @@ def on_load_cluster_data(storage_path, project_name, session_id):
 
 
 def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice, grid_cols):
-    """When user selects a cluster, generate a grid video and return its path."""
+    """When user selects a cluster, generate a grid video and return its path.
+
+    Returns:
+        (stripped_cluster_name, video_path, info_text) — the first element
+        is stored in ``selected_cluster_name`` state to avoid ✅-prefix
+        validation issues with the Radio component.
+    """
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or annotator_data is None:
-        return None, "**Selected:** None"
+        return "", None, "**Selected:** None"
 
     cluster_id = _find_cluster_id_by_name(annotator_data, cluster_name)
     if cluster_id is None:
-        return None, f"**Error:** Cluster '{cluster_name}' not found"
+        return cluster_name, None, f"**Error:** Cluster '{cluster_name}' not found"
 
     n_bins_in_cluster = int(np.sum(annotator_data.cluster == cluster_id))
     cols = int(grid_cols) if grid_cols else 3
@@ -192,7 +198,7 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
     info_text = (
         f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
     )
-    return video_path, info_text
+    return cluster_name, video_path, info_text
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
@@ -208,13 +214,17 @@ def on_save_annotation(
     project_name,
     annotator_data,
     annotations_state,
-    cluster_choice,
+    selected_cluster_name,
     behavior_label,
     scheme_name,
     comment,
 ):
-    """Save a single cluster annotation scoped to the loaded session."""
-    cluster_name = _strip_check(cluster_choice)
+    """Save a single cluster annotation scoped to the loaded session.
+
+    Uses ``selected_cluster_name`` state (plain name without ✅ prefix) to
+    avoid Radio validation errors when choices have been updated with ✅.
+    """
+    cluster_name = selected_cluster_name or ""
     if not cluster_name or not behavior_label:
         return annotations_state, gr.update()
 
@@ -272,6 +282,18 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
     Clustering tab.  Cluster data is loaded from disk via the
     "📂 Load Cluster Data" button.
 
+    Layout (fits ~900 px viewport):
+    ┌─────────────────────────────────────────────────────┐
+    │  Session selector + Load button + status            │
+    ├─────────────────────┬───────────────────────────────┤
+    │  Cluster tree       │  Grid video preview           │
+    │  (Radio, LEFT)      │  (RIGHT, max ~420 px)         │
+    ├─────────────────────┼───────────────────────────────┤
+    │  Annotation controls│  Playback + Grid settings     │
+    │  (scheme, label,    │  (speed slider, grid_cols)    │
+    │   comment, save)    │                               │
+    └─────────────────────┴───────────────────────────────┘
+
     Args:
         storage_path: gr.State with storage path.
         project_name: gr.State with project name.
@@ -285,9 +307,12 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
     # Per-tab state
     annotator_data = gr.State(None)
     annotations_state = gr.State({})
+    # Bug 10 fix: track selected cluster name separately (no ✅ prefix) to
+    # avoid Radio validation errors when choices list is updated.
+    selected_cluster_name = gr.State("")
 
     with gr.Column():
-        # --- Load controls ---
+        # ── Load controls ──────────────────────────────────────────────────
         gr.Markdown("### 📋 Cluster Annotator")
         with gr.Row():
             ui["session_dropdown"] = gr.Dropdown(
@@ -302,46 +327,31 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
 
         gr.Markdown("---")
 
+        # ── Main row: cluster tree (left) | grid video (right) ────────────
         with gr.Row():
-            # --- Left Column: Controls ---
-            with gr.Column(scale=3):
+            with gr.Column(scale=3, min_width=200):
                 ui["cluster_radio"] = gr.Radio(
-                    label="Select Cluster",
+                    label="🗂 Select Cluster",
                     choices=[],
                     interactive=True,
                 )
 
-                ui["grid_cols"] = gr.Slider(
-                    label="Grid size (N×N bouts)",
-                    minimum=1,
-                    maximum=5,
-                    value=3,
-                    step=1,
-                    interactive=True,
-                    info=(
-                        "Number of behavior clips per row/column in the preview grid. "
-                        "Default: 3 (3×3 = 9 clips). Larger grids show more variety "
-                        "but take longer to generate."
-                    ),
+            with gr.Column(scale=7, min_width=300):
+                ui["grid_video"] = gr.Video(
+                    label="Grid Video — Most Representative Bouts",
+                    autoplay=True,
+                    loop=True,
+                    interactive=False,
+                    height=420,
                 )
-
-                ui["speed_slider"] = gr.Slider(
-                    label="Playback Speed",
-                    minimum=0.1,
-                    maximum=2.0,
-                    value=1.0,
-                    step=0.1,
-                    interactive=True,
-                    info=(
-                        "Video playback speed multiplier. Default: 1.0× (normal speed). "
-                        "Increase to quickly scan through fast behaviors."
-                    ),
-                )
-
                 ui["cluster_info"] = gr.Markdown("**Selected:** None")
 
-                gr.Markdown("---")
+        gr.Markdown("---")
 
+        # ── Bottom row: annotation (left) | playback settings (right) ─────
+        with gr.Row():
+            with gr.Column(scale=1, min_width=200):
+                gr.Markdown("#### 🏷️ Annotation")
                 ui["scheme_dropdown"] = gr.Dropdown(
                     label="Classification Scheme",
                     choices=list(DEFAULT_SCHEMES.keys()),
@@ -350,7 +360,7 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
                 )
 
                 ui["behavior_radio"] = gr.Radio(
-                    label="🏷️ Behavior Label",
+                    label="Behavior Label",
                     choices=DEFAULT_SCHEMES["10-class"],
                     interactive=True,
                 )
@@ -364,9 +374,33 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
 
                 ui["save_annotation_btn"] = gr.Button("💾 Save Annotation", variant="primary")
 
-                gr.Markdown("---")
+            with gr.Column(scale=1, min_width=200):
+                gr.Markdown("#### ▶ Playback")
+                ui["speed_slider"] = gr.Slider(
+                    label="Playback Speed",
+                    minimum=0.1,
+                    maximum=2.0,
+                    value=1.0,
+                    step=0.1,
+                    interactive=True,
+                    info="Video playback speed multiplier (default: 1.0×).",
+                )
 
-                with gr.Accordion("Custom Scheme", open=False):
+                with gr.Accordion("🔧 Grid Settings", open=False):
+                    ui["grid_cols"] = gr.Slider(
+                        label="Grid size (N×N bouts)",
+                        minimum=1,
+                        maximum=5,
+                        value=3,
+                        step=1,
+                        interactive=True,
+                        info=(
+                            "Number of behavior clips per row/column. "
+                            "Default: 3 (3×3 = 9 clips)."
+                        ),
+                    )
+
+                with gr.Accordion("✏️ Custom Scheme", open=False):
                     ui["custom_scheme_name"] = gr.Textbox(
                         label="Scheme name",
                         placeholder="my-custom-scheme",
@@ -377,15 +411,6 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
                         placeholder="Running\nWalking\nImmobile\n...",
                     )
                     ui["save_scheme_btn"] = gr.Button("Save Scheme")
-
-            # --- Right Column: Grid Video ---
-            with gr.Column(scale=7):
-                ui["grid_video"] = gr.Video(
-                    label="Grid Video — Most Representative Bouts",
-                    autoplay=True,
-                    loop=True,
-                    interactive=False,
-                )
 
     # ---------------------------
     # Event Bindings
@@ -418,9 +443,11 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         ui["cluster_radio"],
         ui["grid_cols"],
     ]
-    _video_outputs = [ui["grid_video"], ui["cluster_info"]]
+    # Bug 10 fix: on_cluster_select now also returns the stripped cluster name
+    # which is stored in selected_cluster_name state.
+    _video_outputs = [selected_cluster_name, ui["grid_video"], ui["cluster_info"]]
 
-    # Select cluster → generate grid video
+    # Select cluster → update state + generate grid video
     ui["cluster_radio"].change(
         fn=on_cluster_select,
         inputs=_video_inputs,
@@ -449,12 +476,14 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         outputs=ui["behavior_radio"],
     )
 
+    # Bug 10 fix: use selected_cluster_name state instead of cluster_radio value
+    # to avoid ✅-prefix mismatch validation errors.
     _save_inputs = [
         storage_path,
         project_name,
         annotator_data,
         annotations_state,
-        ui["cluster_radio"],
+        selected_cluster_name,   # gr.State — no validation against Radio choices
         ui["behavior_radio"],
         ui["scheme_dropdown"],
         ui["comment_box"],

@@ -220,16 +220,19 @@ def collapse_accordion():
 
 def update_select_cluster_list(latents):
     from castle.ui.cluster_tree import build_cluster_tree_choices
-    
+
     if latents is None:
         return gr.update(choices=[], value=None)
-    
+
     if not hasattr(latents, 'cluster_meta') or not hasattr(latents, 'cluster'):
         gr.Info('Session not ready yet. Please wait for initialization to complete, then try again.')
         return gr.update(choices=[], value=None)
-    
+
     choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-    return gr.update(choices=choices)
+    # Bug 13 fix: always pass value=None when refreshing choices so the Radio
+    # component does not retain a stale value that is absent from the new list,
+    # which would cause a Gradio validation error.
+    return gr.update(choices=choices, value=None)
 
 
 def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
@@ -744,8 +747,9 @@ def handle_undo(local_latents, latents, history):
     tree_update = gr.update()
     if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
         choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-        tree_update = gr.update(choices=choices)
-    
+        # Bug 13 fix: always include value=None to prevent stale value errors
+        tree_update = gr.update(choices=choices, value=None)
+
     return Z_plt, Z_plt.plot(), history, _history_status(history), tree_update
 
 
@@ -771,8 +775,9 @@ def handle_redo(local_latents, latents, history):
     tree_update = gr.update()
     if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
         choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-        tree_update = gr.update(choices=choices)
-    
+        # Bug 13 fix: always include value=None to prevent stale value errors
+        tree_update = gr.update(choices=choices, value=None)
+
     return Z_plt, Z_plt.plot(), history, _history_status(history), tree_update
 
 

@@ -82,6 +82,79 @@ def _first_frame_path(video_path: str) -> Optional[str]:
         return None
 
 
+def _first_frame_with_roi(
+    video_path: str, storage_path: str, project_name: str
+) -> tuple[Optional[str], str]:
+    """Extract the first frame, overlaying ROI contours if mask data exists.
+
+    Returns ``(image_path, note_markdown)``.
+    """
+    try:
+        import cv2  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None, ""
+        ret, frame = cap.read()
+        cap.release()
+        if not ret:
+            return None, ""
+
+        video_name = Path(video_path).stem
+        mask_path = Path(storage_path) / project_name / "track" / video_name / "mask_list.h5"
+        note = ""
+
+        if mask_path.exists():
+            try:
+                from castle.utils.h5_io import H5IO  # noqa: PLC0415
+
+                _COLORS = [
+                    (255, 80, 80),
+                    (80, 255, 80),
+                    (80, 80, 255),
+                    (255, 255, 80),
+                    (255, 80, 255),
+                    (80, 255, 255),
+                ]
+                with H5IO(str(mask_path)) as h5:
+                    if h5.has_mask(0):
+                        mask = h5.read_mask(0)
+                        unique_ids = [v for v in np.unique(mask) if v != 0]
+                        for i, roi_id in enumerate(unique_ids):
+                            color = _COLORS[i % len(_COLORS)]
+                            binary = (mask == roi_id).astype(np.uint8)
+                            contours, _ = cv2.findContours(
+                                binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                            )
+                            cv2.drawContours(frame, contours, -1, color, 2)
+                            if contours:
+                                M = cv2.moments(contours[0])
+                                if M["m00"] > 0:
+                                    cx = int(M["m10"] / M["m00"])
+                                    cy = int(M["m01"] / M["m00"])
+                                    cv2.putText(
+                                        frame,
+                                        str(roi_id),
+                                        (cx, cy),
+                                        cv2.FONT_HERSHEY_SIMPLEX,
+                                        1.0,
+                                        color,
+                                        2,
+                                    )
+            except Exception as exc:
+                logger.warning("ROI overlay failed: %s", exc)
+                note = "_ROI overlay unavailable._"
+        else:
+            note = "_ROI overlay will appear after tracking._"
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        cv2.imwrite(tmp.name, frame)
+        return tmp.name, note
+    except Exception:
+        return None, ""
+
+
 def _video_info_text(video_path: str) -> str:
     """Human-readable video summary."""
     try:
@@ -231,7 +304,7 @@ animal you want to track.
                         )
 
                 with gr.Row():
-                    gr.Button("← Back")
+                    back_btn = gr.Button("← Back")
                     step2_next_btn = gr.Button(
                         "Start Analysis →", variant="primary"
                     )
@@ -355,6 +428,7 @@ Your video has been analysed. Here's what to do next:
                     gr.update(value=None),
                     gr.update(value="_Upload a video to see its details._"),
                     None,
+                    gr.update(),  # stay on step1
                 )
 
             # Auto-config
@@ -374,6 +448,9 @@ Your video has been analysed. Here's what to do next:
                 else "🖥️ Running on **CPU** (no GPU detected)"
             )
 
+            frame, roi_note = _first_frame_with_roi(
+                video_path, storage_path or "projects/", project_name.strip()
+            )
             config_md = (
                 f"**Auto-detected settings:**\n\n"
                 f"- Smoothing level: `{pre.get('fc', 0.25)}`\n"
@@ -382,20 +459,21 @@ Your video has been analysed. Here's what to do next:
                 f"- Output frame: `{pre.get('output_size', 518)} px`\n\n"
                 f"{gpu_line}\n\n"
                 f"*These are optimal for your video. Nothing to change!*"
+                + (f"\n\n{roi_note}" if roi_note else "")
             )
 
-            frame = _first_frame_path(video_path)
             return (
                 gr.update(value=""),  # clear step1 status
                 gr.update(value=frame),  # step2 image
                 gr.update(value=config_md),
                 cfg,
+                gr.update(selected="step2"),  # switch to step2 tab
             )
 
         step1_next_btn.click(
             fn=on_step1_next,
             inputs=[_video_path_state, project_name_input, self._storage_state],
-            outputs=[step1_status, step2_frame_img, config_preview_md, _config_state],
+            outputs=[step1_status, step2_frame_img, config_preview_md, _config_state, wizard_tabs],
         )
 
         # ----------------------------------------------------------------
@@ -403,8 +481,10 @@ Your video has been analysed. Here's what to do next:
         # ----------------------------------------------------------------
         def on_step2_next(video_path, config):
             if not video_path:
-                return gr.update(value=_status_table({})), gr.update(
-                    value="⚠️ No video path — go back to Step 1."
+                return (
+                    gr.update(value=_status_table({})),
+                    gr.update(value="⚠️ No video path — go back to Step 1."),
+                    gr.update(),  # stay on step2
                 )
             try:
                 eta = estimate_pipeline_time(video_path, config or {})
@@ -415,12 +495,19 @@ Your video has been analysed. Here's what to do next:
             return (
                 gr.update(value=_status_table({})),
                 gr.update(value=eta_text),
+                gr.update(selected="step3"),  # switch to step3 tab
             )
 
         step2_next_btn.click(
             fn=on_step2_next,
             inputs=[_video_path_state, _config_state],
-            outputs=[run_status_md, eta_md],
+            outputs=[run_status_md, eta_md, wizard_tabs],
+        )
+
+        back_btn.click(
+            fn=lambda: gr.update(selected="step1"),
+            inputs=[],
+            outputs=[wizard_tabs],
         )
 
         # ----------------------------------------------------------------

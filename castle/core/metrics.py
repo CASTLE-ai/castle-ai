@@ -4,9 +4,12 @@ Provides both internal validation (no ground truth needed) and external
 validation (with ground truth) metrics, plus behavior-specific metrics.
 """
 
+import logging
 import numpy as np
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -144,6 +147,16 @@ def compute_internal_metrics(
         emb = np.asarray(embedding)
         labs = np.asarray(labels)
 
+        # Ensure labels and embedding have matching lengths
+        if len(labs) != len(emb):
+            min_len = min(len(labs), len(emb))
+            logger.warning(
+                "Labels length (%d) != embedding length (%d); truncating to %d",
+                len(labs), len(emb), min_len,
+            )
+            labs = labs[:min_len]
+            emb = emb[:min_len]
+
         # Filter out noise labels (-1) for distance-based metrics
         valid = labs >= 0
         emb_valid = emb[valid]
@@ -230,6 +243,19 @@ def evaluate_clustering(
         ClusterQualityReport with all metrics and a verdict.
     """
     labels = np.asarray(labels)
+
+    # Align embedding length to labels when they diverge
+    if embedding is not None:
+        emb_arr = np.asarray(embedding)
+        if len(emb_arr) != len(labels):
+            min_len = min(len(labels), len(emb_arr))
+            logger.warning(
+                "evaluate_clustering: labels length (%d) != embedding length (%d); "
+                "truncating both to %d",
+                len(labels), len(emb_arr), min_len,
+            )
+            labels = labels[:min_len]
+            embedding = emb_arr[:min_len]
 
     # Internal metrics (always)
     internal = compute_internal_metrics(labels, embedding=embedding)

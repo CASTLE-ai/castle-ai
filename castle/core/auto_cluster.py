@@ -143,6 +143,17 @@ def score_clustering(labels: np.ndarray, embedding: np.ndarray = None,
         bout_quality_metrics,
     )
     
+    # Align embedding to labels length when they diverge
+    if embedding is not None and len(embedding) != len(labels):
+        min_len = min(len(labels), len(embedding))
+        logger.warning(
+            "score_clustering: labels length (%d) != embedding length (%d); "
+            "truncating both to %d",
+            len(labels), len(embedding), min_len,
+        )
+        labels = labels[:min_len]
+        embedding = embedding[:min_len]
+
     valid_mask = labels >= 0
     n_valid = valid_mask.sum()
     n_total = len(labels)

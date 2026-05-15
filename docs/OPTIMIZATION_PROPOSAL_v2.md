@@ -266,7 +266,8 @@ Agent-Docs0
 **優先級**: ★★ 高  
 **目標**: 冷啟動零障礙，國中生到 80 歲 PI 不需要問人不需要看文件
 
-### P1-1: Wizard Mode — Gradio
+### P1-1: ~~Wizard Mode — Gradio~~ ❌ Cancelled 2026-05-16
+> **取消理由**：違反 human-in-the-loop 哲學。Step 3「一鍵全自動 Track → Extract → Cluster」跳過 cluster 階段必要的使用者互動（看 scatter、調 eps、看代表幀、賦予標籤）。已於 2026-05-16 整批移除（`castle/ui/wizard_ui.py`）。設計史保留於下：
 
 ```
 Agent-1A「UX Architect — Gradio」
@@ -302,7 +303,8 @@ Agent-1A「UX Architect — Gradio」
     └── 可隨時切到對應 tab 查看詳情
 ```
 
-### P1-2: Wizard Mode — PyQt
+### P1-2: ~~Wizard Mode — PyQt~~ ❌ Cancelled 2026-05-16
+> 同 P1-1 取消理由。已於 2026-05-16 整批移除（`castle/desktop/widgets/wizard_panel.py`）。設計史保留於下：
 
 ```
 Agent-1A-PyQt「UX Architect — PyQt」

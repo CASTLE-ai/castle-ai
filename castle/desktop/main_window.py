@@ -20,7 +20,6 @@ from castle.desktop.widgets.cluster_panel import ClusterPanel
 from castle.desktop.widgets.annotator_panel import AnnotatorPanel
 from castle.desktop.widgets.analysis_panel import AnalysisPanel
 from castle.desktop.widgets.export_panel import ExportPanel
-from castle.desktop.widgets.wizard_panel import WizardPanel
 
 
 class MainWindow(QMainWindow):
@@ -87,7 +86,6 @@ class MainWindow(QMainWindow):
         self.tabs.setDocumentMode(True)
 
         # Create panels
-        self.wizard_panel = WizardPanel(self, storage_path=self._storage_path)
         self.project_panel = ProjectPanel(self, storage_path=self._storage_path)
         self.source_panel = SourcePanel(self)
         self.tracking_panel = TrackingPanel(self)
@@ -109,8 +107,7 @@ class MainWindow(QMainWindow):
 
         microscope_layout.addWidget(self.microscope_tabs)
 
-        # Add top-level tabs (wizard first, then the 7 pipeline tabs)
-        self.tabs.addTab(self.wizard_panel, "🧭 Quick Start")
+        # Add top-level tabs (8 pipeline tabs, project first)
         self.tabs.addTab(self.project_panel, "0. Project")
         self.tabs.addTab(self.source_panel, "1. Upload Videos")
         self.tabs.addTab(self.tracking_panel, "2. Tracking ROIs")
@@ -119,20 +116,13 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.analysis_panel, "5. Analysis")
         self.tabs.addTab(self.export_panel, "6. Export")
 
-        # Wizard is always enabled; disable pipeline tabs until a project is open
-        # Tab 0 = wizard (always enabled), Tab 1 = project (always enabled),
-        # Tabs 2+ = pipeline (require a project)
-        for i in range(2, self.tabs.count()):
+        # Project tab is always enabled; pipeline tabs require a loaded project
+        # Tab 0 = project (always enabled), Tab 1+ = pipeline (disabled initially)
+        for i in range(1, self.tabs.count()):
             self.tabs.setTabEnabled(i, False)
 
         # Connect signals
         self.project_panel.project_opened.connect(self._on_project_opened)
-
-        # When the wizard finishes, jump to the Behavior Microscope tab
-        # (index 5: wizard=0, project=1, source=2, tracking=3, extract=4, microscope=5)
-        self.wizard_panel.request_open_behavior_explorer.connect(
-            lambda: self.tabs.setCurrentIndex(5)
-        )
 
         layout.addWidget(self.tabs)
 
@@ -151,12 +141,9 @@ class MainWindow(QMainWindow):
         self._storage_path = storage_path
         self._project_name = project_name
 
-        # Enable all pipeline tabs (wizard and project tabs are always enabled)
-        for i in range(2, self.tabs.count()):
+        # Enable all pipeline tabs (project tab is always enabled)
+        for i in range(1, self.tabs.count()):
             self.tabs.setTabEnabled(i, True)
-
-        # Keep wizard storage path in sync
-        self.wizard_panel.set_storage_path(storage_path)
 
         # Update status
         self._status_label.setText(f"Project: {project_name}")

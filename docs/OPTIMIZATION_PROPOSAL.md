@@ -88,12 +88,14 @@ Resize → 518×518 → DINOv2
 
 ## Phase 1: UX 大改善 — 「看到就會用」
 
-### P1-1: 一鍵流程（Wizard Mode）
+### P1-1: ~~一鍵流程（Wizard Mode）~~ ❌ Cancelled 2026-05-16
+> 違反 human-in-the-loop 哲學；cluster 階段必須使用者介入。已於 2026-05-16 整批移除（`castle/ui/wizard_ui.py` + `castle/desktop/widgets/wizard_panel.py`）。設計史保留於此供未來討論。
+
 | 子任務 | 內容 | 預估 |
 |--------|------|------|
-| P1-1a | `castle/ui/wizard_ui.py`：3 步驟精靈（① 選影片 ② 點動物 ③ 看結果） | 1 agent |
-| P1-1b | 自動推薦參數：根據影片解析度/幀率/動物大小推算最佳 crop、fc、bin_size | 1 agent |
-| P1-1c | 進度總覽：Pipeline dashboard 顯示每一步的狀態（✅/🔄/⏳） | 同上 |
+| ~~P1-1a~~ | ~~`castle/ui/wizard_ui.py`：3 步驟精靈（① 選影片 ② 點動物 ③ 看結果）~~ | ❌ |
+| ~~P1-1b~~ | ~~自動推薦參數：根據影片解析度/幀率/動物大小推算最佳 crop、fc、bin_size~~ | ❌ |
+| ~~P1-1c~~ | ~~進度總覽：Pipeline dashboard 顯示每一步的狀態（✅/🔄/⏳）~~ | ❌ |
 
 ### P1-2: 錯誤訊息人性化
 | 子任務 | 內容 | 預估 |
@@ -108,7 +110,7 @@ Resize → 518×518 → DINOv2
 | P1-3b | 首次使用引導：偵測新專案自動顯示快速教學 | 同上 |
 
 **人力**: 2 agents 平行，1 agent QC
-**產出**: Wizard mode、smart defaults、friendly errors
+**產出**: ~~Wizard mode~~ (cancelled 2026-05-16)、smart defaults、friendly errors
 
 ---
 

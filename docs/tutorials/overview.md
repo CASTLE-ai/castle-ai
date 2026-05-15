@@ -76,8 +76,9 @@ The high-dimensional features are reduced and clustered to discover behavioral p
 - **UMAP** (Uniform Manifold Approximation and Projection) reduces dimensions for visualization
 - **DBSCAN** clusters the embedding into behavioral syllables
 - **Hierarchical exploration**: three magnification levels (low → intermediate → high) for progressively finer behavioral categories
-- **Recursive auto-clustering**: fully automated hierarchical pipeline via `castle cluster auto`
 - Interactive click-to-explore on the UMAP plot
+
+CASTLE is a **human-in-the-loop** tool: cluster boundaries and labels must be reviewed by the user in the Behavior Microscope tab before they are scientifically meaningful. There is intentionally no "one-click cluster" entry point.
 
 ### 6. Cluster Annotator
 

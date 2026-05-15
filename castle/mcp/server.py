@@ -294,60 +294,6 @@ def cluster_run(
 
 
 @mcp.tool()
-def cluster_auto(project: str, storage: str = "", cluster: str = "init",
-                 max_depth: int = 6, min_frames: int = 100,
-                 roi: int = 1, bin_size: int = 1, model: str = "dinov3_vitb16") -> dict:
-    """Recursive hierarchical Behavior Microscope — automated multi-level clustering.
-    
-    Mirrors the manual multi-level workflow: select cluster → UMAP → DBSCAN → 
-    split → recurse. UMAP config auto-selected per depth.
-    
-    Args:
-        project: Project name
-        storage: Storage directory (defaults to CASTLE_STORAGE env var)
-        cluster: Starting cluster name (default: "init")
-        max_depth: Maximum recursion depth (default 6)
-        min_frames: Minimum frames to split a cluster (default 100)
-        roi: ROI ID
-        bin_size: Temporal bin size
-        model: Visual model name
-    """
-    try:
-        from castle.service.clustering_service import ClusteringSession
-        
-        storage_dir = storage or _storage()
-        
-        session = ClusteringSession(
-            storage_path=storage_dir,
-            project_name=project,
-            roi=roi,
-            bin_size=bin_size,
-            model=model,
-        )
-        
-        result = session.auto_cluster(
-            cluster_name=cluster,
-            max_depth=max_depth,
-            min_frames=min_frames,
-        )
-        
-        if not result.get('success'):
-            return {"status": "error", "message": result.get('error', 'unknown')}
-        
-        return {
-            "status": "success",
-            "message": f"Recursive clustering: {result['total_leaves']} leaves, "
-                       f"{result['total_splits']} splits, max depth {result['max_depth_reached']}",
-            "total_leaves": result['total_leaves'],
-            "total_splits": result['total_splits'],
-            "max_depth_reached": result['max_depth_reached'],
-            "tree": result.get('tree', {}),
-        }
-    except Exception as exc:
-        return {"status": "error", "message": str(exc)}
-
-
-@mcp.tool()
 def cluster_label(project: str, cluster_name: str, label: str, scheme: str = "") -> dict:
     """Label a behavioral cluster with a human-readable name.
 

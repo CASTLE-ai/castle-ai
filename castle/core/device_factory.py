@@ -3,8 +3,8 @@ castle/core/device_factory.py
 Centralized device management for CASTLE.
 
 Eliminates scattered if cpu/mps elif cuda else ... branches that appear
-throughout auto_cluster.py and other modules. One authoritative place for
-all device-specific object construction.
+throughout clustering_service.py and other modules. One authoritative
+place for all device-specific object construction.
 
 Usage::
 

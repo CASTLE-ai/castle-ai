@@ -21,8 +21,8 @@ Latent Vectors → Initialize → Select Cluster → UMAP Embedding → DBSCAN C
 
 This is an **iterative, hierarchical** process. You start with broad categories (low magnification) and progressively zoom in to discover finer behavioral syllables.
 
-!!! tip "Automated alternative"
-    For large datasets, use `castle cluster auto <project>` to run recursive hierarchical clustering fully automatically from the CLI — no manual UMAP/DBSCAN interaction required.
+!!! warning "Human-in-the-loop is required"
+    CASTLE intentionally provides **no automated cluster command** — every cluster boundary and label must be reviewed by the user in the Behavior Microscope tab. A cluster is only scientifically meaningful after you have (1) inspected representative frames, (2) verified the boundary by adjusting `eps`, and (3) assigned a behavioural label.
 
 ---
 
@@ -227,21 +227,6 @@ When tracking data is available, ROI mask contours are drawn over the video fram
 ### Speed Control (Desktop App)
 
 The PyQt6 desktop app includes a **playback speed** selector (0.25×, 0.5×, 1×, 2×) for reviewing grid videos.
-
----
-
-## Automated Clustering (CLI)
-
-For headless pipelines, the recursive auto-clustering command runs the full hierarchical Behavior Microscope automatically:
-
-```bash
-castle cluster auto <project> \
-    --max-depth 6 \
-    --min-frames 100 \
-    --eps 0.3,0.5,0.7,1.0,1.5,2.0,3.0
-```
-
-This mirrors the manual workflow — `select cluster → UMAP → DBSCAN → split → recurse` — but runs unattended. UMAP config is auto-selected per depth (Low at depth 0, Intermediate at depth 1+).
 
 ---
 

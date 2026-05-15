@@ -24,6 +24,10 @@ umap-learn>=0.5,<1.0
 # UI
 gradio>=4.0,<7.0
 
+# HuggingFace (DINOv3 loaded from official hub, replaces gdown for that model)
+transformers>=4.45.0,<5.0
+huggingface-hub>=0.24,<1.0
+
 # CLI & Utilities
 typer>=0.9,<1.0
 rich>=13.0,<15.0

@@ -190,7 +190,7 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 |--------|---------|
 | `project_service.py` | Project CRUD (create, list, info, delete) |
 | `extraction_service.py` | Feature extraction orchestration |
-| `clustering_service.py` | UMAP + DBSCAN session management, recursive auto-clustering |
+| `clustering_service.py` | UMAP + DBSCAN session management for the Behavior Microscope (human-in-the-loop) |
 | `tracking_service.py` | Tracking pipeline orchestration |
 | `preprocessing_service.py` | Stabilized camera preprocessing — `PreprocessingService` + `preprocess_stabilized_camera()` ★ |
 | `annotation_service.py` | Classification scheme management |
@@ -211,7 +211,6 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `extractor.py` | Feature extraction execution engine |
 | `cluster.py` | `LatentAggregator` — multi-video latent loading and frame retrieval |
 | `cluster_transfer.py` | Save / apply clustering models to new data |
-| `auto_cluster.py` | Recursive hierarchical Behavior Microscope — automated multi-level clustering |
 | `data.py` | `Preprocess` pipeline, `VideoDataset` for batched extraction |
 | `models.py` | `VisualEncoder` abstraction: DINOv2, DINOv3, multi-scale pooling |
 | `config.py` | Constants: checkpoint paths, model IDs, supported models |

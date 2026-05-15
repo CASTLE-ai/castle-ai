@@ -16,27 +16,6 @@ console = Console()
 app = typer.Typer(no_args_is_help=True)
 
 
-def _print_tree(node: dict, con: Console, prefix: str = "", is_last: bool = True):
-    """Pretty-print a cluster tree dict."""
-    connector = "└── " if is_last else "├── "
-    name = node.get('name', '?')
-    frames = node.get('n_frames', 0)
-    leaf = node.get('is_leaf', True)
-    
-    if leaf:
-        reason = node.get('stop_reason', 'leaf')
-        con.print(f"{prefix}{connector}[green]{name}[/green] ({frames} frames) ✓ [{reason}]")
-    else:
-        eps = node.get('eps', '?')
-        q = node.get('quality_score', 0)
-        con.print(f"{prefix}{connector}[bold]{name}[/bold] ({frames} frames) → eps={eps}, Q={q}")
-    
-    children = node.get('children', [])
-    child_prefix = prefix + ("    " if is_last else "│   ")
-    for i, child in enumerate(children):
-        _print_tree(child, con, child_prefix, i == len(children) - 1)
-
-
 @app.command("run")
 def run(
     project: str = typer.Argument(..., help="Project name"),
@@ -252,68 +231,6 @@ def apply_model(
     except Exception as e:
         console.print(f"[red]✗[/red] {e}")
         raise typer.Exit(code=1)
-
-
-@app.command("auto")
-def auto_cmd(
-    project: str = typer.Argument(..., help="Project name"),
-    storage: str = typer.Option(None, "-s", "--storage"),
-    cluster: str = typer.Option("init", "--cluster", "-c", help="Starting cluster name"),
-    max_depth: int = typer.Option(6, "--max-depth", "-d", help="Maximum recursion depth (Raiso used up to 7)"),
-    min_frames: int = typer.Option(100, "--min-frames", help="Don't split clusters smaller than this"),
-    eps: str = typer.Option(None, "--eps", help="Comma-separated eps values (default: 0.3,0.5,0.7,1.0,1.5,2.0,3.0)"),
-    roi: int = typer.Option(1, "--roi", help="ROI ID"),
-    bin_size: int = typer.Option(1, "--bin-size", help="Temporal bin size"),
-    model: str = typer.Option("dinov3_vitb16", "--model", "-m", help="Visual model name"),
-):
-    """Recursive hierarchical Behavior Microscope — automated multi-level clustering.
-    
-    Mirrors the manual Behavior Microscope workflow:
-    select cluster → UMAP → DBSCAN → split → recurse.
-    
-    UMAP config auto-selected per depth (Low at depth 0, Intermediate at depth 1+).
-    """
-    storage = get_storage(storage)
-    if not storage:
-        console.print("[red]✗[/red] No storage path. Set CASTLE_STORAGE or use --storage/-s", err=True)
-        raise typer.Exit(1)
-    
-    eps_list = [float(e) for e in eps.split(",")] if eps else None
-    
-    def notify(msg, level="info"):
-        if level == "error":
-            console.print(f"[red]{msg}[/red]")
-        else:
-            console.print(f"  {msg}")
-    
-    def progress(msg):
-        console.print(f"  [dim]{msg}[/dim]")
-    
-    session = ClusteringSession(storage, project, roi, bin_size, model, notify=notify)
-    
-    console.print(f"[bold]Recursive Behavior Microscope (max_depth={max_depth}, min_frames={min_frames})[/bold]")
-    result = session.auto_cluster(
-        cluster_name=cluster,
-        max_depth=max_depth,
-        min_frames=min_frames,
-        eps_values=eps_list,
-        progress_callback=progress,
-    )
-    
-    if not result.get('success'):
-        console.print(f"[red]✗[/red] {result.get('error', 'unknown')}")
-        raise typer.Exit(1)
-    
-    console.print("\n[green]✓[/green] Hierarchical clustering complete!")
-    console.print(f"  Leaf clusters: {result['total_leaves']}")
-    console.print(f"  Split operations: {result['total_splits']}")
-    console.print(f"  Max depth reached: {result['max_depth_reached']}")
-    
-    # Print tree summary
-    tree = result.get('tree', {})
-    if tree:
-        console.print("\n[bold]Cluster tree:[/bold]")
-        _print_tree(tree, console)
 
 
 @app.command("evaluate")

@@ -52,7 +52,6 @@
   - **Cluster Annotator** (Tab 5 desktop / sub-tab in Gradio 4): Grid video browser, per-session annotations, comment field, auto-save on label change / comment blur, mask contour overlay, speed control
   - **Analysis Tab** (Tab 6 desktop / Tab 5 Gradio): Ethogram (raster + transition matrix + bout stats), Quality Metrics (silhouette, CH, DB, V-measure, NMI, ARI), Group Comparison placeholder
   - **Export Tab** (Tab 7 desktop / Tab 6 Gradio): ZIP download with selectable components (masks, latent, cluster results, annotations, grid videos, analysis outputs)
-  - **Recursive Auto-clustering**: `castle cluster auto` — automated hierarchical Behavior Microscope
   - **Multi-scale Pooling**: Spatial pyramid pooling for richer latent representations
   - **Session Management**: Multiple clustering sessions per project with `SessionManager`
   - **NWB Export**: `castle ethogram export-nwb` — Neurodata Without Borders format
@@ -186,7 +185,6 @@ castle track <project>
 castle preprocess <project> --video <name> --body-roi 1 --head-roi 2
 castle extract <project>
 castle cluster run <project>
-castle cluster auto <project>    # Recursive hierarchical auto-clustering
 castle ethogram analyze <project>
 castle compare run <project_a> <project_b>
 castle batch run experiments.yaml         # Batch: run full pipeline across experiments

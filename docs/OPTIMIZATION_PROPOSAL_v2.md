@@ -73,7 +73,7 @@
 
 ```
 castle/
-├── core/           # 核心演算法 (extractor, cluster, ethogram, metrics, auto_cluster...)
+├── core/           # 核心演算法 (extractor, cluster, ethogram, metrics, models...)
 ├── service/        # Service Layer (project, tracking, extraction, clustering, annotation...)
 ├── ui/             # Gradio 前端 (7 tabs: Project→Export)
 ├── desktop/        # PyQt6 前端 (7 tabs: 對齊 Gradio)
@@ -497,8 +497,9 @@ Agent-3A「Data Architect」
 ```
 Agent-3B「Simplification Engineer」
 ├── 人設: "Special cases aren't special enough to break the rules"
-├── 限制: castle/core/auto_cluster.py, castle/core/cluster.py,
+├── 限制: castle/core/cluster.py,
 │         castle/utils/video_io.py
+│   (P0-A' 2026-05-16: castle/core/auto_cluster.py 已移除)
 │
 ├── P3-2a: Device Factory
 │   ├── 現狀: 每個函數都有 if cpu/mps elif cuda else 分支

@@ -72,7 +72,7 @@ Previous v4 had 7 F401 (unused imports) — all fixed in `c269dba` and `139d649`
 |------|--------|
 | `temporal_smooth` round-trip (median + min_bout) | ✅ |
 | `cluster_transfer` save → load → apply | ✅ |
-| `auto_cluster` scoring + MICROSCOPE_PRESETS (4 presets) | ✅ |
+| ~~`auto_cluster` scoring + MICROSCOPE_PRESETS (4 presets)~~ | ❌ Removed 2026-05-16 (P0-A', HITL philosophy) |
 | `CASTLE_STORAGE` environment variable | ✅ |
 | `NWB export` round-trip (write → verify exists, 196KB) | ✅ |
 
@@ -86,7 +86,7 @@ Previous v4 had 7 F401 (unused imports) — all fixed in `c269dba` and `139d649`
 | `castle ethogram --help` | ✅ |
 | `castle compare --help` | ✅ |
 | `castle info --help` | ✅ |
-| `castle cluster auto --help` | ✅ |
+| ~~`castle cluster auto --help`~~ | ❌ Removed 2026-05-16 (P0-A') |
 | `castle cluster save-model --help` | ✅ |
 | `castle cluster apply-model --help` | ✅ |
 | `castle ethogram export-nwb --help` | ✅ |
@@ -147,10 +147,10 @@ All 6 new core modules + 2 new service modules import cleanly.
    - No more `--storage` on every command
    - Priority: arg → env var → current dir
 
-6. **Automated Behavior Microscope** (`castle/core/auto_cluster.py`)
-   - Parameter sweep using Raiso-optimized presets
-   - Quality-based selection (temporal coherence + CH + bout quality)
-   - `castle cluster auto` CLI
+6. ~~**Automated Behavior Microscope** (`castle/core/auto_cluster.py`)~~ — ❌ Removed 2026-05-16 (P0-A', HITL philosophy)
+   - ~~Parameter sweep using Raiso-optimized presets~~
+   - ~~Quality-based selection (temporal coherence + CH + bout quality)~~
+   - ~~`castle cluster auto` CLI~~
 
 ---
 

@@ -33,7 +33,6 @@ from castle.ui.cluster_handlers import (
     handle_redo,
     update_history_buttons,
     check_session_exists,
-    run_auto_cluster,
     save_cluster_model,
     apply_cluster_model,
 )
@@ -281,23 +280,15 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             
     ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)
 
-    # ---- Auto-Cluster Section ----
-    with gr.Accordion("🤖 Auto-Cluster (Recursive Hierarchical)", open=False) as ui['auto_cluster_accordion']:
-        gr.Markdown(
-            "Automatically runs recursive UMAP + DBSCAN at increasing magnification. "
-            "Equivalent to `castle cluster auto PROJECT --max-depth N --min-frames M`."
-        )
-        with gr.Row():
-            ui['auto_max_depth'] = gr.Slider(
-                label="Max Depth", minimum=1, maximum=10, step=1, value=6,
-                info="Maximum recursion depth (Raiso typically uses 6–7).",
-            )
-            ui['auto_min_frames'] = gr.Number(
-                label="Min Frames", value=100, precision=0,
-                info="Clusters with fewer frames than this are left as leaves.",
-            )
-        ui['auto_cluster_btn'] = gr.Button("🤖 Run Auto-Cluster", variant="primary")
-        ui['auto_cluster_status'] = gr.Markdown("**Status:** Ready")
+    # ---- HITL warning banner ----
+    gr.Markdown(
+        "⚠️ **Cluster labels are only meaningful after human validation.** "
+        "Before exporting or training downstream models: "
+        "(1) inspect representative frames for each cluster, "
+        "(2) verify cluster boundaries by adjusting `eps`, and "
+        "(3) assign behaviorally meaningful labels. "
+        "CASTLE intentionally provides no \"one-click cluster\" entry point."
+    )
 
     # ---- Save / Apply Cluster Model Section ----
     with gr.Accordion("💾 Save / Apply Cluster Model", open=False) as ui['model_transfer_accordion']:
@@ -454,23 +445,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=lambda sp, pn, lat: update_select_cluster_list(lat) if check_session_exists(sp, pn) is not None else gr.update(),
         inputs=[storage_path, project_name, latents],
         outputs=ui['cluster_tree_radio']
-    )
-
-    # Auto-Cluster
-    _auto_cluster_outputs = [
-        ui['syllables_plot'], ui['cluster_tree_radio'],
-        ui['behavior_id_csv'], ui['behavior_time_series_csv'],
-        ui['behavior_time_series_srt'],
-        local_embedding_plot, ui['embedding_plot'], ui['display_eps'],
-        ui['auto_cluster_status'],
-    ]
-    ui['auto_cluster_btn'].click(
-        fn=run_auto_cluster,
-        inputs=[
-            storage_path, project_name, latents, mulvideo,
-            ui['auto_max_depth'], ui['auto_min_frames'],
-        ],
-        outputs=_auto_cluster_outputs,
     )
 
     # Save Cluster Model

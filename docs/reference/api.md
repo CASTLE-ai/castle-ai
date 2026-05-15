@@ -634,15 +634,6 @@ removed = cleanup_deleted_videos("/data/projects/my_project")
 
 ---
 
-### Automated Behavior Microscope
-
-::: castle.core.auto_cluster
-    options:
-      show_root_heading: true
-      show_source: true
-
----
-
 ### NWB Export
 
 ::: castle.core.nwb_export

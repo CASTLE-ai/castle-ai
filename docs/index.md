@@ -19,7 +19,6 @@ CASTLE is a **training-free** framework for unsupervised animal behavior analysi
 - 🏷️ **Cluster Annotator** — grid video browser with per-session labels, comment field, and auto-save
 - 📊 **Analysis tab** — Ethogram, Quality Metrics (silhouette, CH, DB), Group Comparison
 - 📦 **Export tab** — ZIP download with selectable data components
-- 🤖 **Recursive auto-clustering** — automated hierarchical Behavior Microscope via CLI or MCP
 - 📁 **Publication-ready outputs** — CSV labels, UMAP plots, ethograms, SRT subtitles, NWB export
 
 ---

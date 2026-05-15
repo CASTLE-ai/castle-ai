@@ -170,7 +170,7 @@ def load_annotator_data(
             ratio = len(emb_array) / len(cls_array)
             if abs(ratio - round(ratio)) < 0.01:
                 step = int(round(ratio))
-                emb_array = emb_array[::step]
+                emb_array = emb_array[::step][:len(cls_array)]
                 logger.info(
                     "Downsampled embedding %d → %d (step=%d) to match cluster array",
                     len(emb_array) * step, len(emb_array), step,

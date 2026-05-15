@@ -116,7 +116,7 @@ def get_tracking_status(storage_path: str, project_name: str, video_name: str) -
         logger.warning(f"Could not read mask file {mask_path}: {e}")
     
     # Check for generated files
-    video_basename = video_name.split('.')[0]
+    video_basename = Path(video_name).stem
     csv_path = track_dir / f'{video_basename}-basic-information.csv'
     mix_path = track_dir / f'{video_basename}-mix.mp4'
     

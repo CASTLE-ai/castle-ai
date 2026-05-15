@@ -115,7 +115,7 @@ def create_view_ui(storage_path, project_name, source_video):
             )
     
     # Event handlers - Update display when frame index or mode changes
-    ui['index_slide'].change(
+    ui['index_slide'].release(
         fn=update_frame_display,
         inputs=[storage_path, project_name, source_video, ui['index_slide'], ui['display_mode_drop']],
         outputs=ui['display_view']

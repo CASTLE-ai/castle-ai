@@ -39,6 +39,7 @@ class Segmentor:
         
     @torch.no_grad()
     def set_image(self, image):
+        self.have_embedded = False
         if not self.have_embedded:
             self.interactive_predictor.set_image(image)
             self.have_embedded = True

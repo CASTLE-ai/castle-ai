@@ -43,14 +43,17 @@ def delete_file_if_exists(file_path):
 
 
 def delete_selected(storage_path, project_name, label_list, index):
+    if index is None:
+        gr.Warning("No item selected. Please select a gallery item before deleting.")
+        return label_list, []
     if index >= len(label_list):
-        return []
+        return label_list, []
     target_file = label_list[index]["index"] # this index is display name, not index
     project_path = Path(storage_path) / project_name
     label_dir = os.path.join(project_path, "label")
     frame_index, video_name = target_file.split(', ')
     delete_file_if_exists(os.path.join(label_dir, video_name, frame_index) + '.npz')
-    return read_label_to_gallery(storage_path, project_name)[1]
+    return read_label_to_gallery(storage_path, project_name)
 
 
 def get_select_index(evt: gr.SelectData):
@@ -107,7 +110,7 @@ def create_knowledge_ui(
     delete_selected_btn.click(
         fn=delete_selected,
         inputs=[storage_path, project_name, label_list_state, selected_image],
-        outputs=gallery,
+        outputs=[label_list_state, gallery],
     )
 
 

@@ -104,9 +104,9 @@ def preprocess_stabilized_camera(
     # ------------------------------------------------------------------
     # 2. Get frame count and fps from VideoReader
     # ------------------------------------------------------------------
-    reader = ReadArray(video_path)
-    n_frames: int = len(reader)
-    fps: float = reader.fps
+    with ReadArray(video_path) as reader:
+        n_frames: int = len(reader)
+        fps: float = reader.fps
     logger.info("preprocess_stabilized_camera: n_frames=%d, fps=%.2f", n_frames, fps)
 
     # ------------------------------------------------------------------

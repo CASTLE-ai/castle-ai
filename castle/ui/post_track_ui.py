@@ -24,14 +24,15 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
         gr.Warning(f"Mask file not found: {rois_results_path}")
         return None, None, None, None, None
     rois_results = H5IO(rois_results_path)
-    n_rois = rois_results.get_n_rois()
-    total_frames = len(rois_results)
+    try:
+        n_rois = rois_results.get_n_rois()
+        total_frames = len(rois_results)
 
-    roi_info_list = compute_roi_info(rois_results, n_rois, total_frames, progress_fn=progress.tqdm)
+        roi_info_list = compute_roi_info(rois_results, n_rois, total_frames, progress_fn=progress.tqdm)
 
-    mask_kinematic_csv_path = save_kinematic_csv(track_dir_path, video_name, roi_info_list)
-
-    del rois_results
+        mask_kinematic_csv_path = save_kinematic_csv(track_dir_path, video_name, roi_info_list)
+    finally:
+        rois_results.close()
     return Plotter.plot_position(roi_info_list), Plotter.plot_speed(roi_info_list), Plotter.plot_area(roi_info_list), roi_info_list, mask_kinematic_csv_path
 
 
@@ -50,14 +51,16 @@ def generate_mask_video(storage_path, project_name, source_video):
         return None
     output = WriteArray(output_path, fps=source_video.fps, crf=15)
     rois_results = H5IO(rois_results_path)
-    n_frames = len(rois_results)
+    try:
+        n_frames = len(rois_results)
 
-    for i in range(n_frames):
-        rois = rois_results[i]
-        out_frame = generate_mask_image(rois)
-        output.append(out_frame)
-
-    del rois_results, output
+        for i in range(n_frames):
+            rois = rois_results[i]
+            out_frame = generate_mask_image(rois)
+            output.append(out_frame)
+    finally:
+        rois_results.close()
+        output.close()
     return output_path
 
 
@@ -76,15 +79,17 @@ def generate_mix_video(storage_path, project_name, source_video):
         return None
     output = WriteArray(output_path, fps=source_video.fps, crf=15)
     rois_results = H5IO(rois_results_path)
-    n_frames = len(rois_results)
+    try:
+        n_frames = len(rois_results)
 
-    for i in range(n_frames):
-        rois = rois_results[i]
-        frame = source_video[i]
-        out_frame = generate_mix_image(frame, rois)
-        output.append(out_frame)
-
-    del rois_results, output
+        for i in range(n_frames):
+            rois = rois_results[i]
+            frame = source_video[i]
+            out_frame = generate_mix_image(frame, rois)
+            output.append(out_frame)
+    finally:
+        rois_results.close()
+        output.close()
     return output_path
 
 

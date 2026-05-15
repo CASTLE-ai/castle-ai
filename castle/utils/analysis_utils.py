@@ -44,15 +44,19 @@ def compute_roi_info(rois_results: H5IO, n_rois: int, total_frames: int,
         frame_iter = progress_fn(frame_iter)
 
     for i_frame in frame_iter:
+        # Fetch the frame mask once, outside the ROI loop, to avoid
+        # n_rois × total_frames HDF5 reads (should be total_frames reads).
+        frame_has_mask = rois_results.has_mask(i_frame)
+        frame_mask = rois_results[i_frame][:] if frame_has_mask else None
+
         for i in range(n_rois):
-            if not rois_results.has_mask(i_frame):
+            if not frame_has_mask:
                 roi_info_list[i]['x'].append(np.nan)
                 roi_info_list[i]['y'].append(np.nan)
                 roi_info_list[i]['area'].append(0)
                 continue
 
-            mask = rois_results[i_frame][:]
-            mask = cv2.inRange(mask, i + 1, i + 1)
+            mask = cv2.inRange(frame_mask, i + 1, i + 1)
             output = cv2.connectedComponentsWithStats(mask, 8, cv2.CV_32S)
             num_labels, _, stats, centroids = output
             if num_labels <= 1:
@@ -120,7 +124,7 @@ def save_kinematic_csv(track_dir_path: str, video_name: str,
     Returns:
         Path to the generated CSV file.
     """
-    video_name_wo_extension = video_name.split('.')[0]
+    video_name_wo_extension = os.path.splitext(video_name)[0]
     csv_path = os.path.join(track_dir_path, f'{video_name_wo_extension}-basic-information.csv')
     df = create_kinematic_dataframe(roi_info_list)
     df.to_csv(csv_path, float_format="%.4f")
@@ -150,7 +154,7 @@ def generate_mix_video(source_video, rois_results: H5IO, output_path: str,
         out_frame = generate_mix_image(frame, rois)
         output.append(out_frame)
 
-    del output
+    output.close()
     return output_path
 
 
@@ -176,5 +180,5 @@ def generate_mask_video(source_video_not_used, rois_results: H5IO,
         out_frame = generate_mask_image(rois)
         output.append(out_frame)
 
-    del output
+    output.close()
     return output_path

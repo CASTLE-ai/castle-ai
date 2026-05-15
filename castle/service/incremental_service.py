@@ -284,8 +284,12 @@ def _cleanup_cluster_files(project_path: str, deleted_videos: set) -> None:
     deleted_stems = {os.path.splitext(v)[0] for v in deleted_videos}
 
     for fname in os.listdir(cluster_root):
+        fname_stem = os.path.splitext(fname)[0]
         for stem in deleted_stems:
-            if fname.startswith(stem):
+            # Require exact stem match or stem followed by '_' to avoid
+            # matching filenames that merely share a common prefix
+            # (e.g. "video_a" must not delete "video_a_b_cluster.npz").
+            if fname_stem == stem or fname_stem.startswith(stem + "_"):
                 fpath = os.path.join(cluster_root, fname)
                 try:
                     if os.path.isfile(fpath):

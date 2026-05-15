@@ -168,7 +168,7 @@ class ROITracker:
         
         # Load reference knowledge from labels
         self.reference_frames = []
-        label_list = read_roi_labels(storage_path, project_name) # 移除 video_source.video_name 參數
+        label_list = read_roi_labels(storage_path, project_name, video_name=video_source.video_name)
         self.n_rois = 0
         
         for label in label_list:

@@ -97,12 +97,12 @@ def roi_connected_components(frame, select_roi, tolerance=30):
     if isinstance(select_roi, list) and len(select_roi) == 3:
         h, w = frame.shape[:2]
         mask = np.zeros((h, w)).astype(np.uint8)
-        lower_bound = np.array([select_roi[0] - tolerance,
-                                select_roi[1] - tolerance,
-                                select_roi[2] - tolerance])
-        upper_bound = np.array([select_roi[0] + tolerance,
-                                select_roi[1] + tolerance,
-                                select_roi[2] + tolerance])
+        lower_bound = np.clip(np.array([select_roi[0] - tolerance,
+                                        select_roi[1] - tolerance,
+                                        select_roi[2] - tolerance]), 0, 255)
+        upper_bound = np.clip(np.array([select_roi[0] + tolerance,
+                                        select_roi[1] + tolerance,
+                                        select_roi[2] + tolerance]), 0, 255)
         within_range = cv2.inRange(frame, lower_bound, upper_bound)
         mask[within_range > 0] = 255
     else:

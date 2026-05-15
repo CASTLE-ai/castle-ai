@@ -76,11 +76,15 @@ class SessionManager:
     def create_session(self, model: str, roi_id: int, bin_size: int, 
                        total_frames: int, name: str = "") -> SessionInfo:
         """Create a new session."""
-        # Generate ID
+        # Generate ID — use max existing numeric ID + 1 to avoid collisions after deletions
         existing = self.list_sessions()
-        next_num = len(existing) + 1
+        if existing:
+            existing_ids = [int(s.session_id.split('_')[1]) for s in existing]
+            next_num = max(existing_ids) + 1
+        else:
+            next_num = 1
         session_id = f"session_{next_num:03d}"
-        
+
         now = datetime.now().isoformat()
         if not name:
             name = f"Session {next_num} ({datetime.now().strftime('%m/%d %H:%M')})"
@@ -185,7 +189,7 @@ class SessionManager:
         
         import pandas as pd
         id_df = pd.read_csv(id_csv)
-        n_clusters = len(id_df) - 1
+        n_clusters = len(id_df)
         
         info = self.create_session(
             model=model, roi_id=roi_id, bin_size=bin_size,

@@ -115,9 +115,14 @@ class ProjectConfig:
                 val = data[f.name]
                 # Resolve the actual type for nested dataclasses
                 ftype = f.type
-                # Handle string annotations
+                # Handle string annotations — resolve via a safe lookup table
+                # to avoid arbitrary code execution from malicious config files.
                 if isinstance(ftype, str):
-                    ftype = eval(ftype)
+                    _SAFE_TYPES = {
+                        'int': int, 'float': float, 'str': str,
+                        'bool': bool, 'list': list,
+                    }
+                    ftype = _SAFE_TYPES.get(ftype, str)
                 if dataclasses.is_dataclass(ftype):
                     kwargs[f.name] = _build(ftype, val)
                 elif hasattr(ftype, '__origin__'):

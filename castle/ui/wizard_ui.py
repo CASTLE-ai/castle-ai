@@ -514,15 +514,16 @@ Your video has been analysed. Here's what to do next:
         # Event: Run button — full pipeline
         # ----------------------------------------------------------------
         def on_run(video_path, project_name, storage_path, body_roi, head_roi, config):
-            """Generator that yields (status_md, log, error_md) updates."""
+            """Generator that yields (status_md, log, error_md, project_name_state) updates."""
             step_states: dict = {k: "pending" for k, _ in _PIPELINE_STEPS}
 
-            def _emit(state_update: dict, log_line: str, error: str = ""):
+            def _emit(state_update: dict, log_line: str, error: str = "", new_project: str = None):
                 step_states.update(state_update)
                 return (
                     _status_table(step_states),
                     log_line,
                     gr.update(value=error, visible=bool(error)),
+                    new_project if new_project is not None else gr.update(),
                 )
 
             if not video_path or not project_name:
@@ -542,6 +543,9 @@ Your video has been analysed. Here's what to do next:
             except Exception as exc:
                 yield _emit({}, "", f"❌ Could not create project: {exc}")
                 return
+
+            # Update shared project state so other tabs can see the new project.
+            yield _emit({}, f"📁 Project '{project_name}' ready.", new_project=project_name.strip())
 
             # ---- Copy video into project sources ----
             yield _emit({}, "📂 Copying video into project…")
@@ -588,12 +592,12 @@ Your video has been analysed. Here's what to do next:
             try:
                 from castle.service.tracking_service import run_tracking  # noqa: PLC0415
 
-                ext = (config or {}).get("extraction", {})
+                trk = (config or {}).get("tracking", {})
                 result = run_tracking(
                     storage_path=storage_path,
                     project_name=project_name,
                     video_name=video_name,
-                    batch_size=ext.get("batch_size", 8),
+                    batch_size=trk.get("batch_size", 16),
                 )
                 if result.get("status") != "ok":
                     raise RuntimeError(result.get("message", "Unknown error"))
@@ -665,7 +669,7 @@ Your video has been analysed. Here's what to do next:
                 head_roi_id,
                 _config_state,
             ],
-            outputs=[run_status_md, run_log, run_error_md],
+            outputs=[run_status_md, run_log, run_error_md, self._project_state],
         )
 
         components.update(

@@ -287,7 +287,7 @@ def _draw_dashed_contour(
     if n < 2:
         return
     drawing = True
-    seg_remaining = dash_len
+    seg_remaining = dash_len + 1
     for i in range(n):
         p1 = tuple(contour_pts[i].ravel())
         p2 = tuple(contour_pts[(i + 1) % n].ravel())

@@ -223,7 +223,7 @@ class BatchRunner:
             tracking = r.get("tracking", {})
             extraction = r.get("extraction", {})
             if tracking:
-                ok_t = sum(1 for v in tracking.values() if "skip" not in str(v).lower() or v)
+                ok_t = sum(1 for v in tracking.values() if "skip" not in str(v).lower())
                 lines.append(f"       Tracking  : {ok_t}/{len(tracking)} videos")
             if extraction:
                 ok_e = sum(1 for v in extraction.values() if v)

@@ -296,8 +296,8 @@ class VideoReader:
         # 檢索是否為順序讀取
         if frame_index == self._current_index + 1:
             try:
-                self._current_index = frame_index
                 frame = next(self.container.decode(self.video_stream))
+                self._current_index = frame_index
                 return frame.to_rgb().to_ndarray()
             except (StopIteration, av.error.EOFError):
                 # 順序讀取失敗（到達檔案結尾或其他原因），改用 seek 方式
@@ -374,7 +374,7 @@ class VideoReader:
         """
         try:
             # 重新 seek 到稍微早一點的位置，確保能找到目標幀
-            timestamp = (frame_index - 2) / self.pts2index  # 往前 seek 2 幀
+            timestamp = max(0, (frame_index - 2) / self.pts2index)  # 往前 seek 2 幀，但不低於 0
             self.container.seek(int(timestamp), stream=self.video_stream, backward=True)
             
             best_frame = None
@@ -551,15 +551,17 @@ class VideoReader:
     
     def close(self) -> None:
         """關閉影片讀取器並釋放資源"""
-        if not getattr(self, '_closed', True):
-            try:
-                if hasattr(self, 'container') and self.container:
-                    self.container.close()
+        if getattr(self, '_closed', False):
+            return
+        try:
+            if hasattr(self, 'container') and self.container:
+                self.container.close()
+            if hasattr(self, '_frame_cache'):
                 self._frame_cache.clear()
-                self._closed = True
-                logger.debug("影片讀取器已關閉")
-            except Exception as e:
-                logger.error(f"關閉影片讀取器時發生錯誤: {e}")
+            self._closed = True
+            logger.debug("影片讀取器已關閉")
+        except Exception as e:
+            logger.error(f"關閉影片讀取器時發生錯誤: {e}")
 
 
 class VideoWriter:
@@ -704,7 +706,7 @@ class VideoWriter:
     
     def close(self) -> None:
         """關閉影片寫入器並完成編碼"""
-        if getattr(self, '_closed', True):
+        if getattr(self, '_closed', False):
             return
         
         try:

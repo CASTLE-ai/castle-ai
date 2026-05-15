@@ -369,12 +369,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
     )
 
-    ui['cluster_tree_radio'].select(
-        fn=update_select_cluster_list,
-        inputs=latents,
-        outputs=ui['cluster_tree_radio']
-    )
-
     ui['preset_dropdown'].select(
         fn=update_umap_config_text_with_preset,
         inputs=ui['preset_dropdown'],
@@ -455,10 +449,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
     )
 
-    # Auto-update cluster list when tab is selected
+    # Auto-update cluster list when tab is selected (only when session is active)
     cluster_page_tab.select(
-        fn=update_select_cluster_list,
-        inputs=latents,
+        fn=lambda sp, pn, lat: update_select_cluster_list(lat) if check_session_exists(sp, pn) is not None else gr.update(),
+        inputs=[storage_path, project_name, latents],
         outputs=ui['cluster_tree_radio']
     )
 

@@ -48,7 +48,7 @@ class EmbeddingScatterPlot:
              raise RuntimeError('Plot not yet rendered. Call plot() first.')
              
         ex = (px / self.width) * (self.xlim[1] - self.xlim[0]) + self.xlim[0]
-        ey = (py / self.height) * (self.ylim[1] - self.ylim[0]) + self.ylim[0]
+        ey = self.ylim[0] + (1 - py / self.height) * (self.ylim[1] - self.ylim[0])
         return ex, ey
 
     def plot(self):

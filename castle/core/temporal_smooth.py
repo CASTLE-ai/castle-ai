@@ -59,6 +59,9 @@ def min_bout_filter(labels: np.ndarray, min_frames: int = 3) -> np.ndarray:
     that label.  Otherwise it is replaced by the label of the longer
     neighbour bout (ties go to the preceding bout).
 
+    The algorithm runs in a single linear pass over the bout list, avoiding
+    the O(n²) re-scan of the previous while-loop implementation.
+
     Args:
         labels: 1-D array of cluster assignments.
         min_frames: Minimum bout duration in frames. Default 3.
@@ -73,38 +76,60 @@ def min_bout_filter(labels: np.ndarray, min_frames: int = 3) -> np.ndarray:
     if min_frames <= 1:
         return labels.copy()
 
+    # Build a mutable list of bouts: each entry is [label, start, end].
+    # We work on this list in a single left-to-right pass, merging short bouts
+    # into their neighbours without restarting the scan.
+    bouts = [[lbl, s, e] for lbl, s, e in _extract_bout_runs(labels)]
+
+    i = 0
+    while i < len(bouts):
+        lbl, start, end = bouts[i]
+        length = end - start
+
+        if length >= min_frames:
+            i += 1
+            continue
+
+        # Determine replacement label from immediate neighbours.
+        prev_lbl = bouts[i - 1][0] if i > 0 else None
+        next_lbl = bouts[i + 1][0] if i < len(bouts) - 1 else None
+
+        if prev_lbl is None and next_lbl is None:
+            # Single bout spanning the whole array — nothing to merge into.
+            i += 1
+            continue
+
+        if prev_lbl is not None and prev_lbl == next_lbl:
+            replacement = prev_lbl
+        elif prev_lbl is not None and next_lbl is not None:
+            prev_len = bouts[i - 1][2] - bouts[i - 1][1]
+            next_len = bouts[i + 1][2] - bouts[i + 1][1]
+            replacement = prev_lbl if prev_len >= next_len else next_lbl
+        elif prev_lbl is not None:
+            replacement = prev_lbl
+        else:
+            replacement = next_lbl
+
+        bouts[i][0] = replacement
+
+        # Merge the now-relabelled bout with adjacent bouts that share the
+        # same label, so the combined bout is considered in subsequent steps.
+        # Merge with next neighbour first (to keep index arithmetic simple).
+        if i < len(bouts) - 1 and bouts[i + 1][0] == replacement:
+            bouts[i][2] = bouts[i + 1][2]
+            del bouts[i + 1]
+
+        if i > 0 and bouts[i - 1][0] == replacement:
+            bouts[i - 1][2] = bouts[i][2]
+            del bouts[i]
+            i -= 1  # re-examine the merged bout in case it's still short
+
+        # Do NOT advance i — re-check the current (possibly merged) bout.
+
+    # Reconstruct the result array from the (possibly modified) bout list.
     result = labels.copy()
-
-    # Iterate until convergence (short bouts may be created by merging).
-    changed = True
-    while changed:
-        changed = False
-        bouts = _extract_bout_runs(result)
-
-        for idx, (label, start, end) in enumerate(bouts):
-            length = end - start
-            if length >= min_frames:
-                continue
-
-            # Determine replacement label from neighbours
-            prev_label = bouts[idx - 1][0] if idx > 0 else None
-            next_label = bouts[idx + 1][0] if idx < len(bouts) - 1 else None
-
-            if prev_label is not None and prev_label == next_label:
-                replacement = prev_label
-            elif prev_label is not None and next_label is not None:
-                prev_len = bouts[idx - 1][2] - bouts[idx - 1][1]
-                next_len = bouts[idx + 1][2] - bouts[idx + 1][1]
-                replacement = prev_label if prev_len >= next_len else next_label
-            elif prev_label is not None:
-                replacement = prev_label
-            elif next_label is not None:
-                replacement = next_label
-            else:
-                continue  # single bout spanning whole array — keep it
-
-            result[start:end] = replacement
-            changed = True
+    for lbl, start, end in bouts:
+        result[start:end] = lbl
 
     return result
 

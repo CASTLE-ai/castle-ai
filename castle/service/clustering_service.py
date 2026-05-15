@@ -249,7 +249,7 @@ class ClusteringSession:
             
             video_basename = os.path.basename(v).split('.')[0]
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
-            df2.to_csv(ts_path)
+            df2.to_csv(ts_path, index=False)
             ts_paths.append(ts_path)
             cum += vn
         
@@ -324,13 +324,13 @@ class ClusteringSession:
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
             if os.path.exists(ts_path):
                 ts_df = pd.read_csv(ts_path)
-                bin_clusters = ts_df['behavior'].values[::self.aggregator.bin_size][:vn]
+                bin_clusters = ts_df['behavior'].values[::self.latents.time_window][:vn]
                 self.latents.cluster[cum:cum + len(bin_clusters)] = bin_clusters
                 ts_paths.append(ts_path)
             cum += vn
         
         return {
-            'cluster_count': self.latents.num_cluster - 1,
+            'cluster_count': self.latents.num_cluster,
             'id_csv_path': id_csv_path,
             'time_series_paths': ts_paths,
             'success': True,

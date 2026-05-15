@@ -71,10 +71,10 @@ def run_tracking(tracker: ROITracker, skip_existing: bool, progress=gr.Progress(
 
 def toggle_intermediate_display(tracker: ROITracker) -> Generator[Tuple[Any, str], None, None]:
     """Toggle and stream intermediate tracking results.
-    
+
     Args:
         tracker: The ROITracker instance
-        
+
     Yields:
         Tuple of (mixed_image, display_mode_text)
     """
@@ -82,14 +82,15 @@ def toggle_intermediate_display(tracker: ROITracker) -> Generator[Tuple[Any, str
         gr.Warning("Please click 'Apply parameters' first to initialize the tracker.")
         return
     tracker.toggle_display_mode()
-    
+
     while tracker.show_middle_result:
         time.sleep(1)
         frame, mask = tracker.get_current_result()
         if frame is not None and mask is not None:
             mixed_image = generate_mix_image(frame, mask)
-            display_mode = "Show" if tracker.show_middle_result else "Close"
-            yield mixed_image, display_mode
+            yield mixed_image, "Show"
+
+    yield gr.update(), "Close"
 
 
 def cancel_tracking(tracker: ROITracker) -> None:
@@ -243,7 +244,7 @@ def create_track_ui(
         fn=toggle_intermediate_display,
         inputs=tracker_state,
         outputs=[display, display_mode_text],
-        show_progress=False
+        show_progress=False,
     )
     
     # Event handlers - Cancel tracking

@@ -145,15 +145,16 @@ def generate_csv_analysis(storage_path: str, project_name: str, video_name: str,
     
     try:
         rois_results = H5IO(str(rois_results_path))
-        n_rois = rois_results.get_n_rois()
-        total_frames = len(rois_results)
-        
-        roi_info_list = compute_roi_info(rois_results, n_rois, total_frames)
-        csv_path = save_kinematic_csv(str(track_dir_path), video_name, roi_info_list)
-        
-        del rois_results
+        try:
+            n_rois = rois_results.get_n_rois()
+            total_frames = len(rois_results)
+
+            roi_info_list = compute_roi_info(rois_results, n_rois, total_frames)
+            csv_path = save_kinematic_csv(str(track_dir_path), video_name, roi_info_list)
+        finally:
+            rois_results.close()
         return csv_path
-        
+
     except Exception as e:
         logger.error(f"Error generating CSV for {video_name}: {e}")
         return ""
@@ -171,20 +172,22 @@ def generate_mix_video_for_video(storage_path: str, project_name: str, video_nam
     try:
         video_name_wo_extension = video_name.split('.')[0]
         output_path = track_dir_path / f'{video_name_wo_extension}-mix.mp4'
-        
+
         output = WriteArray(str(output_path), fps=source_video.fps, crf=15)
         rois_results = H5IO(str(rois_results_path))
-        n_frames = len(rois_results)
+        try:
+            n_frames = len(rois_results)
 
-        for i in range(n_frames):
-            rois = rois_results[i]
-            frame = source_video[i]
-            out_frame = generate_mix_image(frame, rois)
-            output.append(out_frame)
-
-        del rois_results, output
+            for i in range(n_frames):
+                rois = rois_results[i]
+                frame = source_video[i]
+                out_frame = generate_mix_image(frame, rois)
+                output.append(out_frame)
+        finally:
+            rois_results.close()
+            output.close()
         return str(output_path)
-        
+
     except Exception as e:
         logger.error(f"Error generating mix video for {video_name}: {e}")
         return ""

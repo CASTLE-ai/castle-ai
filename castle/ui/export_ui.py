@@ -157,6 +157,7 @@ def on_export(
     zip_path = os.path.join(tmp_dir, zip_name)
 
     try:
+        packaged_count = 0
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
             for i, (src, arc_name) in enumerate(unique_files, 1):
                 if not os.path.isfile(src):
@@ -175,13 +176,14 @@ def on_export(
                     shutil.copyfile(src, staging)
                     zf.write(staging, arc_name)
                     os.unlink(staging)
+                    packaged_count += 1
                 except Exception as exc:
                     logger.error("Export: failed to copy %s: %s", src, exc)
                     yield f"**⚠️ Warning:** Could not copy `{arc_name}`: {exc}", None
 
         zip_size = _human_size(zip_path)
         yield (
-            f"**✅ Export complete!** `{zip_name}` ({zip_size}) — {total} file(s)",
+            f"**✅ Export complete!** `{zip_name}` ({zip_size}) — {packaged_count} file(s)",
             zip_path,
         )
 

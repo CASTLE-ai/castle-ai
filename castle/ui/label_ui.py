@@ -59,7 +59,10 @@ def next_roi(segmentor):
 def save_rois(storage_path, project_name, segmentor, index, source_video):
     if source_video is None:
         raise gr.Error("No video loaded. Please select and load a video first.")
-    
+    if segmentor is None:
+        gr.Warning("No segmentation in progress. Please click on a frame to segment before saving.")
+        return
+
     project_path = os.path.join(storage_path, project_name)
     video_name = source_video.video_name
     label_dir_path = os.path.join(project_path, 'label', video_name)
@@ -104,10 +107,10 @@ def create_label_ui(storage_path, project_name, source_video):
         outputs=ui['click_mode']
     )
 
-    ui['index_slide'].change(
+    ui['index_slide'].release(
         fn=index_slide_event,
         inputs=[segmentor, sam_model_state, source_video, ui['index_slide']],
-        outputs=[segmentor, sam_model_state, ui['select_frame'], ui['display_view'], ui['display_view']]
+        outputs=[segmentor, sam_model_state, ui['display_view'], ui['select_frame'], ui['display_view']]
     )
 
     ui['display_view'].select(
@@ -135,14 +138,11 @@ def create_label_ui(storage_path, project_name, source_video):
 
     ui['clean_rois_btn'].click(
         fn=clean_rois_event,
-        # inputs=[storage_path, project_name, segmentor, ui['index_slide'], source_video],
         outputs=segmentor,
-    )
-
-    ui['clean_rois_btn'].click(
+    ).then(
         fn=index_slide_event,
         inputs=[segmentor, sam_model_state, source_video, ui['index_slide']],
-        outputs=[segmentor, sam_model_state, ui['select_frame'], ui['display_view'], ui['display_view']]
+        outputs=[segmentor, sam_model_state, ui['display_view'], ui['select_frame'], ui['display_view']]
     )
 
     ui['index_slide'].change(

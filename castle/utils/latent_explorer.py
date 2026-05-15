@@ -118,17 +118,22 @@ class Latent:
             # assert not it['name'] in self.behavior_name2cluster_id, 'new name be used'
 
         for cluster_local_id, it in local_latent.export.items():
-            if it['name'] in self.behavior_name2cluster_id:
-                continue
+            incoming_name = it['name']
+            if incoming_name in self.behavior_name2cluster_id:
+                # Auto-rename with a numeric suffix to avoid silent data loss
+                suffix = 1
+                while f"{incoming_name}_{suffix}" in self.behavior_name2cluster_id:
+                    suffix += 1
+                incoming_name = f"{incoming_name}_{suffix}"
             cluster_id = self.num_cluster
             self.num_cluster += 1
 
             old_cluster[cluster == cluster_local_id] = cluster_id
             self.cluster_meta[cluster_id] = {
-                'name': it['name'],
+                'name': incoming_name,
                 'color': it['color']
             }
-            self.behavior_name2cluster_id[it['name']] = cluster_id
+            self.behavior_name2cluster_id[incoming_name] = cluster_id
             self.used_palette.add(it['color'])
 
         self.cluster[index_mask] = old_cluster
@@ -200,7 +205,7 @@ class LocalLatent:
 
 
     def build_cluster(self, method, configs):
-        if self.device == 'cpu':
+        if self.device == 'cpu' or self.device == 'mps':
             from sklearn.cluster import DBSCAN
 
         elif 'cuda' in self.device:
@@ -209,7 +214,7 @@ class LocalLatent:
             except ImportError:
                 from sklearn.cluster import DBSCAN
 
-            
+
 
         assert hasattr(self, 'embedding')
         if hasattr(self, 'cluster'):

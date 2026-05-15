@@ -28,6 +28,9 @@ from castle.service.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
+# Tracks the last temp clip path so it can be cleaned up on the next call.
+_last_clip_path: str | None = None
+
 
 # ---------------------------
 # Templates & Presets (UI Config)
@@ -158,9 +161,10 @@ def _apply_roi_overlay(frame, mask_h5_path, frame_idx):
 
 def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
     """Generate a short H.264 MP4 clip around center_bin with ROI overlay."""
+    total_bins = sum(vn for vn, _ in aggregator.videos_meta)
     half = n_frames // 2
     start = max(0, center_bin - half)
-    end = start + n_frames
+    end = min(start + n_frames, total_bins)
 
     frames = []
     for i in range(start, end):
@@ -197,20 +201,31 @@ def embedding_plot_click(aggregator, Z_plt, evt: gr.SelectData):
     aggregator: LatentAggregator instance
     Z_plt: EmbeddingScatterPlot instance
     """
+    global _last_clip_path
+
+    # Clean up the previous temp clip now that Gradio has already served it.
+    if _last_clip_path is not None:
+        try:
+            os.unlink(_last_clip_path)
+        except OSError:
+            pass
+        _last_clip_path = None
+
     if hasattr(evt, 'index'):
         emb_plot = Z_plt.click(evt.index[0], evt.index[1])
     else:
         gr.Info('Embedding click failed. Please try clicking on a data point again.')
         return None, None
-        
+
     index = Z_plt.selected_index
     # Generate a short video clip around the selected bin
     clip_path = _generate_clip(aggregator, index)
-    
+
     if clip_path is None:
         # Return fallback blank video if clip generation fails
-        return emb_plot, None 
-        
+        return emb_plot, None
+
+    _last_clip_path = clip_path
     return emb_plot, clip_path
 
 
@@ -317,6 +332,10 @@ def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
 
 
 def label_local_cluster(local_latents, cluster_id, cluster_name, history):
+    if local_latents is None:
+        gr.Warning('No embedding available. Please generate an embedding and cluster before labelling.')
+        return history
+
     if not cluster_name:
         gr.Info('Please enter a name for the cluster before clicking Enter.')
         return history
@@ -422,7 +441,11 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
     gr.Info(f'Auto-labeled {count} clusters.')
 
     result = import_info_from_local_latent(storage_path, project_name, latents, local_latents, aggregator)
-    
+
+    # If import failed (all-None sentinel), return early without overwriting the session snapshot.
+    if result[0] is None:
+        return result + (history,)
+
     # At the end of label_all_and_submit, after successful submit:
     mgr = SessionManager(storage_path, project_name)
     active_id = mgr.get_active_session_id()
@@ -430,7 +453,7 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
         mgr.snapshot_to_session(active_id)
         n_clusters = len([k for k in latents.cluster_meta if latents.cluster_meta[k]['name'] != 'init'])
         mgr.save_session_state(active_id, n_clusters)
-    
+
     return result + (history,)
 
 
@@ -597,7 +620,7 @@ def _do_restore_session(storage_path, project_name, select_roi_id, bin_size, sel
         ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
         if os.path.exists(ts_path):
             ts_df = pd.read_csv(ts_path)
-            bin_clusters = ts_df['behavior'].values[::aggregator.bin_size][:vn]
+            bin_clusters = ts_df['behavior'].values[::latents.time_window][:vn]
             latents.cluster[cum:cum+len(bin_clusters)] = bin_clusters
             df2_paths.append(ts_path)
         cum += vn
@@ -660,7 +683,7 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
 
         video_basename = os.path.basename(v).split('.')[0]
         df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
-        df2.to_csv(df2_path)
+        df2.to_csv(df2_path, index=False)
         df2_paths.append(df2_path)
         cum += vn
 
@@ -668,6 +691,12 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
     subtitle_paths = convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggregator)
     
     # Save Embedding
+    if local_latents is None or not hasattr(local_latents, 'embedding') or local_latents.embedding is None:
+        gr.Warning("Embedding not available on local_latents — skipping scatter plot. "
+                   "Run 'Generate Cluster' with UMAP/t-SNE enabled before submitting.")
+        return (fig, update_select_cluster_list(latents), df1_path, df2_paths, subtitle_paths,
+                None, None, None)
+
     Z_plt = EmbeddingScatterPlot(local_latents)
     cluster_name = ""
     for _, it in local_latents.export.items():

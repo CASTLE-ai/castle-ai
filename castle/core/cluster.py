@@ -135,11 +135,20 @@ class LatentAggregator:
                 if roi_key not in filename:
                     continue
                 
-                # Check 2: Must match Model Name OR exist in model-specific directory
+                # Check 2: Must match Model Name (exact segment) OR exist in model-specific directory.
                 # Rotation latent filenames don't contain model_name, but are stored
-                # under latent/{model_name}/ directory, so also check file existence
+                # under latent/{model_name}/ directory, so also check file existence.
+                # Use exact stem-segment matching to avoid "dinov2" matching
+                # "dinov2_vitb14_reg4_pretrain" filenames.
                 latent_file_path = os.path.join(latent_dir_path, filename)
-                if model_name not in filename and not os.path.exists(latent_file_path):
+                stem = os.path.splitext(filename)[0]
+                stem_after_roi = stem.split(f'_ROI_{select_roi_id}_', 1)
+                model_name_matches = (
+                    len(stem_after_roi) > 1
+                    and (stem_after_roi[1] == model_name
+                         or stem_after_roi[1].startswith(model_name + '_'))
+                )
+                if not model_name_matches and not os.path.exists(latent_file_path):
                     continue
                 
                 latent_files.append((filename, video_source_name))
@@ -302,7 +311,7 @@ class LatentAggregator:
             
             for i in range(len(change_indices) - 1):
                 start_frame = change_indices[i] + 1
-                end_frame = change_indices[i+1] + 1
+                end_frame = change_indices[i+1]
                 
                 start_time = frame_to_timestamp(start_frame, self.fps)
                 end_time = frame_to_timestamp(end_frame, self.fps)

@@ -51,8 +51,8 @@ class HistoryManager:
 
     def _apply_snapshot(self, snapshot: ClusterSnapshot, latent):
         """Apply a snapshot's state onto a latent object (Latent or LocalLatent)."""
-        if len(snapshot.cluster) > 0:
-            latent.cluster = snapshot.cluster
+        # Always restore cluster — an empty/None array is a valid state (pre-DBSCAN)
+        latent.cluster = snapshot.cluster
         # Restore metadata to the correct attribute
         if hasattr(latent, 'cluster_meta'):
             latent.cluster_meta = snapshot.cluster_meta

@@ -128,10 +128,16 @@ def evaluate_project_clustering(
     # ------------------------------------------------------------------
     # If we have embedding with aligned labels, run with embedding
     if embedding is not None and labels_for_emb is not None:
+        if ground_truth is not None:
+            min_len = min(len(labels_for_emb), len(ground_truth))
+            labels_for_emb = labels_for_emb[:min_len]
+            gt_for_emb = ground_truth[:min_len]
+        else:
+            gt_for_emb = None
         report = evaluate_clustering(
             labels_for_emb,
             embedding=embedding,
-            ground_truth=ground_truth[:len(labels_for_emb)] if ground_truth is not None else None,
+            ground_truth=gt_for_emb,
         )
     else:
         # Run without embedding, use full label array

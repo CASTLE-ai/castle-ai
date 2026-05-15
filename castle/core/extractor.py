@@ -210,9 +210,6 @@ def extract_roi_latent_from_video(
     total_batches = len(loader)
     
     for i, (frames, masks) in enumerate(loader):
-        if progress_callback:
-            progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name}")
-            
         try:
             if hasattr(observer, 'extract_tensor_batch'):
                  latent_batch = observer.extract_tensor_batch(
@@ -223,11 +220,14 @@ def extract_roi_latent_from_video(
                  )
             else:
                  latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
-                 
+
             latent_list.append(latent_batch)
 
         except Exception as e:
             logger.error(f"Batch {i} failed for video {video_name}: {e}")
+
+        if progress_callback:
+            progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name}")
 
     if not latent_list:
         logger.error(f"No latent batches extracted for {video_name}")
@@ -298,10 +298,11 @@ def extract_roi_crop_video(
                     h, w = frame.shape[:2]
                     writer.write_frame(blank_page(h, w))
     finally:
+        if tracker is not None:
+            tracker.close()
         if writer:
             writer.close()
-        # H5IO usually doesn't need explicit close but good practice if available
-    
+
     return out_video_path
 
 
@@ -428,8 +429,8 @@ def extract_roi_rotation_latent_from_video(
             
             B, R, H, W, C = frames.shape
             
-            frames_flat = frames.view(B * R, H, W, C)
-            masks_flat = masks.view(B * R, H, W)
+            frames_flat = frames.reshape(B * R, H, W, C)
+            masks_flat = masks.reshape(B * R, H, W)
 
             if hasattr(observer, 'extract_tensor_batch'):
                  latent_batch = observer.extract_tensor_batch(frames_flat, masks_flat, roi_id)

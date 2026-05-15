@@ -41,9 +41,11 @@ class Plotter:
         for index, it in enumerate(results):
             r, c = row_col[index]
 
-            speed = np.zeros(len(it['x']))
-            dx = np.array(it['x'][1:] - it['x'][:-1])
-            dy = np.array(it['y'][1:] - it['y'][:-1])
+            x = np.array(it['x'])
+            y = np.array(it['y'])
+            speed = np.zeros(len(x))
+            dx = x[1:] - x[:-1]
+            dy = y[1:] - y[:-1]
             speed[1:] = np.sqrt(dx*dx+dy*dy)
 
             fig.add_trace(go.Scatter(

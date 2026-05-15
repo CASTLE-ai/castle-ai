@@ -367,17 +367,16 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
     
     # Get mask — find first frame where mask area > 0
     track_dir = os.path.join(storage_path, project_name, 'track', first_video)
-    tracker = H5IO(os.path.join(track_dir, 'mask_list.h5'))
-    
-    preview_idx = 0
-    n_frames = len(tracker) if len(tracker) > 0 else 1
-    for fi in range(min(n_frames, 500)):  # search up to 500 frames
-        m = tracker.read_mask(fi)
-        if m is not None and m.sum() > 0:
-            preview_idx = fi
-            break
-    
-    mask = tracker.read_mask(preview_idx)
+    with H5IO(os.path.join(track_dir, 'mask_list.h5')) as tracker:
+        preview_idx = 0
+        n_frames = len(tracker) if len(tracker) > 0 else 1
+        for fi in range(min(n_frames, 500)):  # search up to 500 frames
+            m = tracker.read_mask(fi)
+            if m is not None and m.sum() > 0:
+                preview_idx = fi
+                break
+
+        mask = tracker.read_mask(preview_idx)
     
     # Use VideoReader for preview
     with VideoReader(source_path) as vr:

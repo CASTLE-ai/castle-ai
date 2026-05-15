@@ -94,7 +94,15 @@ class StabilizedCamera:
 
         # Design filter coefficients once
         nyquist = 0.5 * self.fps
-        normal_cutoff = self.fc / nyquist
+        fc_safe = self.fc
+        if fc_safe >= nyquist:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"Cutoff frequency fc={fc_safe} Hz >= Nyquist={nyquist} Hz "
+                f"(fps={self.fps}); clamping to {nyquist * 0.99:.4f} Hz."
+            )
+            fc_safe = nyquist * 0.99
+        normal_cutoff = fc_safe / nyquist
         self._b, self._a = scipy.signal.butter(
             self.order, normal_cutoff, btype="low", analog=False
         )

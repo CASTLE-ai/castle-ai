@@ -91,7 +91,7 @@ class H5IO:
         with self._lock:
             if 'n_rois' in self.f:
                 return int(self.f['n_rois'][()])
-            
+
             # Calculate n_rois from masks if missing
             n_rois = 0
             for key in self.f.keys():
@@ -99,9 +99,15 @@ class H5IO:
                     mask = self.f[key][()]
                     if mask is not None and mask.size > 0:
                         n_rois = max(n_rois, int(np.max(mask)))
-        
-        # Fix the h5 file (write_config acquires its own lock)
-        self.write_config('n_rois', n_rois)
+
+            # Fix the h5 file — inline write while still holding the lock to
+            # prevent a concurrent writer from persisting a stale n_rois value.
+            logger.debug('write_config n_rois = %s', n_rois)
+            try:
+                self.f['n_rois'][...] = n_rois
+            except KeyError:
+                self.f.create_dataset('n_rois', data=n_rois)
+
         return n_rois
     
     def __len__(self):

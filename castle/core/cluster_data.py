@@ -148,9 +148,15 @@ class ClusterData:
         # ---- 2. cluster_*.npz → labels + hierarchy ---------------------
         labels: np.ndarray = _UNSET_LABELS.copy()
         hierarchy: dict = {}
-        npz_files = sorted(glob.glob(str(cluster_dir / "cluster_*.npz")))
+        # Prefer the canonical filename to avoid stale cluster_*.npz files from
+        # prior runs sorting before cluster_data.npz and loading wrong data.
+        canonical_npz = cluster_dir / "cluster_data.npz"
+        if canonical_npz.exists():
+            npz_files = [str(canonical_npz)]
+        else:
+            npz_files = sorted(glob.glob(str(cluster_dir / "cluster_*.npz")))
         if npz_files:
-            # Use the first (or only) non-model npz that contains a 'cluster' key.
+            # Use the canonical file (or first matching glob) that contains a 'cluster' key.
             for npz_path in npz_files:
                 try:
                     data = np.load(npz_path, allow_pickle=True)

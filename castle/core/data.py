@@ -93,13 +93,19 @@ class Preprocess:
             if deg > 0:
                 f = rotate_based_on_deg(f, deg)
                 m = rotate_based_on_deg(m, deg, flags=cv2.INTER_NEAREST)
+            elif deg < 0:
+                logger.warning(
+                    "Negative rotation degree (%s) is not supported and will be skipped. "
+                    "Use a positive degree value (0–360).",
+                    deg,
+                )
 
             if self.center_roi_switch:
                 f = crop(f, self.center_roi_crop_height, self.center_roi_crop_width)
                 m = crop(m, self.center_roi_crop_height, self.center_roi_crop_width)
 
             if self.remove_background_switch:
-                f[m == 0] = 255
+                f[m == 0] = 0
         except Exception as e:
             logger.error(f"Preprocessing transform failed for ROI ID {self.center_roi_id} (Center) and {self.rotate_roi_tail_id} (Tail). Error: {e}")
             f = blank_page(self.center_roi_crop_height, self.center_roi_crop_width)
@@ -156,7 +162,7 @@ class VideoDataset(Dataset):
         mask = self.tracker.read_mask(idx)
         
         # Get precomputed closest point for this frame (if interpolation is active)
-        closest_point = self.interpolated_points[idx] if self.interpolated_points else None
+        closest_point = self.interpolated_points.get(idx) if self.interpolated_points else None
         
         if self.rotate_deg is not None:
              pf, pm = self.preprocess.transform(frame, mask, self.rotate_deg, precomputed_closest_point=closest_point)

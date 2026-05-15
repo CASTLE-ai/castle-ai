@@ -30,6 +30,9 @@ def build_cluster_tree_markdown(cluster_meta, cluster_array):
         name = meta['name']
         count = counts.get(cid, 0)
 
+        if count == 0:
+            continue
+
         # Determine depth from '/' hierarchy separator, not '_'
         parts = name.split('/')
         depth = max(len(parts) - 1, 0)
@@ -72,19 +75,23 @@ def build_cluster_tree_choices(cluster_meta, cluster_array):
         name = meta['name']
         count = counts.get(cid, 0)
 
+        # Skip clusters with no assigned bins
+        if count == 0:
+            continue
+
         # Determine depth from '/' hierarchy separator, not '_'
         parts = name.split('/')
         depth = len(parts) - 1  # 'root' = 0, 'root/a0' = 1, etc.
         indent = '  ' * depth  # Two spaces per level
-        
+
         color = meta.get('color', 'grey')
         # 📁 for empty (grey) clusters, 🟢 for labeled clusters
         icon = '📁' if color == 'grey' else '🟢'
         prefix = '├── ' if depth > 0 else ''
-        
+
         # Build display label with tree formatting
         display_label = f"{indent}{prefix}{icon} {name} ({count} frames)"
-        
+
         # Value is just the cluster name
         choices.append((display_label, name))
     

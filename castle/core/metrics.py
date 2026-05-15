@@ -162,6 +162,11 @@ def compute_internal_metrics(
         emb_valid = emb[valid]
         labs_valid = labs[valid]
 
+        # Filter out NaN rows — can arise when UMAP embedding is partial
+        nan_mask = ~np.any(np.isnan(emb_valid), axis=1)
+        emb_valid = emb_valid[nan_mask]
+        labs_valid = labs_valid[nan_mask]
+
         n_unique = len(np.unique(labs_valid))
         if n_unique >= 2 and len(labs_valid) >= 2:
             # Subsample for expensive O(n²) metrics

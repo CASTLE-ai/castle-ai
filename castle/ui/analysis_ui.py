@@ -43,17 +43,32 @@ def _hex_to_bgr(hex_str: str) -> Tuple[int, int, int]:
     return (128, 128, 128)
 
 
-def _draw_label(bgr_img: np.ndarray, label: str, color_bgr: Tuple[int, int, int], img_w: int) -> None:
-    """Draw a cluster label badge in the top-left corner of a BGR image (in-place)."""
+def _draw_label_at(
+    bgr_img: np.ndarray,
+    label: str,
+    color_bgr: Tuple[int, int, int],
+    anchor_x: int,
+    anchor_y: int,
+) -> None:
+    """Draw a cluster label badge anchored at (anchor_x, anchor_y) on a BGR image.
+
+    The badge is clamped inside the image boundaries.
+    anchor_x / anchor_y is the top-left corner of the badge.
+    """
+    ih, iw = bgr_img.shape[:2]
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = max(0.4, img_w / 1280)
+    font_scale = max(0.4, iw / 1280)
     thickness = max(1, int(font_scale * 2))
-    margin = 6
     (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
-    x2, y2 = margin + tw + 8, margin + th + baseline + 6
-    cv2.rectangle(bgr_img, (margin, margin), (x2, y2), (0, 0, 0), -1)
-    cv2.rectangle(bgr_img, (margin, margin), (x2, y2), color_bgr, 1)
-    cv2.putText(bgr_img, label, (margin + 4, margin + th + 3),
+    pad = 4
+    bw, bh = tw + pad * 2, th + baseline + pad * 2
+    # Clamp so badge stays inside frame
+    x0 = max(0, min(anchor_x, iw - bw - 1))
+    y0 = max(0, min(anchor_y, ih - bh - 1))
+    x1, y1 = x0 + bw, y0 + bh
+    cv2.rectangle(bgr_img, (x0, y0), (x1, y1), (0, 0, 0), -1)
+    cv2.rectangle(bgr_img, (x0, y0), (x1, y1), color_bgr, 1)
+    cv2.putText(bgr_img, label, (x0 + pad, y0 + th + pad - 1),
                 font, font_scale, color_bgr, thickness, cv2.LINE_AA)
 
 
@@ -105,6 +120,20 @@ def generate_ethogram_video(
     cluster_arr = analysis_data.cluster
     total_bins_count = max(sum(n for n, _ in target_videos), 1)
 
+    # Load human-annotated behavior labels (name → behavior_label)
+    behavior_labels: dict = {}
+    try:
+        from castle.service.annotation_service import load_annotations as _load_ann
+        project_path = analysis_data.project_path
+        storage_path = os.path.dirname(project_path)
+        project_name = os.path.basename(project_path)
+        ann = _load_ann(storage_path, project_name, session_id=analysis_data.session_id)
+        for bm_name, info in ann.items():
+            if info.get("behavior_label"):
+                behavior_labels[bm_name] = info["behavior_label"]
+    except Exception as exc:
+        logger.debug("Could not load behavior annotations: %s", exc)
+
     writer: Optional[cv2.VideoWriter] = None
     out_w = out_h = None
     global_bin_offset = 0
@@ -114,6 +143,8 @@ def generate_ethogram_video(
     except ImportError:
         gr.Warning("PyAV is required for video generation but is not installed.")
         return None, "**❌ PyAV not available.**"
+
+    from castle.service.bout_service import _load_mask_contours
 
     for n_bins, video_name in target_videos:
         video_path = os.path.join(analysis_data.source_path, video_name)
@@ -149,6 +180,8 @@ def generate_ethogram_video(
                     cv2.resize(frame_rgb, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
                     if (fw != out_w or fh != out_h) else frame_rgb.copy()
                 )
+                # Convert to BGR once — all subsequent drawing uses BGR colour tuples
+                canvas_bgr = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2BGR)
 
                 local_bin = min(frame_idx // bin_size, n_bins - 1)
                 abs_bin = global_bin_offset + local_bin
@@ -156,25 +189,35 @@ def generate_ethogram_video(
 
                 meta = analysis_data.cluster_meta.get(cluster_id, {})
                 color_bgr = _hex_to_bgr(meta.get("color", "#808080"))
-                label = meta.get("name") or f"cluster {cluster_id}"
+                # Fix 3: use human behavior label when annotated, else cluster path name
+                bm_name = meta.get("name", "")
+                label = behavior_labels.get(bm_name) or bm_name or f"cluster {cluster_id}"
 
-                # Layer B: ROI contour in cluster colour
+                # Fix 2: track contour bounding box to anchor label near ROI
+                label_x, label_y = 6, 6  # fallback: top-left
                 if has_mask:
-                    from castle.service.bout_service import _load_mask_contours
+                    # Fix 1: draw on BGR canvas so color_bgr is interpreted correctly
                     result = _load_mask_contours(mask_path, frame_idx)
                     if result is not None:
                         contours, (mh, mw) = result
                         sx, sy = out_w / mw, out_h / mh
+                        scaled_contours = []
                         for cnt in contours:
                             scaled = cnt.copy().astype(np.float64)
                             scaled[:, :, 0] *= sx
                             scaled[:, :, 1] *= sy
-                            scaled = np.clip(scaled.astype(np.int32), 0, [out_w - 1, out_h - 1])
-                            cv2.drawContours(canvas_rgb, [scaled], -1, color_bgr, 2)
+                            scaled = np.clip(
+                                scaled.astype(np.int32), 0, [out_w - 1, out_h - 1]
+                            )
+                            scaled_contours.append(scaled)
+                        cv2.drawContours(canvas_bgr, scaled_contours, -1, color_bgr, 2)
+                        # Place label at top of the contour bounding box
+                        all_pts = np.vstack(scaled_contours).reshape(-1, 2)
+                        label_x = int(all_pts[:, 0].min())
+                        label_y = max(0, int(all_pts[:, 1].min()) - 2)
 
-                # Convert RGB → BGR for OpenCV write + Layer C label
-                canvas_bgr = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2BGR)
-                _draw_label(canvas_bgr, label, color_bgr, out_w)
+                # Layer C: behavior label anchored near the ROI
+                _draw_label_at(canvas_bgr, label, color_bgr, label_x, label_y)
                 writer.write(canvas_bgr)
 
                 frame_idx += 1

@@ -402,12 +402,16 @@ def plot_syllables_per_video(latents, aggregator):
         unique_clusters.remove(-1)
     
     legend_handles = [Patch(color=palette(cat), label=cluster_meta[cat]['name']) for cat in unique_clusters if cat in cluster_meta]
-    
-    if legend_handles:
-        axes[-1].legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.3), 
-                       ncol=min(len(legend_handles), 6), fontsize=8)
-    
+
+    # tight_layout before adding the out-of-axes legend to avoid the
+    # "margins cannot be made large enough" UserWarning.
     plt.tight_layout()
+
+    if legend_handles:
+        axes[-1].legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.3),
+                       ncol=min(len(legend_handles), 6), fontsize=8)
+        fig.subplots_adjust(bottom=0.2)
+
     return fig
 
 

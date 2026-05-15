@@ -427,6 +427,17 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
     # Event Bindings
     # ---------------------------
 
+    def _restore_scheme(sp, pn):
+        """Load the project-level active scheme and return updates for dropdown + radio."""
+        if not sp or not pn:
+            return gr.update(), gr.update()
+        scheme = get_active_scheme(sp, pn)
+        labels = get_scheme_labels(sp, pn, scheme)
+        return (
+            gr.update(choices=list(list_schemes(sp, pn).keys()), value=scheme),
+            gr.update(choices=labels, value=None),
+        )
+
     # Auto-load session list and restore active scheme when entering the tab
     if annotator_tab is not None:
         annotator_tab.select(
@@ -438,15 +449,6 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
             inputs=[storage_path, project_name],
             outputs=[ui["scheme_dropdown"], ui["behavior_radio"]],
         )
-
-    def _restore_scheme(sp, pn):
-        """Load the project-level active scheme and return updates for dropdown + radio."""
-        if not sp or not pn:
-            return gr.update(), gr.update()
-        scheme = get_active_scheme(sp, pn)
-        labels = get_scheme_labels(sp, pn, scheme)
-        return gr.update(choices=list(list_schemes(sp, pn).keys()), value=scheme), \
-               gr.update(choices=labels, value=None)
 
     # Auto-refresh sessions on Load: refresh dropdown → load data → restore scheme
     ui["load_btn"].click(

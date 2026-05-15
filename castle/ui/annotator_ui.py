@@ -177,11 +177,11 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
     """
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or annotator_data is None:
-        return "", None, "**Selected:** None"
+        return "", None, "**Selected:** None", gr.update()
 
     cluster_id = _find_cluster_id_by_name(annotator_data, cluster_name)
     if cluster_id is None:
-        return cluster_name, None, f"**Error:** Cluster '{cluster_name}' not found"
+        return cluster_name, None, f"**Error:** Cluster '{cluster_name}' not found", gr.update()
 
     n_bins_in_cluster = int(np.sum(annotator_data.cluster == cluster_id))
     cols = int(grid_cols) if grid_cols else 3
@@ -208,7 +208,9 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
     info_text = (
         f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
     )
-    return cluster_name, video_path, info_text
+    # Reset behavior_radio to None so selecting the same label on a new cluster
+    # always triggers .change() and auto-saves correctly.
+    return cluster_name, video_path, info_text, gr.update(value=None)
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
@@ -473,9 +475,7 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         ui["cluster_radio"],
         ui["grid_cols"],
     ]
-    # Bug 10 fix: on_cluster_select now also returns the stripped cluster name
-    # which is stored in selected_cluster_name state.
-    _video_outputs = [selected_cluster_name, ui["grid_video"], ui["cluster_info"]]
+    _video_outputs = [selected_cluster_name, ui["grid_video"], ui["cluster_info"], ui["behavior_radio"]]
 
     # Select cluster → update state + generate grid video
     ui["cluster_radio"].change(

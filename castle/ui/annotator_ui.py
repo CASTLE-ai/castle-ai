@@ -39,15 +39,23 @@ logger = logging.getLogger(__name__)
 
 
 def _get_cluster_choices(annotator_data, annotations):
-    """Build cluster list with ✅ for labeled ones."""
+    """Build cluster list with ✅ for labeled ones, skipping empty clusters."""
     if annotator_data is None or not hasattr(annotator_data, "cluster_meta"):
         return []
+
+    from collections import Counter
+    cluster_arr = getattr(annotator_data, "cluster", None)
+    counts = Counter(cluster_arr.tolist()) if cluster_arr is not None and len(cluster_arr) > 0 else {}
+
     choices = []
     for cid, meta in sorted(
         annotator_data.cluster_meta.items(), key=lambda x: x[1]["name"]
     ):
         name = meta["name"]
         if name == "init":
+            continue
+        # Skip intermediate/parent clusters that have no bins assigned
+        if counts.get(cid, 0) == 0:
             continue
         prefix = "✅ " if name in annotations else ""
         choices.append(f"{prefix}{name}")

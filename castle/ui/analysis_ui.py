@@ -4,6 +4,7 @@ Analysis UI — Sub-tab inside "4. Behavior Microscope".
 
 Sections:
   A. Ethogram  — transition matrix heatmap, bout duration stats, raster plot
+                 + annotated video export
   B. Quality Metrics — silhouette, temporal coherence, bout quality
   C. Group Comparison — placeholder (requires two sessions)
 
@@ -12,12 +13,203 @@ using the same session-selector pattern as ``annotator_ui.py``.
 """
 
 import logging
+import os
+import subprocess
+import tempfile
+from typing import Optional, Tuple
 
+import cv2
+import numpy as np
 import gradio as gr
 
 from castle.service.annotator_loader import load_annotator_data
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Ethogram video helpers
+# ---------------------------------------------------------------------------
+
+def _hex_to_bgr(hex_str: str) -> Tuple[int, int, int]:
+    """Convert #RRGGBB hex to (B, G, R) tuple for OpenCV."""
+    h = hex_str.lstrip('#')
+    if len(h) == 6:
+        try:
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            return (b, g, r)
+        except ValueError:
+            pass
+    return (128, 128, 128)
+
+
+def _draw_label(bgr_img: np.ndarray, label: str, color_bgr: Tuple[int, int, int], img_w: int) -> None:
+    """Draw a cluster label badge in the top-left corner of a BGR image (in-place)."""
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.4, img_w / 1280)
+    thickness = max(1, int(font_scale * 2))
+    margin = 6
+    (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+    x2, y2 = margin + tw + 8, margin + th + baseline + 6
+    cv2.rectangle(bgr_img, (margin, margin), (x2, y2), (0, 0, 0), -1)
+    cv2.rectangle(bgr_img, (margin, margin), (x2, y2), color_bgr, 1)
+    cv2.putText(bgr_img, label, (margin + 4, margin + th + 3),
+                font, font_scale, color_bgr, thickness, cv2.LINE_AA)
+
+
+def _populate_video_choices(analysis_data) -> dict:
+    """Return gr.update for the video-selector dropdown."""
+    if analysis_data is None or not getattr(analysis_data, 'videos_meta', None):
+        return gr.update(choices=["All Videos"], value="All Videos")
+    basenames = [os.path.basename(v) for _, v in analysis_data.videos_meta]
+    return gr.update(choices=["All Videos"] + basenames, value="All Videos")
+
+
+def generate_ethogram_video(
+    analysis_data,
+    selected_video: str,
+    progress=gr.Progress(),
+) -> Tuple[Optional[str], str]:
+    """Render an annotated ethogram video with cluster overlay and label.
+
+    Three composited layers per frame:
+    a. Original video frame
+    b. ROI mask contour in the cluster's assigned colour (requires mask_list.h5)
+    c. Behaviour label badge (top-left corner)
+
+    Returns:
+        (output_file_path_or_None, status_markdown)
+    """
+    if analysis_data is None:
+        gr.Warning("Please load cluster data first.")
+        return None, "**❌ No data loaded.**"
+
+    if selected_video == "All Videos":
+        target_videos = list(analysis_data.videos_meta)
+    else:
+        target_videos = [
+            (n, v) for n, v in analysis_data.videos_meta
+            if os.path.basename(v) == selected_video
+        ]
+    if not target_videos:
+        gr.Warning("No matching video found in loaded data.")
+        return None, "**❌ No matching video.**"
+
+    tmp_dir = tempfile.mkdtemp(prefix="castle_etho_video_")
+    safe_name = selected_video.replace(" ", "_").replace("/", "-")
+    raw_path = os.path.join(tmp_dir, f"raw_{safe_name}.mp4")
+    final_path = os.path.join(tmp_dir, f"{safe_name}.mp4")
+
+    bin_size = max(1, analysis_data.bin_size)
+    fps = analysis_data.fps if analysis_data.fps > 0 else 30.0
+    cluster_arr = analysis_data.cluster
+    total_bins_count = max(sum(n for n, _ in target_videos), 1)
+
+    writer: Optional[cv2.VideoWriter] = None
+    out_w = out_h = None
+    global_bin_offset = 0
+
+    try:
+        import av as _av
+    except ImportError:
+        gr.Warning("PyAV is required for video generation but is not installed.")
+        return None, "**❌ PyAV not available.**"
+
+    for n_bins, video_name in target_videos:
+        video_path = os.path.join(analysis_data.source_path, video_name)
+        video_basename = os.path.basename(video_name)
+        mask_path = os.path.join(
+            analysis_data.project_path, "track", video_basename, "mask_list.h5"
+        )
+        has_mask = os.path.exists(mask_path)
+
+        try:
+            container = _av.open(video_path)
+        except Exception as exc:
+            logger.warning("Cannot open video %s: %s", video_path, exc)
+            global_bin_offset += n_bins
+            continue
+
+        video_stream = container.streams.video[0]
+        video_stream.thread_type = "AUTO"
+
+        frame_idx = 0
+        try:
+            for av_frame in container.decode(video_stream):
+                frame_rgb: np.ndarray = av_frame.to_rgb().to_ndarray()
+                fh, fw = frame_rgb.shape[:2]
+
+                if writer is None:
+                    out_w = max(fw & ~1, 2)
+                    out_h = max(fh & ~1, 2)
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                    writer = cv2.VideoWriter(raw_path, fourcc, fps, (out_w, out_h))
+
+                canvas_rgb = (
+                    cv2.resize(frame_rgb, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
+                    if (fw != out_w or fh != out_h) else frame_rgb.copy()
+                )
+
+                local_bin = min(frame_idx // bin_size, n_bins - 1)
+                abs_bin = global_bin_offset + local_bin
+                cluster_id = int(cluster_arr[abs_bin]) if abs_bin < len(cluster_arr) else -1
+
+                meta = analysis_data.cluster_meta.get(cluster_id, {})
+                color_bgr = _hex_to_bgr(meta.get("color", "#808080"))
+                label = meta.get("name") or f"cluster {cluster_id}"
+
+                # Layer B: ROI contour in cluster colour
+                if has_mask:
+                    from castle.service.bout_service import _load_mask_contours
+                    result = _load_mask_contours(mask_path, frame_idx)
+                    if result is not None:
+                        contours, (mh, mw) = result
+                        sx, sy = out_w / mw, out_h / mh
+                        for cnt in contours:
+                            scaled = cnt.copy().astype(np.float64)
+                            scaled[:, :, 0] *= sx
+                            scaled[:, :, 1] *= sy
+                            scaled = np.clip(scaled.astype(np.int32), 0, [out_w - 1, out_h - 1])
+                            cv2.drawContours(canvas_rgb, [scaled], -1, color_bgr, 2)
+
+                # Convert RGB → BGR for OpenCV write + Layer C label
+                canvas_bgr = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2BGR)
+                _draw_label(canvas_bgr, label, color_bgr, out_w)
+                writer.write(canvas_bgr)
+
+                frame_idx += 1
+                if frame_idx % 60 == 0:
+                    done = global_bin_offset + min(frame_idx // bin_size, n_bins)
+                    progress(done / total_bins_count, desc=f"Encoding {video_basename}…")
+        finally:
+            container.close()
+
+        global_bin_offset += n_bins
+
+    if writer is not None:
+        writer.release()
+    else:
+        return None, "**❌ Could not open any video file.**"
+
+    # Re-encode to H.264 for browser playback
+    try:
+        ret = subprocess.run(
+            ["ffmpeg", "-y", "-i", raw_path,
+             "-vcodec", "libx264", "-crf", "23", "-pix_fmt", "yuv420p", final_path],
+            capture_output=True, timeout=600,
+        )
+        if ret.returncode == 0 and os.path.exists(final_path):
+            try:
+                os.remove(raw_path)
+            except OSError:
+                pass
+            return final_path, "**✅ Ethogram video ready for download!**"
+    except Exception as exc:
+        logger.warning("ffmpeg re-encode failed: %s", exc)
+
+    if os.path.exists(raw_path):
+        return raw_path, "**✅ Ethogram video ready (mp4v fallback).**"
+    return None, "**❌ Video generation failed.**"
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +557,32 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
                 label="⬇️ Download Ethogram CSV (ZIP)", visible=False, interactive=False
             )
 
+            gr.Markdown("---")
+            gr.Markdown("#### 🎬 Annotated Ethogram Video")
+            gr.Markdown(
+                "Render an annotated video with three layers: "
+                "**a)** original frames, "
+                "**b)** cluster-coloured ROI contour, "
+                "**c)** behaviour label badge."
+            )
+
+            with gr.Row():
+                ui["ethogram_video_selector"] = gr.Dropdown(
+                    label="Video to visualise",
+                    choices=["All Videos"],
+                    value="All Videos",
+                    interactive=True,
+                    scale=3,
+                )
+                ui["ethogram_video_btn"] = gr.Button(
+                    "🎬 Generate Video", variant="secondary", scale=1
+                )
+
+            ui["ethogram_video_status"] = gr.Markdown("")
+            ui["ethogram_video_file"] = gr.File(
+                label="⬇️ Download Ethogram Video", visible=True, interactive=False
+            )
+
         gr.Markdown("---")
 
         # ---- Section B: Quality Metrics ----
@@ -404,7 +622,7 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
             outputs=[ui["session_dropdown"]],
         )
 
-    # Load button: refresh dropdown, then load data
+    # Load button: refresh dropdown → load data → populate video selector
     ui["load_btn"].click(
         fn=_refresh_sessions,
         inputs=[storage_path, project_name],
@@ -413,6 +631,10 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
         fn=_load_data,
         inputs=[storage_path, project_name, ui["session_dropdown"]],
         outputs=[analysis_data, ui["load_status"]],
+    ).then(
+        fn=_populate_video_choices,
+        inputs=[analysis_data],
+        outputs=[ui["ethogram_video_selector"]],
     )
 
     # Generate Ethogram
@@ -434,6 +656,13 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
         fn=compute_quality_metrics,
         inputs=[analysis_data],
         outputs=[ui["metrics_df"]],
+    )
+
+    # Generate Ethogram Video
+    ui["ethogram_video_btn"].click(
+        fn=generate_ethogram_video,
+        inputs=[analysis_data, ui["ethogram_video_selector"]],
+        outputs=[ui["ethogram_video_file"], ui["ethogram_video_status"]],
     )
 
     return ui

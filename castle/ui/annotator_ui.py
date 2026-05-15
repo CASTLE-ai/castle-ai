@@ -27,6 +27,8 @@ from castle.service.annotation_service import (
     save_scheme,
     load_annotations,
     save_annotations,
+    get_active_scheme,
+    save_active_scheme,
     DEFAULT_SCHEMES,
 )
 
@@ -210,10 +212,11 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
-    """When classification scheme changes, update the behavior label radio."""
+    """When classification scheme changes, update the behavior label radio and persist choice."""
     if not scheme_name:
         return gr.update(choices=[], value=None)
     labels = get_scheme_labels(storage_path, project_name, scheme_name)
+    save_active_scheme(storage_path, project_name, scheme_name)
     return gr.update(choices=labels, value=None)
 
 
@@ -363,13 +366,13 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
                 ui["scheme_dropdown"] = gr.Dropdown(
                     label="Classification Scheme",
                     choices=list(DEFAULT_SCHEMES.keys()),
-                    value="10-class",
+                    value="mice-10-class",
                     interactive=True,
                 )
 
                 ui["behavior_radio"] = gr.Radio(
                     label="Behavior Label",
-                    choices=DEFAULT_SCHEMES["10-class"],
+                    choices=DEFAULT_SCHEMES["mice-10-class"],
                     interactive=True,
                 )
 
@@ -424,15 +427,28 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
     # Event Bindings
     # ---------------------------
 
-    # Auto-load session list when entering the tab
+    # Auto-load session list and restore active scheme when entering the tab
     if annotator_tab is not None:
         annotator_tab.select(
             fn=on_refresh_sessions,
             inputs=[storage_path, project_name],
             outputs=[ui["session_dropdown"]],
+        ).then(
+            fn=_restore_scheme,
+            inputs=[storage_path, project_name],
+            outputs=[ui["scheme_dropdown"], ui["behavior_radio"]],
         )
 
-    # Auto-refresh sessions on Load: refresh dropdown first, then load data
+    def _restore_scheme(sp, pn):
+        """Load the project-level active scheme and return updates for dropdown + radio."""
+        if not sp or not pn:
+            return gr.update(), gr.update()
+        scheme = get_active_scheme(sp, pn)
+        labels = get_scheme_labels(sp, pn, scheme)
+        return gr.update(choices=list(list_schemes(sp, pn).keys()), value=scheme), \
+               gr.update(choices=labels, value=None)
+
+    # Auto-refresh sessions on Load: refresh dropdown → load data → restore scheme
     ui["load_btn"].click(
         fn=on_refresh_sessions,
         inputs=[storage_path, project_name],
@@ -441,6 +457,10 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         fn=on_load_cluster_data,
         inputs=[storage_path, project_name, ui["session_dropdown"]],
         outputs=[annotator_data, ui["cluster_radio"], ui["load_status"]],
+    ).then(
+        fn=_restore_scheme,
+        inputs=[storage_path, project_name],
+        outputs=[ui["scheme_dropdown"], ui["behavior_radio"]],
     )
 
     # Inputs for cluster-select (no speed — speed is JS-only)

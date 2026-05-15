@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 # Default classification schemes
 DEFAULT_SCHEMES = {
-    "5-class": ["Running", "Walking", "Immobile", "Sniffing", "Other"],
-    "10-class": [
+    "mice-5-class": ["Running", "Walking", "Immobile", "Sniffing", "Other"],
+    "mice-10-class": [
         "Sniffing", "Turn Right", "Turn Left",
         "Supported Rearing", "Unsupported Rearing", "Grooming",
         "Running", "Walking", "Immobile", "Other",
@@ -150,6 +150,50 @@ def save_scheme(
         json.dump(existing, f, indent=2)
 
     logger.info(f"Saved classification scheme '{name}' with {len(labels)} labels")
+
+
+# ---------------------------------------------------------------------------
+# Project-level active scheme persistence
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SCHEME = "mice-10-class"
+
+
+def _annotation_config_path(storage_path: str, project_name: str) -> str:
+    return os.path.join(storage_path, project_name, "cluster", "annotation_config.json")
+
+
+def get_active_scheme(storage_path: str, project_name: str) -> str:
+    """Return the project-level active classification scheme name.
+
+    Falls back to ``_DEFAULT_SCHEME`` when no config has been saved yet.
+    """
+    path = _annotation_config_path(storage_path, project_name)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f).get("classification_scheme", _DEFAULT_SCHEME)
+        except Exception as exc:
+            logger.warning("Could not read annotation_config.json: %s", exc)
+    return _DEFAULT_SCHEME
+
+
+def save_active_scheme(storage_path: str, project_name: str, scheme_name: str) -> None:
+    """Persist the active classification scheme name at the project level."""
+    if not storage_path or not project_name or not scheme_name:
+        return
+    path = _annotation_config_path(storage_path, project_name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    existing: dict = {}
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+    existing["classification_scheme"] = scheme_name
+    with open(path, "w") as f:
+        json.dump(existing, f, indent=2)
 
 
 def load_annotations(

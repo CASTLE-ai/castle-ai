@@ -7,6 +7,7 @@ config directly from disk without requiring the clustering workflow to have
 been run in the current session.
 """
 
+import glob
 import os
 import logging
 import threading
@@ -134,10 +135,14 @@ def load_annotator_data(
             "color": str(row["Color"]),
         }
 
-    # --- Load embedding from cluster_.npz (kept for visualization) ---
-    npz_path = os.path.join(cluster_path, "cluster_.npz")
-    if not os.path.exists(npz_path):
-        raise FileNotFoundError(f"cluster_.npz not found: {npz_path}")
+    # --- Load embedding from cluster_{emb_name}.npz (kept for visualization) ---
+    npz_candidates = [
+        f for f in glob.glob(os.path.join(cluster_path, "cluster_*.npz"))
+        if not f.endswith("cluster_data.npz")
+    ]
+    if not npz_candidates:
+        raise FileNotFoundError(f"cluster_*.npz not found: {cluster_path}")
+    npz_path = npz_candidates[0]
 
     npz = np.load(npz_path, allow_pickle=False)
     emb_array: np.ndarray = npz["emb"].astype(np.float64)

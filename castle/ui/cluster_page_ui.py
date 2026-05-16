@@ -35,6 +35,7 @@ from castle.ui.cluster_handlers import (
     check_session_exists,
     save_cluster_model,
     apply_cluster_model,
+    export_representatives,
 )
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,21 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['cluster_tree_radio'] = gr.Radio(label="Cluster Tree", choices=[], interactive=True, visible=True)
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
+            with gr.Row():
+                ui['umap_seed'] = gr.Textbox(
+                    label='UMAP seed',
+                    value='',
+                    placeholder='Empty = re-roll',
+                    interactive=True,
+                    scale=4,
+                    info=(
+                        "Leave blank to draw a fresh seed each run. Paste a seed "
+                        "from a previous status line to lock the layout."
+                    ),
+                )
+                ui['umap_reroll'] = gr.Button("🎲 Re-roll", scale=1, variant="secondary")
             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
+            ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
             ui['eps'] = gr.Number(
                 label='epsilon-neighborhood radius',
                 interactive=True,
@@ -289,6 +304,30 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         "(3) assign behaviorally meaningful labels. "
         "CASTLE intentionally provides no \"one-click cluster\" entry point."
     )
+
+    # ---- Cluster representatives export (UX-02) ----
+    with gr.Accordion("🖼️ Export Cluster Representatives", open=False):
+        gr.Markdown(
+            "Save N representative frames per labelled cluster — useful as "
+            "paper figures or as the 'face validity' check before submitting."
+        )
+        with gr.Row():
+            ui['representatives_n'] = gr.Number(
+                label="Frames per cluster", value=9, minimum=1, maximum=64, step=1,
+            )
+            ui['representatives_selection'] = gr.Dropdown(
+                label="Selection",
+                choices=["medoid", "random"],
+                value="medoid",
+                info="medoid = closest to cluster centroid (most representative); random = uniform sample.",
+            )
+        ui['representatives_btn'] = gr.Button(
+            "🖼️ Export Representatives", variant="secondary",
+        )
+        ui['representatives_file'] = gr.File(
+            label="⬇️ Download (.zip)", visible=False, interactive=False,
+        )
+        ui['representatives_status'] = gr.Markdown("")
 
     # ---- Save / Apply Cluster Model Section ----
     with gr.Accordion("💾 Save / Apply Cluster Model", open=False) as ui['model_transfer_accordion']:
@@ -371,11 +410,20 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             latents,
             ui['cluster_tree_radio'],
             ui['umap_config_text'],
-            gr.State(""),           # umap_seed_str — P1 will wire a real Textbox
+            ui['umap_seed'],
             storage_path,
             project_name,
         ],
-        outputs=[local_latents, local_embedding_plot, ui['embedding_plot']]
+        outputs=[
+            local_latents, local_embedding_plot,
+            ui['embedding_plot'], ui['umap_seed_status'],
+        ],
+    )
+
+    # 🎲 Re-roll: clear the seed textbox so the next run draws a fresh seed.
+    ui['umap_reroll'].click(
+        fn=lambda: ("", ""),
+        outputs=[ui['umap_seed'], ui['umap_seed_status']],
     )
 
     ui['embedding_plot'].select(
@@ -466,6 +514,16 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=apply_cluster_model,
         inputs=[storage_path, project_name, ui['apply_model_file']],
         outputs=[ui['apply_model_status']],
+    )
+
+    # UX-02: Export Cluster Representatives
+    ui['representatives_btn'].click(
+        fn=export_representatives,
+        inputs=[
+            storage_path, project_name, latents, mulvideo,
+            ui['representatives_n'], ui['representatives_selection'],
+        ],
+        outputs=[ui['representatives_file'], ui['representatives_status']],
     )
 
     # Expose shared state for Annotator tab (A-04)

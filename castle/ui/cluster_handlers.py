@@ -13,6 +13,7 @@ import glob
 import subprocess
 import cv2
 import tempfile
+from pathlib import Path
 
 import gradio as gr
 import numpy as np
@@ -286,7 +287,7 @@ def generate_embedding(
             "Session not initialized. Please click '⚙️ New Session' to initialize "
             "before generating an embedding."
         )
-        return None, None, None
+        return None, None, None, ""
 
     try:
         cfg = json.loads(cfg_str)
@@ -295,7 +296,7 @@ def generate_embedding(
             f"Invalid UMAP configuration. Please check the JSON format and try again. "
             f"Details: {e}"
         )
-        return None, None, None
+        return None, None, None, ""
 
     base_seed: int | None = None
     if isinstance(umap_seed_str, str) and umap_seed_str.strip():
@@ -306,7 +307,7 @@ def generate_embedding(
                 f"UMAP seed must be an integer; got {umap_seed_str!r}. "
                 f"Leave blank to re-roll, or enter an integer to lock."
             )
-            return None, None, None
+            return None, None, None, ""
     if isinstance(cfg, list):
         cfg = [(dict(c) if isinstance(c, dict) else c) for c in cfg]
         if base_seed is not None:
@@ -326,7 +327,7 @@ def generate_embedding(
             "This cluster has no data points. Select a different cluster or run "
             "clustering again with adjusted parameters."
         )
-        return None, None, None
+        return None, None, None, ""
 
     # C-05: Report progress between UMAP stages
     def umap_progress(stage, total):
@@ -351,17 +352,23 @@ def generate_embedding(
             )
         else:
             gr.Warning(f"UMAP failed: {e or type(e).__name__}")
-        return None, None, None
+        return None, None, None, ""
 
-    seed_repr = (
-        f"seed={resolved_seeds[-1]}" if len(resolved_seeds) == 1
-        else f"seeds={resolved_seeds}"
-    )
+    if len(resolved_seeds) == 1:
+        seed_for_repro = resolved_seeds[0]
+        seed_repr = f"seed={seed_for_repro}"
+    else:
+        seed_for_repro = resolved_seeds[0]  # base_seed for re-running multi-stage
+        seed_repr = f"seeds={resolved_seeds}"
     gr.Info(f"UMAP done. {seed_repr}. Re-run with this value to reproduce.")
+    status_md = (
+        f"✅ **UMAP done.** {seed_repr}. "
+        f"Paste `{seed_for_repro}` into the seed box to lock this layout."
+    )
 
     progress(1.0, desc="Building plot...")
     Z_plt = EmbeddingScatterPlot(local_latents)
-    return local_latents, Z_plt, Z_plt.plot()
+    return local_latents, Z_plt, Z_plt.plot(), status_md
 
 
 def _resolve_umap_log_path(storage_path, project_name) -> str | None:
@@ -1002,3 +1009,76 @@ def apply_cluster_model(storage_path, project_name, model_file):
             f"project's feature type and dimensions. Details: {exc}"
         )
         return f"**❌ Apply failed:** {exc}"
+
+
+def export_representatives(storage_path, project_name, latents, aggregator,
+                           n_per_cluster, selection):
+    """Export representative frames + montage per cluster as a ZIP download.
+
+    UX-02. Picks N frames per (non-noise, non-"init") labelled cluster,
+    writes them as PNG plus a montage, zips the bundle, and returns the
+    zip path for Gradio to expose as a download.
+    """
+    from castle.service.representatives_service import export_cluster_representatives
+
+    if latents is None or aggregator is None:
+        gr.Info(
+            "Session not initialised. Open a project and click '⚙️ New Session' "
+            "before exporting representatives."
+        )
+        return gr.update(value=None, visible=False), ""
+
+    try:
+        n_int = max(1, int(n_per_cluster))
+    except (TypeError, ValueError):
+        gr.Info(f"Frames per cluster must be a positive integer; got {n_per_cluster!r}")
+        return gr.update(value=None, visible=False), ""
+
+    if not isinstance(selection, str) or selection not in ("medoid", "random"):
+        gr.Info("Selection must be 'medoid' or 'random'.")
+        return gr.update(value=None, visible=False), ""
+
+    cluster_meta = getattr(latents, "cluster_meta", {}) or {}
+    labelled = [
+        cid for cid, meta in cluster_meta.items()
+        if cid != -1 and meta.get("name") != "init"
+    ]
+    if not labelled:
+        gr.Info(
+            "No labelled clusters yet. Run UMAP + DBSCAN, label clusters, then "
+            "click Export Representatives."
+        )
+        return gr.update(value=None, visible=False), ""
+
+    import shutil
+    import tempfile
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="castle_repr_"))
+    try:
+        written = export_cluster_representatives(
+            latents, aggregator,
+            output_dir=tmpdir,
+            n_per_cluster=n_int,
+            selection=selection,
+        )
+        if not written:
+            gr.Info("No representatives written (clusters may all be empty).")
+            return gr.update(value=None, visible=False), ""
+
+        out_root = os.path.join(storage_path, project_name, "cluster", "representatives")
+        os.makedirs(out_root, exist_ok=True)
+        archive_base = os.path.join(out_root, "representatives")
+        zip_path = shutil.make_archive(archive_base, "zip", root_dir=str(tmpdir))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    total_pngs = sum(len(v) for v in written.values())
+    gr.Info(
+        f"Exported {len(written)} clusters × ~{n_int} frames ({total_pngs} PNGs)."
+    )
+    status_md = (
+        f"✅ **Representatives exported.** "
+        f"{len(written)} clusters, {total_pngs} PNG files. "
+        f"Bundle: `{zip_path}`."
+    )
+    return gr.update(value=zip_path, visible=True), status_md

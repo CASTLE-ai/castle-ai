@@ -367,7 +367,14 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['umap_run'].click(
         fn=generate_embedding,
-        inputs=[latents, ui['cluster_tree_radio'], ui['umap_config_text']],
+        inputs=[
+            latents,
+            ui['cluster_tree_radio'],
+            ui['umap_config_text'],
+            gr.State(""),           # umap_seed_str — P1 will wire a real Textbox
+            storage_path,
+            project_name,
+        ],
         outputs=[local_latents, local_embedding_plot, ui['embedding_plot']]
     )
 

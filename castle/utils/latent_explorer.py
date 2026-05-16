@@ -1,9 +1,20 @@
 """Latent space exploration: Latent and LocalLatent classes."""
 
+from __future__ import annotations
+
+import datetime as _datetime
+import json as _json
+import logging as _logging
+import secrets
+from pathlib import Path
+from typing import List, Optional, Union
+
 import numpy as np
 
 from castle.core.environment import get_device
 from castle.core.config import PALETTE_HEX
+
+_logger = _logging.getLogger(__name__)
 
 DEFAULT_DEVICE = get_device()
 
@@ -26,6 +37,57 @@ def generate_distinct_color(index, saturation=0.7, value=0.9):
 def generate_palette(avoid):
     res = [c for c in _palette if c not in avoid]
     return res or _palette
+
+
+def _resolve_umap_seed(cfg: dict, base_seed: Optional[int], stage: int) -> tuple:
+    """Pick the seed to use for one UMAP stage.
+
+    Args:
+        cfg: The stage's UMAP config dict.
+        base_seed: Optional deterministic base; stage ``i`` uses ``base_seed + i``.
+        stage: 0-indexed stage number.
+
+    Returns:
+        (seed, source) where source ∈ {"user", "base+offset", "drawn"}.
+    """
+    if cfg.get('random_state') is not None:
+        return int(cfg['random_state']), 'user'
+    if base_seed is not None:
+        return int(base_seed) + int(stage), 'base+offset'
+    return secrets.randbits(32), 'drawn'
+
+
+def _append_umap_log(
+    log_path: Union[str, Path], *, stage: int, seed: int, source: str, cfg: dict
+) -> None:
+    """Append one JSONL entry recording a UMAP stage's seed and config.
+
+    Failure to write is logged at debug level but never raised — logging is
+    advisory and must not break the UMAP run.
+    """
+    try:
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "timestamp": _datetime.datetime.now(_datetime.timezone.utc).isoformat(),
+            "stage": int(stage),
+            "seed": int(seed),
+            "source": source,
+            "config": {k: v for k, v in cfg.items() if _json_safe(v)},
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(record) + "\n")
+    except Exception as exc:
+        _logger.debug("Failed to append umap_log.jsonl at %s: %s", log_path, exc)
+
+
+def _json_safe(value) -> bool:
+    """Best-effort check that ``value`` is JSON-serializable."""
+    try:
+        _json.dumps(value)
+        return True
+    except (TypeError, ValueError):
+        return False
 
 
 
@@ -165,14 +227,47 @@ class LocalLatent:
         self.export = dict()
         
 
-    def build_embedding(self, configs, progress_callback=None):
+    def build_embedding(
+        self,
+        configs,
+        progress_callback=None,
+        *,
+        base_seed: Optional[int] = None,
+        log_path: Optional[Union[str, Path]] = None,
+    ) -> List[int]:
         """Run multi-stage UMAP dimensionality reduction.
+
+        Each stage's UMAP receives a ``random_state``. The seed source for
+        stage ``i`` is resolved as follows (first match wins):
+
+        1. ``configs[i]['random_state']`` if the user supplied one explicitly.
+        2. ``base_seed + i`` if ``base_seed`` was passed.
+        3. A fresh ``secrets.randbits(32)`` draw (the "re-roll" path).
+
+        The actually-used seed for every stage is returned, also stored on
+        ``self.umap_seeds`` for later inspection (e.g. UI status bar).
 
         Args:
             configs: Single UMAP config dict or list of dicts for multi-stage.
+                Each dict's keys are passed straight to ``UMAP(**dict)``.
             progress_callback: Optional ``(stage_index, total_stages) -> None``
                 callable invoked before each UMAP stage, useful for Gradio
                 progress bars.
+            base_seed: If provided, derive each stage's seed deterministically
+                as ``base_seed + i``. Useful for reproducing exact prior runs.
+            log_path: If provided, append one JSON line per stage to this path
+                with ``{timestamp, stage, seed, source, config}``. Created if
+                missing; parent directory must already exist.
+
+        Returns:
+            List of integers — the seed actually used at each stage (length
+            equals ``len(configs)``). Also stored on ``self.umap_seeds``.
+
+        Example:
+            >>> # Reproducible run
+            >>> seeds = local.build_embedding(cfg_list, base_seed=42)
+            >>> # Re-roll (fresh draw per stage)
+            >>> seeds = local.build_embedding(cfg_list)
         """
         if self.device == 'cpu' or self.device == 'mps':
             from umap import UMAP
@@ -193,14 +288,28 @@ class LocalLatent:
         if not isinstance(configs, list):
             configs = [configs]
 
+        resolved_seeds: List[int] = []
+        resolved_configs: List[dict] = []
         total_stages = len(configs)
-        for i, it in enumerate(configs):
+        for i, raw_cfg in enumerate(configs):
+            seed, source = _resolve_umap_seed(raw_cfg, base_seed, i)
+            stage_cfg = dict(raw_cfg)
+            stage_cfg['random_state'] = seed
+            resolved_configs.append(stage_cfg)
+            resolved_seeds.append(seed)
+
+            _logger.info("UMAP stage %d: seed=%d (source=%s)", i, seed, source)
+            if log_path is not None:
+                _append_umap_log(log_path, stage=i, seed=seed, source=source, cfg=stage_cfg)
+
             if progress_callback is not None:
                 progress_callback(i, total_stages)
-            Z = UMAP(**it).fit_transform(Z)
+            Z = UMAP(**stage_cfg).fit_transform(Z)
 
         self.embedding = np.array(Z)
-        self.configs = configs
+        self.configs = resolved_configs
+        self.umap_seeds = resolved_seeds
+        return resolved_seeds
 
 
 

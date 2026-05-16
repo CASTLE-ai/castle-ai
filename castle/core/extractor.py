@@ -15,6 +15,7 @@ from castle.core.environment import get_num_workers
 from castle.core.logging_config import setup_logger
 from castle.core.models import get_visual_encoder
 from castle.core.project import get_project_config, save_project_config
+from castle.core.seed import make_torch_generator, seed_worker
 from castle.utils.video_io import VideoWriter, VideoReader
 from castle.utils.h5_io import H5IO
 from castle.utils.video_align import center_roi, get_roi_closest_point_safe, blank_page
@@ -198,17 +199,23 @@ def extract_roi_latent_from_video(
     dataset = VideoDataset(source_path, video_len, mask_list_path, preprocess_config, roi_id,
                            interpolated_points=interpolated_points)
         
-    loader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
-        num_workers=NUM_WORKERS, 
-        pin_memory=True
+    loader_kwargs = dict(
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        pin_memory=True,
     )
+    # BUG-09: seed DataLoader workers so augmentation / shuffle is reproducible
+    _gen = make_torch_generator()
+    if _gen is not None:
+        loader_kwargs["generator"] = _gen
+        if NUM_WORKERS > 0:
+            loader_kwargs["worker_init_fn"] = seed_worker
+    loader = DataLoader(dataset, **loader_kwargs)
 
     latent_list = []
     total_batches = len(loader)
-    
+
     for i, (frames, masks) in enumerate(loader):
         try:
             if hasattr(observer, 'extract_tensor_batch'):
@@ -411,17 +418,22 @@ def extract_roi_rotation_latent_from_video(
         num_rotations=7
     )
 
-    loader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
-        num_workers=NUM_WORKERS, 
-        pin_memory=True
+    loader_kwargs = dict(
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        pin_memory=True,
     )
+    _gen = make_torch_generator()
+    if _gen is not None:
+        loader_kwargs["generator"] = _gen
+        if NUM_WORKERS > 0:
+            loader_kwargs["worker_init_fn"] = seed_worker
+    loader = DataLoader(dataset, **loader_kwargs)
 
     latent_list = []
     total_batches = len(loader)
-    
+
     try:
         for i, (frames, masks) in enumerate(loader):
             if progress_callback:

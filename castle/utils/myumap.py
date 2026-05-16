@@ -1,5 +1,7 @@
 """GPU-accelerated UMAP wrapper using RAPIDS cuML (optional)."""
 
+import secrets
+
 try:
     from umap.spectral import spectral_layout
     from cuml.manifold.umap import fuzzy_simplicial_set, simplicial_set_embedding
@@ -21,6 +23,9 @@ try:
             min_dist: Minimum distance between embedded points.
             n_epochs: Number of optimization epochs (default 20000).
             init: Initialization method ('spectral' or 'pca').
+            random_state: Seed for UMAP's stochastic optimization. ``None``
+                triggers a fresh ``secrets.randbits(32)`` draw (logged on
+                ``self.random_state`` so callers can reproduce the run).
         """
 
         def __init__(self,  n_neighbors, n_components, min_dist=0.1, n_epochs=20000, init='spectral', random_state=None, verbose=False):
@@ -28,7 +33,12 @@ try:
             self.n_neighbors = n_neighbors
             self.n_components = n_components
             self.min_dist = min_dist
-            self.random_state = np.random.randint(1, 1000) if random_state is None else random_state
+            # Defensive seed handling for the rare path where this constructor
+            # is invoked without random_state (main path always injects one via
+            # latent_explorer.LocalLatent.build_embedding; see BUG-01 / P0-B).
+            self.random_state = (
+                secrets.randbits(32) if random_state is None else int(random_state)
+            )
             self.verbose = verbose
             self.init = init
 

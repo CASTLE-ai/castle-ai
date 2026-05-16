@@ -85,10 +85,19 @@ class ProjectConfig:
 
     NOT to be confused with the per-project config.json which tracks
     file inventory (source videos, latent file paths, etc.).
+
+    Attributes:
+        tracking: Tracking-stage parameters.
+        extraction: Extraction-stage parameters.
+        clustering: Clustering-stage parameters.
+        master_seed: Master seed for every stochastic component CASTLE uses
+            except UMAP (which keeps its own re-roll/lock UX). Defaults to
+            42. See :func:`castle.core.seed.set_global_seed`.
     """
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     clustering: ClusterConfig = field(default_factory=ClusterConfig)
+    master_seed: int = 42
 
     # ---- Serialization ----
 

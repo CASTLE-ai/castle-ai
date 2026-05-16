@@ -250,7 +250,37 @@ def update_select_cluster_list(latents):
     return gr.update(choices=choices, value=None)
 
 
-def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
+def generate_embedding(
+    latents,
+    cluster_name,
+    cfg_str,
+    umap_seed_str: str = "",
+    storage_path: str | None = None,
+    project_name: str | None = None,
+    progress=gr.Progress(),
+):
+    """Run UMAP for the selected cluster and produce a scatter plot.
+
+    Args:
+        latents: ``Latent`` instance held in Gradio state.
+        cluster_name: Cluster name (or "init") selected in the UI.
+        cfg_str: JSON string of either a single UMAP config dict or a list
+            of dicts (multi-stage UMAP).
+        umap_seed_str: Empty string → re-roll a fresh seed for every stage
+            via :func:`secrets.randbits`. Non-empty → parsed as integer
+            ``base_seed``; stage ``i`` uses ``base_seed + i``.
+        storage_path: Project storage root (Gradio state). When provided
+            together with ``project_name``, the resolved seed(s) are
+            appended to
+            ``{storage}/{project}/cluster/sessions/{active_session_id}/umap_log.jsonl``.
+        project_name: Project name (Gradio state). See ``storage_path``.
+        progress: Injected by Gradio for progress reporting.
+
+    Returns:
+        ``(local_latents, scatter_plot, plot_image)`` — or
+        ``(None, None, None)`` on input / runtime errors (already surfaced
+        via ``gr.Info`` / ``gr.Warning``).
+    """
     if latents is None:
         gr.Info(
             "Session not initialized. Please click '⚙️ New Session' to initialize "
@@ -267,6 +297,29 @@ def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
         )
         return None, None, None
 
+    base_seed: int | None = None
+    if isinstance(umap_seed_str, str) and umap_seed_str.strip():
+        try:
+            base_seed = int(umap_seed_str.strip())
+        except ValueError:
+            gr.Info(
+                f"UMAP seed must be an integer; got {umap_seed_str!r}. "
+                f"Leave blank to re-roll, or enter an integer to lock."
+            )
+            return None, None, None
+    if isinstance(cfg, list):
+        cfg = [(dict(c) if isinstance(c, dict) else c) for c in cfg]
+        if base_seed is not None:
+            for c in cfg:
+                if isinstance(c, dict):
+                    c.pop('random_state', None)
+    elif isinstance(cfg, dict):
+        cfg = dict(cfg)
+        if base_seed is not None:
+            cfg.pop('random_state', None)
+
+    log_path = _resolve_umap_log_path(storage_path, project_name)
+
     local_latents = latents.select(selected_cluster=cluster_name)
     if len(local_latents.data) == 0:
         gr.Info(
@@ -274,13 +327,18 @@ def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
             "clustering again with adjusted parameters."
         )
         return None, None, None
-    
+
     # C-05: Report progress between UMAP stages
     def umap_progress(stage, total):
         progress(stage / total, desc=f"UMAP Stage {stage + 1}/{total}...")
 
     try:
-        local_latents.build_embedding(cfg, progress_callback=umap_progress)
+        resolved_seeds = local_latents.build_embedding(
+            cfg,
+            progress_callback=umap_progress,
+            base_seed=base_seed,
+            log_path=log_path,
+        )
     except Exception as e:
         n_samples = len(local_latents.data)
         first_cfg = cfg[0] if isinstance(cfg, list) else cfg
@@ -295,9 +353,35 @@ def generate_embedding(latents, cluster_name, cfg_str, progress=gr.Progress()):
             gr.Warning(f"UMAP failed: {e or type(e).__name__}")
         return None, None, None
 
+    seed_repr = (
+        f"seed={resolved_seeds[-1]}" if len(resolved_seeds) == 1
+        else f"seeds={resolved_seeds}"
+    )
+    gr.Info(f"UMAP done. {seed_repr}. Re-run with this value to reproduce.")
+
     progress(1.0, desc="Building plot...")
     Z_plt = EmbeddingScatterPlot(local_latents)
     return local_latents, Z_plt, Z_plt.plot()
+
+
+def _resolve_umap_log_path(storage_path, project_name) -> str | None:
+    """Build the umap_log.jsonl path for the active session, if any.
+
+    Returns None when either input is empty or no active session exists.
+    """
+    if not storage_path or not project_name:
+        return None
+    try:
+        mgr = SessionManager(storage_path, project_name)
+        session_id = mgr.get_active_session_id()
+        if not session_id:
+            return None
+        return os.path.join(
+            mgr.sessions_path, session_id, "umap_log.jsonl"
+        )
+    except Exception as exc:
+        logger.debug("Could not build umap_log.jsonl path: %s", exc)
+        return None
 
 
 def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):

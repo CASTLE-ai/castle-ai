@@ -13,6 +13,37 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+
+@app.callback()
+def main_callback(
+    ctx: typer.Context,
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        envvar="CASTLE_SEED",
+        help=(
+            "Master seed for every stochastic component except UMAP "
+            "(UMAP keeps its own re-roll/lock UX). Default: 42. "
+            "Override via env CASTLE_SEED."
+        ),
+    ),
+    strict_cuda: bool = typer.Option(
+        False,
+        "--strict-cuda",
+        envvar="CASTLE_STRICT_CUDA",
+        help=(
+            "Force bit-identical CUDA output (cudnn.deterministic + "
+            "use_deterministic_algorithms). ~10%% slower; use for paper-grade runs."
+        ),
+    ),
+) -> None:
+    """Apply the master seed before any subcommand runs."""
+    from castle.core.seed import set_global_seed
+    set_global_seed(seed, strict_cuda=strict_cuda)
+    ctx.ensure_object(dict)
+    ctx.obj["master_seed"] = seed
+    ctx.obj["strict_cuda"] = strict_cuda
+
 # Register subcommands — must appear after app is created (CLI pattern)
 from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd, mcp_cmd  # noqa: E402
 from castle.cli.ethogram_cmd import app as ethogram_app  # noqa: E402

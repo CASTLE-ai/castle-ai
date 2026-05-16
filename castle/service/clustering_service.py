@@ -87,35 +87,55 @@ class ClusteringSession:
         """Video metadata from the aggregator."""
         return self.aggregator.videos_meta
     
-    def run_umap(self, cluster_name: str, umap_config: Any) -> dict:
-        """
-        Select a cluster and run UMAP dimensionality reduction.
-        
+    def run_umap(
+        self,
+        cluster_name: str,
+        umap_config: Any,
+        *,
+        base_seed: Optional[int] = None,
+        log_path: Optional[str] = None,
+    ) -> dict:
+        """Select a cluster and run UMAP dimensionality reduction.
+
         Args:
-            cluster_name: Name of the cluster to focus on (e.g., 'init')
-            umap_config: UMAP config — either a dict, list of dicts, or JSON string
-        
+            cluster_name: Name of the cluster to focus on (e.g., 'init').
+            umap_config: UMAP config — either a dict, list of dicts, or JSON
+                string.
+            base_seed: If provided, every UMAP stage uses ``base_seed + stage_i``
+                as ``random_state``; otherwise a fresh ``secrets.randbits(32)``
+                is drawn per stage. The resolved seeds are returned in the
+                ``umap_seeds`` key.
+            log_path: Optional absolute path to a ``umap_log.jsonl`` file; if
+                given, one JSON line per stage is appended. The parent dir is
+                created on demand.
+
         Returns:
             dict with keys:
                 'n_points': int — number of points in the selected cluster
                 'embedding_shape': tuple — shape of the embedding
+                'umap_seeds': List[int] — seeds used per stage (re-run with
+                    the last value as ``base_seed`` to reproduce)
                 'success': bool
         """
         if isinstance(umap_config, str):
             umap_config = json.loads(umap_config)
-        
+
         self._current_cluster_name = cluster_name
         self.local_latents = self.latents.select(selected_cluster=cluster_name)
-        
+
         if len(self.local_latents.data) == 0:
-            return {'n_points': 0, 'embedding_shape': (0, 0), 'success': False,
+            return {'n_points': 0, 'embedding_shape': (0, 0),
+                    'umap_seeds': [], 'success': False,
                     'error': 'Selected cluster is empty'}
-        
-        self.local_latents.build_embedding(umap_config)
-        
+
+        resolved_seeds = self.local_latents.build_embedding(
+            umap_config, base_seed=base_seed, log_path=log_path,
+        )
+
         return {
             'n_points': len(self.local_latents.data),
             'embedding_shape': self.local_latents.embedding.shape,
+            'umap_seeds': list(resolved_seeds),
             'success': True,
         }
     

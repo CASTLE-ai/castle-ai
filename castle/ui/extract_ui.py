@@ -591,9 +591,18 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     )
 
     # Memory guard: reactive OOM check + auto batch size
-    _mem_inputs = [ui['select_model'], ui['batch_size'], ui['pooling_method'], ui['pooling_scales']]
+    # Inputs: model, batch_size, rotate_tail, pooling_method, pooling_scales
+    # rotate_roi_tail_switch is the dominant VRAM multiplier (7× per batch).
+    # pooling_method/scales affect output dim only; model runs once regardless.
+    _mem_inputs = [
+        ui['select_model'],
+        ui['batch_size'],
+        ui['rotate_roi_tail_switch'],
+        ui['pooling_method'],
+        ui['pooling_scales'],
+    ]
 
-    def _mem_update(model_type, batch_size_str, pooling_method, pooling_scales_list):
+    def _mem_update(model_type, batch_size_str, rotate_tail, pooling_method, pooling_scales_list):
         import torch
         from castle.core.memory_guard import check as _check
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -601,8 +610,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             batch_size = int(batch_size_str)
         except (ValueError, TypeError):
             return gr.update(value="", visible=False)
-        n_scales = len(pooling_scales_list) if pooling_method == 'multiscale' and pooling_scales_list else 1
-        risky, msg = _check(model_type, batch_size, n_scales, device)
+        risky, msg = _check(model_type, batch_size, device, rotate=bool(rotate_tail))
         if risky:
             return gr.update(
                 value=f'<p style="color:#c05000;background:#fff4e6;padding:6px 10px;border-radius:4px;margin:4px 0">{msg}</p>',
@@ -613,16 +621,15 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     for _comp in _mem_inputs:
         _comp.change(_mem_update, inputs=_mem_inputs, outputs=ui['mem_warning'])
 
-    def _auto_batch(model_type, pooling_method, pooling_scales_list):
+    def _auto_batch(model_type, rotate_tail, pooling_method, pooling_scales_list):
         import torch
         from castle.core.memory_guard import suggest_batch_size as _suggest
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        n_scales = len(pooling_scales_list) if pooling_method == 'multiscale' and pooling_scales_list else 1
-        return str(_suggest(model_type, n_scales, device))
+        return str(_suggest(model_type, device, rotate=bool(rotate_tail)))
 
     ui['auto_batch_btn'].click(
         _auto_batch,
-        inputs=[ui['select_model'], ui['pooling_method'], ui['pooling_scales']],
+        inputs=[ui['select_model'], ui['rotate_roi_tail_switch'], ui['pooling_method'], ui['pooling_scales']],
         outputs=ui['batch_size'],
     )
 

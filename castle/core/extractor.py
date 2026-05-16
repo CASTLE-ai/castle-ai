@@ -424,8 +424,8 @@ def extract_roi_latent_from_video(
         latent_path,
         latent_array,
         video_name=video_name,
-        roi_id=int(roi),
-        model_name=model,
+        roi_id=int(roi_id),
+        model_name=model_name,
         tags={
             "pooling_method": pooling_method,
             "pooling_scales": list(pooling_scales) if pooling_scales else None,

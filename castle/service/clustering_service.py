@@ -13,12 +13,15 @@ import os
 import json
 import logging
 from collections import Counter
+from dataclasses import dataclass, field
 from typing import List, Optional, Callable, Any, Tuple
 
 import numpy as np
 import pandas as pd
 
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
+from castle.core.types import InsufficientDataError
+from castle.service.session_manager import SessionManager
 from castle.utils.latent_explorer import LocalLatent
 
 logger = logging.getLogger(__name__)
@@ -355,8 +358,6 @@ class ClusteringSession:
 # ---------------------------------------------------------------------------
 # Clustering hyper-parameter suggester (PERF-06 / P3-D)
 # ---------------------------------------------------------------------------
-
-from dataclasses import dataclass, field
 
 
 @dataclass
@@ -707,3 +708,430 @@ def apply_cluster_model_to_project(
         "n_frames": len(result["labels"]),
         "mean_confidence": float(result["confidence"].mean()) if len(result["confidence"]) else 0.0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Pure algorithmic helpers used by both ClusteringSession + cluster_handlers
+# (ARCH-01 / P4)
+#
+# These functions encapsulate "what the algorithm actually does" without any
+# Gradio / PyQt coupling. They take the relevant Latent / LocalLatent /
+# LatentAggregator objects explicitly and return structured results.
+#
+# Gradio handlers call them and translate exceptions into ``gr.Info`` /
+# ``gr.Warning``; PyQt panels can call the same functions and translate
+# into Qt signals. The CLI calls ``ClusteringSession`` (which in turn
+# wraps these helpers).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UMAPRunArtifacts:
+    """Pure result of running UMAP on a single cluster.
+
+    Attributes:
+        local_latents: The freshly built :class:`LocalLatent` (caller stores
+            this in Gradio state / PyQt model).
+        resolved_seeds: Per-stage seeds actually used (length =
+            ``len(cfg_list)`` where the input was multi-stage).
+        status_text: User-facing one-line summary suitable for a status bar.
+    """
+    local_latents: Any
+    resolved_seeds: List[int]
+    status_text: str
+
+
+def run_umap_on_cluster(
+    latents: Any,
+    cluster_name: str,
+    cfg: Any,
+    *,
+    base_seed: Optional[int] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    log_path: Optional[str] = None,
+) -> UMAPRunArtifacts:
+    """Select a cluster and build its UMAP embedding.
+
+    Args:
+        latents: Parent :class:`castle.utils.latent_explorer.Latent`.
+        cluster_name: Cluster name from the UI tree (e.g. ``'init'``).
+        cfg: Single UMAP config dict or list of dicts (multi-stage UMAP).
+            Passed through to :meth:`LocalLatent.build_embedding`.
+        base_seed: If provided, stage ``i`` uses ``base_seed + i`` for
+            ``random_state``; otherwise a fresh ``secrets.randbits(32)``
+            draw per stage (Re-roll path).
+        progress_callback: Optional ``(stage_index, total_stages) -> None``
+            callable invoked before each UMAP stage. Gradio uses this to
+            drive its progress bar.
+        log_path: Optional absolute path to ``umap_log.jsonl`` — one JSON
+            line per stage will be appended.
+
+    Returns:
+        :class:`UMAPRunArtifacts` with the new LocalLatent and resolved
+        seeds.
+
+    Raises:
+        InsufficientDataError: The selected cluster is empty (caller
+            should surface this to the user — already does so via
+            ``gr.Info`` in the Gradio path).
+    """
+    local_latents = latents.select(selected_cluster=cluster_name)
+    if len(local_latents.data) == 0:
+        raise InsufficientDataError(
+            f"Cluster '{cluster_name}' has no data points. Select a "
+            f"different cluster or re-cluster with adjusted parameters."
+        )
+
+    resolved_seeds = local_latents.build_embedding(
+        cfg,
+        progress_callback=progress_callback,
+        base_seed=base_seed,
+        log_path=log_path,
+    )
+
+    if len(resolved_seeds) == 1:
+        seed_repr = f"seed={resolved_seeds[0]}"
+    else:
+        seed_repr = f"seeds={resolved_seeds}"
+    status_text = (
+        f"UMAP done. {seed_repr}. "
+        f"Paste `{resolved_seeds[0]}` into the seed box to lock this layout."
+    )
+    return UMAPRunArtifacts(
+        local_latents=local_latents,
+        resolved_seeds=list(resolved_seeds),
+        status_text=status_text,
+    )
+
+
+def run_dbscan_on_local(local_latents: Any, eps: float) -> None:
+    """Run DBSCAN in place on an existing :class:`LocalLatent`.
+
+    Args:
+        local_latents: A LocalLatent with an embedding already built.
+        eps: DBSCAN epsilon. The function mutates ``local_latents.cluster``.
+
+    Raises:
+        InsufficientDataError: No embedding has been built yet.
+    """
+    if local_latents is None:
+        raise InsufficientDataError(
+            "No embedding available. Run UMAP before clustering."
+        )
+    embedding = getattr(local_latents, 'embedding', None)
+    if embedding is None:
+        raise InsufficientDataError(
+            "No embedding available. Run UMAP before clustering."
+        )
+    local_latents.build_cluster(method='dbscan', configs={'eps': eps})
+
+
+@dataclass
+class SubmitArtifacts:
+    """File paths produced by :func:`submit_local_to_global`."""
+    syllables_fig: Any
+    cluster_choices: List[Tuple[str, int]]
+    id_csv_path: str
+    time_series_paths: List[str]
+    subtitle_paths: List[str]
+    local_latents: Any
+    embedding_path: Optional[str]
+
+
+def submit_local_to_global(
+    latents: Any,
+    local_latents: Any,
+    aggregator: Any,
+    *,
+    storage_path: str,
+    project_name: str,
+) -> SubmitArtifacts:
+    """Merge local clusters into the global ``Latent`` and persist artefacts.
+
+    Mirrors what the legacy handler ``import_info_from_local_latent`` did,
+    minus the Gradio coupling. The caller wraps the result for Gradio
+    ``outputs=...`` or PyQt slots.
+
+    Args:
+        latents: Parent :class:`Latent`. Mutated — local clusters are
+            imported into it.
+        local_latents: The LocalLatent whose labels should be merged.
+        aggregator: :class:`LatentAggregator` (for ``videos_meta``,
+            ``generate_subtitles``, ``time_window``).
+        storage_path: Root storage directory.
+        project_name: Project name (used to compose the ``cluster/`` path).
+
+    Returns:
+        :class:`SubmitArtifacts`.
+
+    Raises:
+        CastleError: Re-raised from ``import_local_latent`` failure.
+    """
+    # Plotting lives in plotting_service (no Gradio dep). The "choice tuple"
+    # shaper is in cluster_handlers because Gradio shapes it.
+    from castle.service.plotting_service import plot_syllables_per_video
+    from castle.ui.cluster_handlers import update_select_cluster_list
+
+    latents.import_local_latent(local_latents)
+    fig = plot_syllables_per_video(latents, aggregator)
+    cluster_choices = update_select_cluster_list(latents)
+
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+    os.makedirs(cluster_path, exist_ok=True)
+
+    df1 = pd.DataFrame({
+        'Id': [k for k in latents.cluster_meta],
+        'Name': [v['name'] for v in latents.cluster_meta.values()],
+        'Color': [v['color'] for v in latents.cluster_meta.values()],
+    })
+    id_csv_path = os.path.join(cluster_path, 'id.csv')
+    df1.to_csv(id_csv_path, index=False)
+
+    df2_paths: List[str] = []
+    cum = 0
+    for vn, v in aggregator.videos_meta:
+        video_cluster = latents.cluster[cum:cum + vn]
+        video_frames = np.repeat(video_cluster, latents.time_window)
+        df2 = pd.DataFrame({'behavior': video_frames})
+        video_basename = os.path.basename(v).split('.')[0]
+        df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+        df2.to_csv(df2_path, index=False)
+        df2_paths.append(df2_path)
+        cum += vn
+
+    subtitle_paths = aggregator.generate_subtitles(
+        latents.cluster, latents.cluster_meta,
+    )
+
+    embedding_path: Optional[str] = None
+    if (local_latents is not None
+            and hasattr(local_latents, 'embedding')
+            and local_latents.embedding is not None):
+        from castle.ui.embedding_scatter import EmbeddingScatterPlot
+
+        Z_plt = EmbeddingScatterPlot(local_latents)
+        cluster_name = ''
+        for _, it in local_latents.export.items():
+            cluster_name += it['name'] + '_'
+        embedding_path = os.path.join(cluster_path, f'cluster_{cluster_name}.npz')
+        Z_plt.save_named_embedding(save_path=embedding_path)
+
+    return SubmitArtifacts(
+        syllables_fig=fig,
+        cluster_choices=cluster_choices,
+        id_csv_path=id_csv_path,
+        time_series_paths=df2_paths,
+        subtitle_paths=subtitle_paths,
+        local_latents=local_latents,
+        embedding_path=embedding_path,
+    )
+
+
+def auto_label_local_clusters(
+    local_latents: Any,
+    parent_name: str,
+) -> int:
+    """Auto-label every non-noise local cluster with a hierarchical name.
+
+    Args:
+        local_latents: LocalLatent whose ``cluster`` array carries DBSCAN
+            output. Mutated in place via ``label_cluster``.
+        parent_name: Name of the parent cluster (e.g. ``'init'``). Used
+            as a prefix for ``auto_generate_cluster_name``.
+
+    Returns:
+        Number of clusters labelled (i.e. excluding the noise label
+        ``-1``).
+    """
+    cluster_arr = getattr(local_latents, 'cluster', None)
+    if cluster_arr is None:
+        raise InsufficientDataError(
+            "No clusters available. Run DBSCAN before submitting."
+        )
+    unique_clusters = np.unique(cluster_arr)
+    count = 0
+    for cluster_id in unique_clusters:
+        if cluster_id == -1:
+            continue
+        name = auto_generate_cluster_name(parent_name, cluster_id)
+        local_latents.label_cluster(cluster_id, name)
+        count += 1
+    return count
+
+
+@dataclass
+class RestoredSessionArtifacts:
+    """Pure result of restoring a clustering session from disk."""
+    aggregator: Any
+    latents: Any
+    syllables_fig: Any
+    cluster_choices: List[Tuple[str, int]]
+    id_csv_path: str
+    time_series_paths: List[str]
+    local_latents: Optional[Any]
+    embedding_array: Optional[np.ndarray]
+
+
+def restore_session_from_disk(
+    storage_path: str,
+    project_name: str,
+    *,
+    select_roi_id: Any,
+    bin_size: Any,
+    select_model: str,
+    session_id: Optional[str] = None,
+    notify: Optional[Callable[[str, str], None]] = None,
+) -> RestoredSessionArtifacts:
+    """Restore a clustering session — Gradio-free version of ``_do_restore_session``.
+
+    Replaces the dual responsibility of "build LatentAggregator + reload
+    cluster_meta from id.csv + reload assignments from per-video CSVs +
+    optionally restore UMAP embedding from npz" with a single typed call.
+
+    Args:
+        storage_path: Root storage directory.
+        project_name: Project to restore.
+        select_roi_id: ROI ID currently selected in the UI (may be
+            overridden by the session's stored value).
+        bin_size: Bin size from UI (may be overridden).
+        select_model: Model name from UI (may be overridden).
+        session_id: Explicit session to restore; if None, picks the most
+            recently updated.
+        notify: ``(msg, level)`` callback for LatentAggregator progress
+            messages.
+
+    Returns:
+        :class:`RestoredSessionArtifacts` ready to map into Gradio state /
+        PyQt model fields.
+    """
+    from castle.core.cluster import LatentAggregator
+    from castle.service.plotting_service import plot_syllables_per_video
+    from castle.ui.cluster_handlers import update_select_cluster_list
+
+    mgr = SessionManager(storage_path, project_name)
+    session_info = None
+    if session_id:
+        session_info = mgr.get_session(session_id)
+        mgr.activate_session(session_id)
+    else:
+        sessions = mgr.list_sessions()
+        if sessions:
+            session_info = sessions[0]
+            mgr.activate_session(sessions[0].session_id)
+
+    if session_info:
+        select_model = session_info.model or select_model
+        select_roi_id = (str(session_info.roi_id)
+                         if session_info.roi_id else select_roi_id)
+        bin_size = session_info.bin_size if session_info.bin_size else bin_size
+
+    aggregator = LatentAggregator(
+        storage_path, project_name, select_roi_id, int(bin_size),
+        model_name=select_model,
+        notify=notify,
+    )
+    latents = aggregator.get_latent_object()
+
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+
+    id_csv_path = os.path.join(cluster_path, 'id.csv')
+    id_df = pd.read_csv(id_csv_path)
+    for _, row in id_df.iterrows():
+        cluster_id = int(row['Id'])
+        color = row.get('Color', 'grey')
+        latents.cluster_meta[cluster_id] = {'name': row['Name'], 'color': color}
+        latents.behavior_name2cluster_id[row['Name']] = cluster_id
+        if color != 'grey':
+            latents.used_palette.add(color)
+    latents.num_cluster = len(id_df)
+
+    cum = 0
+    df2_paths: List[str] = []
+    for vn, v in aggregator.videos_meta:
+        video_basename = os.path.basename(v).split('.')[0]
+        ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+        if os.path.exists(ts_path):
+            ts_df = pd.read_csv(ts_path)
+            bin_clusters = ts_df['behavior'].values[::latents.time_window][:vn]
+            latents.cluster[cum:cum + len(bin_clusters)] = bin_clusters
+            df2_paths.append(ts_path)
+        cum += vn
+
+    restored_local_latents: Optional[Any] = None
+    embedding_array: Optional[np.ndarray] = None
+
+    npz_path = find_latest_cluster_npz(cluster_path)
+    if npz_path:
+        restored_local_latents, embedding_array = restore_local_latent_from_npz(
+            npz_path, latents,
+        )
+
+    fig = plot_syllables_per_video(latents, aggregator)
+    choices = update_select_cluster_list(latents)
+
+    return RestoredSessionArtifacts(
+        aggregator=aggregator,
+        latents=latents,
+        syllables_fig=fig,
+        cluster_choices=choices,
+        id_csv_path=id_csv_path,
+        time_series_paths=df2_paths,
+        local_latents=restored_local_latents,
+        embedding_array=embedding_array,
+    )
+
+
+@dataclass
+class InitAggregatorArtifacts:
+    """Pure result of initialising a fresh clustering aggregator."""
+    aggregator: Any
+    latents: Any
+
+
+def init_clustering_aggregator(
+    storage_path: str,
+    project_name: str,
+    *,
+    select_roi_id: Any,
+    bin_size: Any,
+    select_model: str,
+    notify: Optional[Callable[[str, str], None]] = None,
+) -> InitAggregatorArtifacts:
+    """Build a :class:`LatentAggregator` + record a new session row.
+
+    Pure (Gradio-free) version of the legacy ``init_mulvideo`` handler.
+
+    Args:
+        storage_path: Root storage directory.
+        project_name: Project name.
+        select_roi_id: ROI ID.
+        bin_size: Temporal bin size.
+        select_model: Model name (e.g. ``'dinov3_vitb16'``).
+        notify: ``(msg, level)`` callback for LatentAggregator progress
+            messages.
+
+    Returns:
+        :class:`InitAggregatorArtifacts` carrying the freshly built
+        aggregator and its associated ``Latent`` object.
+    """
+    from castle.core.cluster import LatentAggregator
+
+    aggregator = LatentAggregator(
+        storage_path, project_name, select_roi_id, int(bin_size),
+        model_name=select_model,
+        notify=notify,
+    )
+    latents = aggregator.get_latent_object()
+
+    mgr = SessionManager(storage_path, project_name)
+    mgr.create_session(
+        model=select_model,
+        roi_id=int(select_roi_id) if select_roi_id else 1,
+        bin_size=int(bin_size),
+        total_frames=(
+            len(aggregator.latents)
+            if aggregator.latents is not None else 0
+        ),
+    )
+
+    return InitAggregatorArtifacts(aggregator=aggregator, latents=latents)

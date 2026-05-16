@@ -9,21 +9,11 @@ They take Gradio state values as input and return updated values.
 import logging
 import os
 import json
-import glob
-import subprocess
-import cv2
-import tempfile
 from pathlib import Path
 
 import gradio as gr
 import numpy as np
-import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
-from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
-from castle.ui.embedding_scatter import EmbeddingScatterPlot
 from castle.service.history_service import HistoryManager
 from castle.service.session_manager import SessionManager
 
@@ -34,166 +24,15 @@ _last_clip_path: str | None = None
 
 
 # ---------------------------
-# Templates & Presets (UI Config)
-# ---------------------------
-
-dbscan_config_template = '''{
-    "eps": 1.0
-}'''
-
-
-def _transcode_to_h264(video_path: str) -> None:
-    """Re-encode *video_path* in-place to H.264 using ffmpeg libx264.
-
-    The file is written to a temporary path first, then atomically
-    replaces the original so that a partial failure leaves the mp4v
-    file intact.
-
-    Args:
-        video_path: Path to an MP4 file written with the mp4v codec.
-    """
-    import logging
-
-    _log = logging.getLogger(__name__)
-    tmp_path = video_path + ".h264tmp.mp4"
-    try:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                video_path,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-crf",
-                "23",
-                "-movflags",
-                "+faststart",
-                tmp_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            os.replace(tmp_path, video_path)
-        else:
-            _log.warning(
-                "ffmpeg H.264 transcode failed for %s (keeping mp4v). stderr: %s",
-                video_path,
-                result.stderr[-300:],
-            )
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-    except FileNotFoundError:
-        _log.warning("ffmpeg not found — keeping mp4v codec for %s", video_path)
-    except Exception as exc:
-        _log.warning("H.264 transcode error for %s: %s", video_path, exc)
-        if os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
-
-# ---------------------------
 # Event Handlers
 # ---------------------------
 
-def _get_bin_video_info(aggregator, bin_index):
-    """Return (video_name, frame_idx) for a given global bin index, or (None, None)."""
-    idx = bin_index
-    for n_bins_in_video, video_name in aggregator.videos_meta:
-        if idx >= n_bins_in_video:
-            idx -= n_bins_in_video
-            continue
-        frame_idx = idx * aggregator.bin_size + aggregator.bin_size // 2
-        return video_name, frame_idx
-    return None, None
-
-
-def _apply_roi_overlay(frame, mask_h5_path, frame_idx):
-    """Draw ROI contour outline on *frame* if a mask is available.
-
-    Loads the binary mask for *frame_idx* from the HDF5 file at
-    *mask_h5_path*, finds its external contours, scales them to the
-    frame dimensions, and draws a green outline.  Returns the original
-    frame unchanged if the mask file is missing or any error occurs.
-
-    Args:
-        frame: RGB numpy array (H, W, 3).
-        mask_h5_path: Path to ``mask_list.h5``.
-        frame_idx: Integer frame index key inside the HDF5 file.
-
-    Returns:
-        Modified RGB numpy array with ROI contour drawn, or the
-        original frame if no mask was found.
-    """
-    if not os.path.exists(mask_h5_path):
-        return frame
-    try:
-        import h5py
-        with h5py.File(mask_h5_path, 'r') as f:
-            key = str(frame_idx)
-            if key not in f:
-                return frame
-            mask = f[key][()]  # uint8 (H, W)
-        if mask.max() == 0:
-            return frame
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return frame
-        fh, fw = frame.shape[:2]
-        mask_h, mask_w = mask.shape[:2]
-        frame_out = frame.copy()
-        for cnt in contours:
-            scaled = cnt.copy().astype(np.float64)
-            scaled[:, :, 0] *= fw / mask_w
-            scaled[:, :, 1] *= fh / mask_h
-            scaled = scaled.astype(np.int32)
-            # Draw in green (RGB order since frames are RGB)
-            cv2.drawContours(frame_out, [scaled], -1, (0, 255, 0), 2)
-        return frame_out
-    except Exception:
-        logger.debug("ROI overlay failed for %s[%d]", mask_h5_path, frame_idx, exc_info=True)
-        return frame
-
-
 def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
-    """Generate a short H.264 MP4 clip around center_bin with ROI overlay."""
-    total_bins = sum(vn for vn, _ in aggregator.videos_meta)
-    half = n_frames // 2
-    start = max(0, center_bin - half)
-    end = min(start + n_frames, total_bins)
-
-    frames = []
-    for i in range(start, end):
-        frame = aggregator.get_frame(int(i))
-        if frame is not None:
-            # Overlay ROI contour if mask_list.h5 exists for this bin
-            video_name, frame_idx = _get_bin_video_info(aggregator, int(i))
-            if video_name is not None:
-                video_base = os.path.splitext(os.path.basename(video_name))[0]
-                mask_path = os.path.join(
-                    aggregator.project_path, "track", video_base, "mask_list.h5"
-                )
-                frame = _apply_roi_overlay(frame, mask_path, frame_idx)
-            frames.append(frame)
-
-    if not frames:
-        return None
-
-    h, w = frames[0].shape[:2]
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(tmp.name, fourcc, fps, (w, h))
-    for f in frames:
-        bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR) if len(f.shape) == 3 else f
-        out.write(bgr)
-    out.release()
-    _transcode_to_h264(tmp.name)
-    return tmp.name
+    """Wrapper kept for back-compat — delegates to clip_service."""
+    from castle.service.clip_service import generate_clip_with_roi_overlay
+    return generate_clip_with_roi_overlay(
+        aggregator, center_bin, n_frames=n_frames, fps=fps,
+    )
 
 
 def embedding_plot_click(aggregator, Z_plt, evt: gr.SelectData):
@@ -260,28 +99,15 @@ def generate_embedding(
     project_name: str | None = None,
     progress=gr.Progress(),
 ):
-    """Run UMAP for the selected cluster and produce a scatter plot.
+    """Thin Gradio wrapper around
+    :func:`castle.service.clustering_service.run_umap_on_cluster`.
 
-    Args:
-        latents: ``Latent`` instance held in Gradio state.
-        cluster_name: Cluster name (or "init") selected in the UI.
-        cfg_str: JSON string of either a single UMAP config dict or a list
-            of dicts (multi-stage UMAP).
-        umap_seed_str: Empty string → re-roll a fresh seed for every stage
-            via :func:`secrets.randbits`. Non-empty → parsed as integer
-            ``base_seed``; stage ``i`` uses ``base_seed + i``.
-        storage_path: Project storage root (Gradio state). When provided
-            together with ``project_name``, the resolved seed(s) are
-            appended to
-            ``{storage}/{project}/cluster/sessions/{active_session_id}/umap_log.jsonl``.
-        project_name: Project name (Gradio state). See ``storage_path``.
-        progress: Injected by Gradio for progress reporting.
-
-    Returns:
-        ``(local_latents, scatter_plot, plot_image)`` — or
-        ``(None, None, None)`` on input / runtime errors (already surfaced
-        via ``gr.Info`` / ``gr.Warning``).
+    Returns ``(local_latents, scatter_plot, plot_image, status_md)``.
     """
+    from castle.core.types import InsufficientDataError
+    from castle.service.clustering_service import run_umap_on_cluster
+    from castle.service.plotting_service import build_scatter_plot
+
     if latents is None:
         gr.Info(
             "Session not initialized. Please click '⚙️ New Session' to initialize "
@@ -308,67 +134,56 @@ def generate_embedding(
                 f"Leave blank to re-roll, or enter an integer to lock."
             )
             return None, None, None, ""
-    if isinstance(cfg, list):
-        cfg = [(dict(c) if isinstance(c, dict) else c) for c in cfg]
-        if base_seed is not None:
+
+    # When locking to a specific seed, strip any pre-existing random_state
+    # from the dicts so the service's seed-injection path takes priority.
+    if base_seed is not None:
+        if isinstance(cfg, list):
+            cfg = [(dict(c) if isinstance(c, dict) else c) for c in cfg]
             for c in cfg:
                 if isinstance(c, dict):
                     c.pop('random_state', None)
-    elif isinstance(cfg, dict):
-        cfg = dict(cfg)
-        if base_seed is not None:
+        elif isinstance(cfg, dict):
+            cfg = dict(cfg)
             cfg.pop('random_state', None)
 
     log_path = _resolve_umap_log_path(storage_path, project_name)
 
-    local_latents = latents.select(selected_cluster=cluster_name)
-    if len(local_latents.data) == 0:
-        gr.Info(
-            "This cluster has no data points. Select a different cluster or run "
-            "clustering again with adjusted parameters."
-        )
-        return None, None, None, ""
-
-    # C-05: Report progress between UMAP stages
     def umap_progress(stage, total):
         progress(stage / total, desc=f"UMAP Stage {stage + 1}/{total}...")
 
     try:
-        resolved_seeds = local_latents.build_embedding(
-            cfg,
-            progress_callback=umap_progress,
+        result = run_umap_on_cluster(
+            latents, cluster_name, cfg,
             base_seed=base_seed,
+            progress_callback=umap_progress,
             log_path=log_path,
         )
+    except InsufficientDataError as e:
+        gr.Info(str(e))
+        return None, None, None, ""
     except Exception as e:
-        n_samples = len(local_latents.data)
+        # UMAP itself failed (e.g. n_neighbors >= n_samples at the cuML
+        # boundary). Surface a friendly hint based on the first cfg.
         first_cfg = cfg[0] if isinstance(cfg, list) else cfg
-        n_neighbors = first_cfg.get('n_neighbors', '?') if isinstance(first_cfg, dict) else '?'
+        n_neighbors = (
+            first_cfg.get('n_neighbors', '?')
+            if isinstance(first_cfg, dict) else '?'
+        )
         err_str = str(e).lower()
         if 'n_neighbors' in err_str or ('larger' in err_str and 'sample' in err_str) or not err_str:
             gr.Warning(
-                f"UMAP failed: n_neighbors ({n_neighbors}) is larger than the number "
-                f"of data points ({n_samples}). Try reducing n_neighbors to less than {n_samples}."
+                f"UMAP failed: n_neighbors ({n_neighbors}) may be too large. "
+                f"Try reducing it. Details: {e or type(e).__name__}"
             )
         else:
             gr.Warning(f"UMAP failed: {e or type(e).__name__}")
         return None, None, None, ""
 
-    if len(resolved_seeds) == 1:
-        seed_for_repro = resolved_seeds[0]
-        seed_repr = f"seed={seed_for_repro}"
-    else:
-        seed_for_repro = resolved_seeds[0]  # base_seed for re-running multi-stage
-        seed_repr = f"seeds={resolved_seeds}"
-    gr.Info(f"UMAP done. {seed_repr}. Re-run with this value to reproduce.")
-    status_md = (
-        f"✅ **UMAP done.** {seed_repr}. "
-        f"Paste `{seed_for_repro}` into the seed box to lock this layout."
-    )
-
+    gr.Info(f"UMAP done. seed={result.resolved_seeds[0]}. Re-run to reproduce.")
     progress(1.0, desc="Building plot...")
-    Z_plt = EmbeddingScatterPlot(local_latents)
-    return local_latents, Z_plt, Z_plt.plot(), status_md
+    Z_plt, img = build_scatter_plot(result.local_latents)
+    return result.local_latents, Z_plt, img, f"✅ **{result.status_text}**"
 
 
 def _resolve_umap_log_path(storage_path, project_name) -> str | None:
@@ -392,34 +207,28 @@ def _resolve_umap_log_path(storage_path, project_name) -> str | None:
 
 
 def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
-    if local_latents is None:
-        gr.Info(
-            "No embedding available. Please click 'Generate Embedding' to run UMAP first."
-        )
-        return None, None, history
-
-    try:
-        cfg = json.loads(dbscan_config_template)
-    except (json.JSONDecodeError, ValueError, KeyError) as e:
-        gr.Info(
-            f"Invalid cluster configuration JSON. Please check the template format. "
-            f"Details: {e}"
-        )
-        return None, None, history
+    """Thin Gradio wrapper around
+    :func:`castle.service.clustering_service.run_dbscan_on_local`.
+    """
+    from castle.core.types import InsufficientDataError
+    from castle.service.clustering_service import run_dbscan_on_local
+    from castle.service.plotting_service import build_scatter_plot
 
     if history is None:
         history = HistoryManager()
 
-    cfg['eps'] = eps
-    # Save pre-clustering state (only if we have something to restore to)
     if hasattr(local_latents, 'embedding') and hasattr(local_latents, 'cluster'):
         history.save_state(local_latents, f"DBSCAN clustering (eps={eps})")
-    
+
     progress(0, desc="Running DBSCAN...")
-    local_latents.build_cluster(method='dbscan', configs=cfg)
+    try:
+        run_dbscan_on_local(local_latents, float(eps))
+    except InsufficientDataError as e:
+        gr.Info(str(e))
+        return None, None, history
     progress(1.0, desc="Building plot...")
-    Z_plt = EmbeddingScatterPlot(local_latents)
-    return Z_plt, Z_plt.plot(), history
+    Z_plt, img = build_scatter_plot(local_latents)
+    return Z_plt, img, history
 
 
 def label_local_cluster(local_latents, cluster_id, cluster_name, history):
@@ -444,109 +253,50 @@ def label_local_cluster(local_latents, cluster_id, cluster_name, history):
 
 
 def plot_syllables_per_video(latents, aggregator):
-    """Plot syllables with one video per row, x-axis in seconds."""
-    from matplotlib.patches import Patch
-
-    cluster = latents.cluster
-    cluster_meta = latents.cluster_meta
-    videos_meta = aggregator.videos_meta
-    fps = aggregator.fps
-    bin_size = aggregator.bin_size
-
-    n_videos = len(videos_meta)
-
-    fig, axes = plt.subplots(n_videos, 1, figsize=(14, 0.8 * n_videos), squeeze=False)
-    axes = axes.flatten()
-
-    def palette(c):
-        if c in cluster_meta:
-            return cluster_meta[c]['color']
-        else:
-            return 'grey'
-    
-    cum = 0
-    for video_idx, (vn, video_name) in enumerate(videos_meta):
-        ax = axes[video_idx]
-        video_cluster = cluster[cum:cum + vn]
-        
-        n = len(video_cluster)
-        key_frames = [0] + [i + 1 for i in range(n - 1) if video_cluster[i] != video_cluster[i + 1]] + [n]
-        
-        widths = [(key_frames[j+1] - key_frames[j]) * bin_size / fps for j in range(len(key_frames)-1)]
-        colors = [palette(video_cluster[key_frames[j]]) for j in range(len(key_frames)-1)]
-        lefts = [key_frames[j] * bin_size / fps for j in range(len(key_frames)-1)]
-        
-        total_seconds = n * bin_size / fps
-        
-        ax.bar(lefts, height=[1]*len(widths), width=widths, color=colors, align='edge', edgecolor='none')
-        ax.set_xlim(0, total_seconds)
-        ax.set_ylim(0, 1)
-        ax.set_yticks([])
-        
-        video_basename = os.path.basename(video_name).split('.')[0]
-        ax.set_title(video_basename, fontsize=9, loc='left')
-        
-        cum += vn
-    
-    unique_clusters = sorted(set(cluster))
-    if -1 in unique_clusters:
-        unique_clusters.remove(-1)
-    
-    legend_handles = [Patch(color=palette(cat), label=cluster_meta[cat]['name']) for cat in unique_clusters if cat in cluster_meta]
-
-    # tight_layout before adding the out-of-axes legend to avoid the
-    # "margins cannot be made large enough" UserWarning.
-    plt.tight_layout()
-
-    if legend_handles:
-        axes[-1].legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.3),
-                       ncol=min(len(legend_handles), 6), fontsize=8)
-        fig.subplots_adjust(bottom=0.2)
-
-    return fig
+    """Wrapper kept for back-compat — delegates to plotting_service."""
+    from castle.service.plotting_service import plot_syllables_per_video as _impl
+    return _impl(latents, aggregator)
 
 
 def label_all_and_submit(storage_path, project_name, latents, local_latents, aggregator, parent_name, history):
-    """Auto-label all clusters and submit."""
+    """Thin Gradio wrapper: auto-label every DBSCAN cluster then submit.
+
+    Delegates the auto-label loop to
+    :func:`castle.service.clustering_service.auto_label_local_clusters` and
+    the submit + persist step to ``import_info_from_local_latent`` (which
+    is itself a thin wrapper around ``submit_local_to_global``).
+    """
+    from castle.core.types import InsufficientDataError
+    from castle.service.clustering_service import auto_label_local_clusters
+
     if history is None:
         history = HistoryManager()
 
-    if not hasattr(local_latents, 'cluster'):
-        gr.Warning(
-            "No clusters available to submit. Please click 'Generate Cluster' to "
-            "create clusters before submitting."
-        )
-        return (None, None, None, None, None, None, None, None, history)
-
-    # Save state including parent (for undo of submit)
     if hasattr(local_latents, 'embedding'):
         history.save_state(local_latents, "Submit all clusters to parent", parent=latents)
 
-    unique_clusters = np.unique(local_latents.cluster)
-
-    count = 0
-    for cluster_id in unique_clusters:
-        if cluster_id == -1:
-            continue
-
-        cluster_name = auto_generate_cluster_name(parent_name, cluster_id)
-        local_latents.label_cluster(cluster_id, cluster_name)
-        count += 1
+    try:
+        count = auto_label_local_clusters(local_latents, parent_name)
+    except InsufficientDataError as e:
+        gr.Warning(str(e))
+        return (None, None, None, None, None, None, None, None, history)
 
     gr.Info(f'Auto-labeled {count} clusters.')
 
-    result = import_info_from_local_latent(storage_path, project_name, latents, local_latents, aggregator)
-
-    # If import failed (all-None sentinel), return early without overwriting the session snapshot.
+    result = import_info_from_local_latent(
+        storage_path, project_name, latents, local_latents, aggregator,
+    )
     if result[0] is None:
         return result + (history,)
 
-    # At the end of label_all_and_submit, after successful submit:
     mgr = SessionManager(storage_path, project_name)
     active_id = mgr.get_active_session_id()
     if active_id:
         mgr.snapshot_to_session(active_id)
-        n_clusters = len([k for k in latents.cluster_meta if latents.cluster_meta[k]['name'] != 'init'])
+        n_clusters = len([
+            k for k in latents.cluster_meta
+            if latents.cluster_meta[k]['name'] != 'init'
+        ])
         mgr.save_session_state(active_id, n_clusters)
 
     return result + (history,)
@@ -579,21 +329,15 @@ def _find_latest_npz(cluster_path):
 
 
 def _restore_embedding_from_npz(npz_path, latents):
-    """Restore a LocalLatent + EmbeddingScatterPlot from a saved ``.npz``.
-
-    Thin Gradio-side wrapper around
-    :func:`castle.service.clustering_service.restore_local_latent_from_npz`;
-    the service returns a pure ``(local_latents, embedding)`` pair and we
-    wrap it in :class:`EmbeddingScatterPlot` for the UI.
-
-    Returns ``(local_latents, Z_plt)`` or ``(None, None)`` on failure.
-    """
+    """Wrapper kept for back-compat — delegates to service + plotting helpers."""
     from castle.service.clustering_service import restore_local_latent_from_npz
+    from castle.service.plotting_service import build_scatter_plot
 
     local_latents, _ = restore_local_latent_from_npz(npz_path, latents)
     if local_latents is None:
         return None, None
-    return local_latents, EmbeddingScatterPlot(local_latents)
+    plot, _img = build_scatter_plot(local_latents)
+    return local_latents, plot
 
 
 def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id=None):
@@ -619,76 +363,36 @@ def restore_session(storage_path, project_name, select_roi_id, bin_size, select_
 
 
 def _do_restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id, notify_callback):
-    """Inner restore logic."""
-    mgr = SessionManager(storage_path, project_name)
-    session_info = None
-    if session_id:
-        session_info = mgr.get_session(session_id)
-        mgr.activate_session(session_id)
-    else:
-        sessions = mgr.list_sessions()
-        if sessions:
-            session_info = sessions[0]
-            mgr.activate_session(sessions[0].session_id)
+    """Thin Gradio wrapper around
+    :func:`castle.service.clustering_service.restore_session_from_disk`.
 
-    # Use session's saved parameters if available, fall back to UI values
-    if session_info:
-        select_model = session_info.model or select_model
-        select_roi_id = str(session_info.roi_id) if session_info.roi_id else select_roi_id
-        bin_size = session_info.bin_size if session_info.bin_size else bin_size
+    Adds the Gradio-side embedding plot rendering (which the service
+    layer deliberately doesn't import) plus a couple of ``gr.Info``
+    notifications.
+    """
+    from castle.service.clustering_service import restore_session_from_disk
+    from castle.service.plotting_service import build_named_scatter_plot
 
-    aggregator = LatentAggregator(
-        storage_path, project_name, select_roi_id, int(bin_size),
-        model_name=select_model,
-        notify=notify_callback
+    artifacts = restore_session_from_disk(
+        storage_path, project_name,
+        select_roi_id=select_roi_id, bin_size=bin_size, select_model=select_model,
+        session_id=session_id, notify=notify_callback,
     )
-    latents = aggregator.get_latent_object()
 
-    cluster_path = os.path.join(storage_path, project_name, 'cluster')
-
-    # Restore cluster_meta from id.csv
-    id_csv_path = os.path.join(cluster_path, 'id.csv')
-    id_df = pd.read_csv(id_csv_path)
-    for _, row in id_df.iterrows():
-        cluster_id = int(row['Id'])
-        color = row.get('Color', 'grey')
-        latents.cluster_meta[cluster_id] = {'name': row['Name'], 'color': color}
-        latents.behavior_name2cluster_id[row['Name']] = cluster_id
-        if color != 'grey':
-            latents.used_palette.add(color)
-    latents.num_cluster = len(id_df)
-
-    # Restore cluster assignments from time_series CSVs
-    cum = 0
-    df2_paths = []
-    for vn, v in aggregator.videos_meta:
-        video_basename = os.path.basename(v).split('.')[0]
-        ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
-        if os.path.exists(ts_path):
-            ts_df = pd.read_csv(ts_path)
-            bin_clusters = ts_df['behavior'].values[::latents.time_window][:vn]
-            latents.cluster[cum:cum+len(bin_clusters)] = bin_clusters
-            df2_paths.append(ts_path)
-        cum += vn
-
-    # Restore UMAP embedding from saved .npz (B-03)
-    restored_local_latents = None
     restored_Z_plt = None
     restored_emb_img = None
+    if artifacts.local_latents is not None:
+        restored_Z_plt, restored_emb_img = build_named_scatter_plot(
+            artifacts.local_latents,
+        )
+        gr.Info('Restored UMAP embedding from saved npz.')
 
-    npz_path = _find_latest_npz(cluster_path)
-    if npz_path:
-        restored_local_latents, restored_Z_plt = _restore_embedding_from_npz(npz_path, latents)
-        if restored_Z_plt is not None:
-            restored_emb_img = restored_Z_plt.plot_named_embedding()
-            gr.Info(f'Restored UMAP embedding from {os.path.basename(npz_path)}')
+    gr.Info(f'Restored session with {artifacts.latents.num_cluster - 1} clusters')
 
-    gr.Info(f'Restored session with {latents.num_cluster - 1} clusters')
-
-    fig = plot_syllables_per_video(latents, aggregator)
-
-    return (aggregator, latents, fig, update_select_cluster_list(latents),
-            id_csv_path, df2_paths, restored_Z_plt, restored_emb_img)
+    return (artifacts.aggregator, artifacts.latents,
+            artifacts.syllables_fig, artifacts.cluster_choices,
+            artifacts.id_csv_path, artifacts.time_series_paths,
+            restored_Z_plt, restored_emb_img)
 
 
 def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggregator):
@@ -697,97 +401,64 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggr
 
 
 def import_info_from_local_latent(storage_path, project_name, latents, local_latents, aggregator):
+    """Thin Gradio wrapper around
+    :func:`castle.service.clustering_service.submit_local_to_global`.
+
+    Preserves the 8-tuple return shape:
+    ``(syllables_fig, cluster_choices, id_csv, time_series_csvs, srt_paths,
+       local_latents, named_embedding_image, embedding_npz_path)``.
+    """
+    from castle.service.clustering_service import submit_local_to_global
+    from castle.service.plotting_service import build_named_scatter_plot
+
     try:
-        latents.import_local_latent(local_latents)
+        artifacts = submit_local_to_global(
+            latents, local_latents, aggregator,
+            storage_path=storage_path, project_name=project_name,
+        )
     except Exception as e:
         gr.Info(f'Failed to import cluster results into the session. Details: {e}')
         return (None,) * 8
 
-    # Plot syllables with one video per row
-    fig = plot_syllables_per_video(latents, aggregator)
+    if artifacts.embedding_path is None:
+        gr.Warning(
+            "Embedding not available on local_latents — skipping scatter plot. "
+            "Run 'Generate Cluster' with UMAP/t-SNE enabled before submitting."
+        )
+        return (artifacts.syllables_fig, artifacts.cluster_choices,
+                artifacts.id_csv_path, artifacts.time_series_paths,
+                artifacts.subtitle_paths, None, None, None)
 
-    # Save ID CSV (with Color column for session restore)
-    df1 = pd.DataFrame({
-        'Id': [k for k, v in latents.cluster_meta.items()],
-        'Name': [v['name'] for k, v in latents.cluster_meta.items()],
-        'Color': [v['color'] for k, v in latents.cluster_meta.items()],
-    })
-
-    cluster_path = os.path.join(storage_path, project_name, 'cluster')
-    os.makedirs(cluster_path, exist_ok=True)
-
-    df1_path = os.path.join(cluster_path, 'id.csv')
-    df1.to_csv(df1_path, index=False)
-
-    # Generate per-video time_series CSV files
-    df2_paths = []
-    cum = 0
-    for vn, v in aggregator.videos_meta:
-        video_cluster = latents.cluster[cum:cum + vn]
-        video_frames = np.repeat(video_cluster, latents.time_window)
-        df2 = pd.DataFrame({'behavior': video_frames})
-
-        video_basename = os.path.basename(v).split('.')[0]
-        df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
-        df2.to_csv(df2_path, index=False)
-        df2_paths.append(df2_path)
-        cum += vn
-
-    # Generate Subtitles
-    subtitle_paths = convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggregator)
-    
-    # Save Embedding
-    if local_latents is None or not hasattr(local_latents, 'embedding') or local_latents.embedding is None:
-        gr.Warning("Embedding not available on local_latents — skipping scatter plot. "
-                   "Run 'Generate Cluster' with UMAP/t-SNE enabled before submitting.")
-        return (fig, update_select_cluster_list(latents), df1_path, df2_paths, subtitle_paths,
-                None, None, None)
-
-    Z_plt = EmbeddingScatterPlot(local_latents)
-    cluster_name = ""
-    for _, it in local_latents.export.items():
-        cluster_name += it['name'] + '_'
-
-    local_embedding_path = os.path.join(cluster_path, f'cluster_{cluster_name}.npz')
-    Z_plt.save_named_embedding(save_path=local_embedding_path)
-
-    return (fig, update_select_cluster_list(latents), df1_path, df2_paths, subtitle_paths, 
-            Z_plt, Z_plt.plot_named_embedding(), local_embedding_path)
+    Z_plt, named_img = build_named_scatter_plot(artifacts.local_latents)
+    return (artifacts.syllables_fig, artifacts.cluster_choices,
+            artifacts.id_csv_path, artifacts.time_series_paths,
+            artifacts.subtitle_paths, Z_plt, named_img,
+            artifacts.embedding_path)
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model):
+    """Thin Gradio wrapper around
+    :func:`castle.service.clustering_service.init_clustering_aggregator`.
     """
-    Initializes LatentAggregator (formerly MultiVideos)
-    """
+    from castle.service.clustering_service import init_clustering_aggregator
+
     if not project_name:
         return None, None, None
-    
-    # Create Gradio-compatible notification callback
+
     def notify_callback(msg: str, level: str = "info"):
         if level == "error":
             gr.Warning(msg)
         else:
             gr.Info(msg)
-    
+
     try:
-        aggregator = LatentAggregator(
-            storage_path, project_name, select_roi_id, bin_size,
-            model_name=select_model,
-            notify=notify_callback
+        artifacts = init_clustering_aggregator(
+            storage_path, project_name,
+            select_roi_id=select_roi_id, bin_size=bin_size,
+            select_model=select_model, notify=notify_callback,
         )
-        latents = aggregator.get_latent_object()
-        
-        # After creating aggregator successfully:
-        mgr = SessionManager(storage_path, project_name)
-        mgr.create_session(
-            model=select_model,
-            roi_id=int(select_roi_id) if select_roi_id else 1,
-            bin_size=int(bin_size),
-            total_frames=len(aggregator.latents) if aggregator.latents is not None else 0,
-        )
-        
         session_info = check_session_exists(storage_path, project_name)
-        return aggregator, latents, session_info
+        return artifacts.aggregator, artifacts.latents, session_info
     except Exception as e:
         gr.Warning(
             f"Session initialization failed. Please ensure latent features have been "
@@ -800,60 +471,53 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
 # Undo / Redo Handlers
 # ---------------------------
 
-def handle_undo(local_latents, latents, history):
-    """Undo the last clustering operation and redraw the plot."""
-    if history is None or not history.can_undo:
-        gr.Info("Nothing to undo — no recorded actions yet.")
+def _do_history_step(
+    local_latents, latents, history,
+    *, can_check, step_callable, verb_past: str,
+):
+    """Shared core of :func:`handle_undo` / :func:`handle_redo`."""
+    if history is None or not can_check(history):
+        gr.Info(f"Nothing to {verb_past.lower().rstrip('ne').rstrip('do')}do — no recorded actions yet.")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
 
-    desc = history.undo(local_latents, parent=latents)
+    desc = step_callable(local_latents, parent=latents)
 
-    # Check if restored state is valid before plotting
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
-        gr.Info("Cannot undo: no valid previous state found.")
+        gr.Info(f"Cannot {verb_past.lower().rstrip('ne').rstrip('do')}do: no valid state found.")
         return gr.update(), gr.update(), history, _history_status(history), gr.update()
-    
-    gr.Info(f"Undone: {desc}")
 
-    Z_plt = EmbeddingScatterPlot(local_latents)
-    
-    # Refresh cluster tree from parent latents (may have been restored too)
+    gr.Info(f"{verb_past}: {desc}")
+
+    from castle.service.plotting_service import build_scatter_plot
     from castle.ui.cluster_tree import build_cluster_tree_choices
+
+    Z_plt, img = build_scatter_plot(local_latents)
     tree_update = gr.update()
     if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
         choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-        # Bug 13 fix: always include value=None to prevent stale value errors
         tree_update = gr.update(choices=choices, value=None)
 
-    return Z_plt, Z_plt.plot(), history, _history_status(history), tree_update
+    return Z_plt, img, history, _history_status(history), tree_update
+
+
+def handle_undo(local_latents, latents, history):
+    """Undo the last clustering operation and redraw the plot."""
+    return _do_history_step(
+        local_latents, latents, history,
+        can_check=lambda h: h.can_undo,
+        step_callable=lambda ll, parent: history.undo(ll, parent=parent),
+        verb_past="Undone",
+    )
 
 
 def handle_redo(local_latents, latents, history):
     """Redo the last undone clustering operation and redraw the plot."""
-    if history is None or not history.can_redo:
-        gr.Info("Nothing to redo — no undone actions available.")
-        return gr.update(), gr.update(), history, _history_status(history), gr.update()
-
-    desc = history.redo(local_latents, parent=latents)
-
-    # Check if restored state is valid before plotting
-    if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
-        gr.Info("Cannot redo: no valid next state found.")
-        return gr.update(), gr.update(), history, _history_status(history), gr.update()
-    
-    gr.Info(f"Redone: {desc}")
-
-    Z_plt = EmbeddingScatterPlot(local_latents)
-    
-    # Refresh cluster tree from parent latents
-    from castle.ui.cluster_tree import build_cluster_tree_choices
-    tree_update = gr.update()
-    if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
-        choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-        # Bug 13 fix: always include value=None to prevent stale value errors
-        tree_update = gr.update(choices=choices, value=None)
-
-    return Z_plt, Z_plt.plot(), history, _history_status(history), tree_update
+    return _do_history_step(
+        local_latents, latents, history,
+        can_check=lambda h: h.can_redo,
+        step_callable=lambda ll, parent: history.redo(ll, parent=parent),
+        verb_past="Redone",
+    )
 
 
 def _history_status(history):

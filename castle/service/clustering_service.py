@@ -445,60 +445,82 @@ def load_node_meta(cluster_path: str, parent_cluster_name: str) -> Optional[dict
         return None
 
 
+def _parent_from_cluster_filename(
+    basename: str,
+    parent_cluster_name: str,
+) -> bool:
+    """Return True iff ``basename`` is the embedding npz for the supplied
+    parent node.
+
+    The filename is built in :func:`submit_local_to_global` as
+    ``cluster_{c1}_{c2}_..._{ck}_.npz`` where every ``c_i`` is an immediate
+    child of the parent and therefore has ``parent_depth + 1``
+    underscore-segments. Parsing the filename works even after deeper
+    splits have evicted intermediate nodes from ``cluster_meta`` (which
+    is why an export-name based check breaks for non-deepest parents).
+    """
+    if not basename.startswith('cluster_') or not basename.endswith('.npz'):
+        return False
+    if basename == 'cluster_model.npz':
+        return False
+    core = basename[len('cluster_'):-len('.npz')]
+    if not core.endswith('_'):
+        return False
+    segments = core.rstrip('_').split('_')
+    parent_depth = len(parent_cluster_name.split('_'))
+    seg_per_child = parent_depth + 1
+    if seg_per_child <= 0 or len(segments) % seg_per_child != 0:
+        return False
+    child_count = len(segments) // seg_per_child
+    if child_count < 1:
+        return False
+    parent_segs = parent_cluster_name.split('_')
+    for i in range(child_count):
+        chunk = segments[i * seg_per_child:(i + 1) * seg_per_child]
+        if chunk[:parent_depth] != parent_segs:
+            return False
+    return True
+
+
 def find_cluster_npz_for_parent(
     cluster_path: str,
     parent_cluster_name: str,
     latents: Any,
 ) -> Optional[str]:
-    """Fallback locator: pick the ``cluster_*.npz`` whose immediate children
-    are direct descendants of ``parent_cluster_name``.
+    """Fallback locator: pick the ``cluster_*.npz`` produced when
+    ``parent_cluster_name`` was last submitted.
 
     Used when a node has no ``node_{parent}_meta.json`` sidecar (e.g.
-    submissions made before the sidecar feature landed). We inspect each
-    candidate npz, rebuild its export-name list, and keep the file whose
-    every export name is an *immediate* child of ``parent_cluster_name``
-    (one more underscore-segment, prefix match). When several files match,
-    we return the most recently modified one.
+    submissions made before the sidecar feature landed) or when the
+    sidecar points at a missing file. The parent is identified by parsing
+    the canonical filename ``cluster_{c1}_..._{ck}_.npz`` — see
+    :func:`_parent_from_cluster_filename`. When several files match we
+    return the most recently modified one.
 
     Args:
         cluster_path: Directory typically ``<project>/cluster/``.
         parent_cluster_name: Parent node name (e.g. ``'init'``).
-        latents: Parent :class:`Latent` providing ``cluster_meta`` so that
-            ``restore_local_latent_from_npz`` can populate ``export``.
+        latents: Unused; kept for backwards-compatible call sites.
 
     Returns:
         Absolute path to the best-matching npz, or ``None``.
     """
-    if not parent_cluster_name or latents is None:
+    del latents  # filename-only matching no longer needs cluster_meta
+    if not parent_cluster_name:
         return None
 
-    parent_depth = len(parent_cluster_name.split('_'))
     candidates = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
-    # cluster_model.npz is the save/apply-model artefact (different schema,
-    # no 'emb' key) — skip it.
-    candidates = [c for c in candidates
-                  if os.path.basename(c) != 'cluster_model.npz']
     best: Optional[str] = None
     best_mtime = -1.0
-
     for npz in candidates:
-        ll, _ = restore_local_latent_from_npz(npz, latents)
-        if ll is None:
-            continue
-        export = getattr(ll, 'export', None) or {}
-        names = [v.get('name', '') for v in export.values()]
-        if not names:
-            continue
-        prefix = parent_cluster_name + '_'
-        if not all(n.startswith(prefix) for n in names):
-            continue
-        if not all(len(n.split('_')) == parent_depth + 1 for n in names):
+        if not _parent_from_cluster_filename(
+            os.path.basename(npz), parent_cluster_name,
+        ):
             continue
         mt = os.path.getmtime(npz)
         if mt > best_mtime:
             best = npz
             best_mtime = mt
-
     return best
 
 

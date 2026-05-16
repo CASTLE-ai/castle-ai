@@ -143,17 +143,18 @@ def build_cluster_tree_markdown(cluster_meta, cluster_array):
 _TREE_CSS = """\
 <style>
 .castle-cluster-tree{font-family:"Courier New",Consolas,monospace;font-size:12.5px;
-  border:1px solid #e0e0e0;border-radius:6px;padding:4px;max-height:280px;
-  overflow-y:auto;background:#fcfcfc;margin-bottom:2px;}
+  border:1px solid var(--border-color-primary,#e0e0e0);border-radius:6px;padding:4px;max-height:280px;
+  overflow-y:auto;background:var(--background-fill-primary,#fcfcfc);margin-bottom:2px;}
 .cct-node{display:flex;align-items:center;padding:3px 6px;border-radius:4px;
-  gap:5px;line-height:1.6;cursor:pointer;user-select:none;
+  gap:5px;line-height:1.6;cursor:pointer;user-select:none;color:var(--body-text-color,#333);
   transition:background 0.1s;}
-.cct-node:hover{background:#e8f0fe;}
-.cct-node.cct-selected{background:#c8e0ff;font-weight:600;
-  border-left:3px solid #1a73e8;padding-left:3px;}
+.cct-node:hover{background:color-mix(in srgb,var(--color-accent,#1a73e8) 10%,transparent);}
+.cct-node.cct-selected{background:color-mix(in srgb,var(--color-accent,#1a73e8) 18%,transparent);
+  font-weight:600;border-left:3px solid var(--color-accent,#1a73e8);padding-left:3px;}
 .cct-icon{flex-shrink:0;}
 .cct-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.cct-count{flex-shrink:0;font-size:10.5px;color:#666;background:#eee;
+.cct-count{flex-shrink:0;font-size:10.5px;color:var(--body-text-color-subdued,#666);
+  background:var(--background-fill-secondary,#eee);
   padding:0 4px;border-radius:8px;white-space:nowrap;}
 </style>"""
 
@@ -193,7 +194,7 @@ def build_cluster_tree_html(cluster_meta: dict, cluster_array) -> str:
             f' data-name="{name}">'
             f'<span class="cct-icon">{icon}</span>'
             f'<span class="cct-name">{name}</span>'
-            f'<span class="cct-count">{info["cumulative"]} frames</span>'
+            f'<span class="cct-count">{info["cumulative"]}</span>'
             f'</div>'
         )
 

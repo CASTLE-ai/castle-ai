@@ -415,6 +415,36 @@ def suggest_clustering_params(n_samples: int) -> ClusteringParamSuggestion:
 # Session restore helpers (ARCH-01 / P2-D)
 # ---------------------------------------------------------------------------
 
+def load_node_meta(cluster_path: str, parent_cluster_name: str) -> Optional[dict]:
+    """Return the persisted sidecar metadata for a parent cluster node, or None.
+
+    The sidecar is written by :func:`submit_local_to_global` when the UI
+    submits a fresh round of clustering against a parent node. It holds the
+    UMAP config string and DBSCAN eps used at that submission, plus the
+    basename of the associated ``cluster_*.npz``.
+
+    Args:
+        cluster_path: Directory typically ``<project>/cluster/``.
+        parent_cluster_name: Name of the parent cluster (e.g. ``'init_a0'``).
+
+    Returns:
+        Parsed dict, or ``None`` if the file is missing or malformed.
+    """
+    if not parent_cluster_name:
+        return None
+    meta_path = os.path.join(
+        cluster_path, f'node_{parent_cluster_name}_meta.json'
+    )
+    if not os.path.exists(meta_path):
+        return None
+    try:
+        with open(meta_path, 'r') as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("Could not read node meta %s: %s", meta_path, e)
+        return None
+
+
 def find_latest_cluster_npz(cluster_path: str) -> Optional[str]:
     """Return the most recently modified ``cluster_*.npz`` in ``cluster_path``.
 
@@ -853,6 +883,9 @@ def submit_local_to_global(
     *,
     storage_path: str,
     project_name: str,
+    parent_cluster_name: Optional[str] = None,
+    umap_config_str: Optional[str] = None,
+    eps_value: Optional[float] = None,
 ) -> SubmitArtifacts:
     """Merge local clusters into the global ``Latent`` and persist artefacts.
 
@@ -923,6 +956,27 @@ def submit_local_to_global(
             cluster_name += it['name'] + '_'
         embedding_path = os.path.join(cluster_path, f'cluster_{cluster_name}.npz')
         Z_plt.save_named_embedding(save_path=embedding_path)
+
+    # Sidecar metadata indexed by parent cluster name so the UI can restore
+    # umap_config / eps / embedding npz when the user reclicks the node.
+    if parent_cluster_name:
+        meta_path = os.path.join(
+            cluster_path, f'node_{parent_cluster_name}_meta.json'
+        )
+        meta_payload = {
+            'parent_cluster_name': parent_cluster_name,
+            'umap_config': umap_config_str,
+            'eps': eps_value,
+            'embedding_npz': (
+                os.path.basename(embedding_path) if embedding_path else None
+            ),
+        }
+        try:
+            with open(meta_path, 'w') as f:
+                json.dump(meta_payload, f, indent=2)
+        except OSError as e:
+            logger.warning("Failed to persist node meta sidecar %s: %s",
+                           meta_path, e)
 
     return SubmitArtifacts(
         syllables_fig=fig,

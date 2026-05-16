@@ -267,19 +267,105 @@ def plot_syllables_per_video(latents, aggregator):
     return _impl(latents, aggregator)
 
 
-def label_all_and_submit(storage_path, project_name, latents, local_latents, aggregator, parent_name, history):
+def on_tree_node_select(node_name, latents, storage_path, project_name):
+    """Restore prior UMAP/eps state when a cluster tree node is selected.
+
+    If the selected parent node has a sidecar ``node_{name}_meta.json``,
+    its UMAP config string and eps are pushed back into the left-panel
+    inputs and the saved embedding npz is rebuilt into a scatter plot.
+
+    Outputs (in order, matching the .input binding):
+        umap_config_text, eps, embedding_plot_image, local_latents_state,
+        overwrite_state (always reset to False), submit_status_md.
+    """
+    from castle.service.clustering_service import (
+        load_node_meta, restore_local_latent_from_npz,
+    )
+    from castle.service.plotting_service import build_named_scatter_plot
+
+    no_update = (
+        gr.update(), gr.update(), gr.update(), gr.update(), False, gr.update(),
+    )
+    if not node_name or not storage_path or not project_name:
+        return no_update
+
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+    meta = load_node_meta(cluster_path, node_name)
+    if meta is None:
+        # Fresh / un-submitted node — clear status, leave settings alone.
+        return (
+            gr.update(), gr.update(), gr.update(), gr.update(),
+            False,
+            gr.update(value=""),
+        )
+
+    umap_cfg_update = gr.update()
+    if meta.get('umap_config'):
+        umap_cfg_update = gr.update(value=meta['umap_config'])
+
+    eps_update = gr.update()
+    if meta.get('eps') is not None:
+        eps_update = gr.update(value=meta['eps'])
+
+    emb_img_update = gr.update()
+    local_latents_update = gr.update()
+    npz_basename = meta.get('embedding_npz')
+    if npz_basename and latents is not None:
+        npz_path = os.path.join(cluster_path, npz_basename)
+        if os.path.exists(npz_path):
+            local_ll, _ = restore_local_latent_from_npz(npz_path, latents)
+            if local_ll is not None:
+                _, named_img = build_named_scatter_plot(local_ll)
+                emb_img_update = gr.update(value=named_img)
+                local_latents_update = local_ll
+
+    return (
+        umap_cfg_update, eps_update, emb_img_update, local_latents_update,
+        False,
+        gr.update(value=f"📂 Loaded saved state for **{node_name}**."),
+    )
+
+
+def label_all_and_submit(
+    storage_path, project_name, latents, local_latents, aggregator,
+    parent_name, history,
+    umap_config_str="", eps_value=None, overwrite_confirmed=False,
+):
     """Thin Gradio wrapper: auto-label every DBSCAN cluster then submit.
 
     Delegates the auto-label loop to
     :func:`castle.service.clustering_service.auto_label_local_clusters` and
     the submit + persist step to ``import_info_from_local_latent`` (which
     is itself a thin wrapper around ``submit_local_to_global``).
+
+    Returns an 11-tuple appending ``(history, overwrite_confirmed_next,
+    submit_status_markdown)`` to the 9 outputs from
+    ``import_info_from_local_latent``. When the parent node already has a
+    submitted result, the first click returns early with a warning and
+    flips ``overwrite_confirmed_next`` to True; a second click goes through.
     """
     from castle.core.types import InsufficientDataError
-    from castle.service.clustering_service import auto_label_local_clusters
+    from castle.service.clustering_service import (
+        auto_label_local_clusters, load_node_meta,
+    )
 
     if history is None:
         history = HistoryManager()
+
+    # Overwrite-confirmation gate: only kicks in when sidecar meta exists.
+    cluster_path = os.path.join(storage_path or '', project_name or '', 'cluster')
+    existing_meta = load_node_meta(cluster_path, parent_name) if parent_name else None
+    if existing_meta is not None and not overwrite_confirmed:
+        gr.Warning(
+            f"'{parent_name}' already has a submitted clustering result. "
+            f"Click Submit again to overwrite it."
+        )
+        warn_md = (
+            f"⚠️ **'{parent_name}' already submitted.** "
+            f"Click **Submit** again to overwrite."
+        )
+        # 9 Nones (outputs of import_info_from_local_latent) + history + True + status
+        return (None,) * 9 + (history, True, warn_md)
 
     if hasattr(local_latents, 'embedding'):
         history.save_state(local_latents, "Submit all clusters to parent", parent=latents)
@@ -288,15 +374,18 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
         count = auto_label_local_clusters(local_latents, parent_name)
     except InsufficientDataError as e:
         gr.Warning(str(e))
-        return (None, None, None, None, None, None, None, None, None, history)
+        return (None,) * 9 + (history, False, "")
 
     gr.Info(f'Auto-labeled {count} clusters.')
 
     result = import_info_from_local_latent(
         storage_path, project_name, latents, local_latents, aggregator,
+        parent_cluster_name=parent_name,
+        umap_config_str=umap_config_str,
+        eps_value=eps_value,
     )
     if result[0] is None:
-        return result + (history,)
+        return result + (history, False, "")
 
     mgr = SessionManager(storage_path, project_name)
     active_id = mgr.get_active_session_id()
@@ -308,7 +397,7 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
         ])
         mgr.save_session_state(active_id, n_clusters)
 
-    return result + (history,)
+    return result + (history, False, f"✅ Submitted '{parent_name}'.")
 
 
 def check_session_exists(storage_path, project_name):
@@ -410,13 +499,17 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggr
     return aggregator.generate_subtitles(latents.cluster, latents.cluster_meta)
 
 
-def import_info_from_local_latent(storage_path, project_name, latents, local_latents, aggregator):
+def import_info_from_local_latent(
+    storage_path, project_name, latents, local_latents, aggregator,
+    parent_cluster_name=None, umap_config_str=None, eps_value=None,
+):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.submit_local_to_global`.
 
-    Preserves the 8-tuple return shape:
-    ``(syllables_fig, cluster_choices, id_csv, time_series_csvs, srt_paths,
-       local_latents, named_embedding_image, embedding_npz_path)``.
+    Preserves the 9-tuple return shape:
+    ``(syllables_fig, cluster_html, cluster_select_reset, id_csv,
+       time_series_csvs, srt_paths, local_latents, named_embedding_image,
+       embedding_npz_path)``.
     """
     from castle.service.clustering_service import submit_local_to_global
     from castle.service.plotting_service import build_named_scatter_plot
@@ -425,6 +518,9 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
         artifacts = submit_local_to_global(
             latents, local_latents, aggregator,
             storage_path=storage_path, project_name=project_name,
+            parent_cluster_name=parent_cluster_name,
+            umap_config_str=umap_config_str,
+            eps_value=eps_value,
         )
     except Exception as e:
         gr.Info(f'Failed to import cluster results into the session. Details: {e}')

@@ -14,8 +14,6 @@ import json
 
 import gradio as gr
 
-from castle.core.cluster import auto_generate_cluster_name
-
 # Import from split modules
 # Cluster tree functions imported by cluster_handlers
 from castle.ui.cluster_handlers import (
@@ -24,10 +22,9 @@ from castle.ui.cluster_handlers import (
     update_select_cluster_list,
     generate_embedding,
     generate_local_cluster,
-    label_local_cluster,
     label_all_and_submit,
+    on_tree_node_select,
     restore_session,
-    import_info_from_local_latent,
     init_mulvideo,
     handle_undo,
     handle_redo,
@@ -243,6 +240,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     mulvideo = gr.State(None)  # Holds LatentAggregator instance
     session_info = gr.State(None)
     history_state = gr.State(None)  # HistoryManager for undo/redo
+    overwrite_state = gr.State(False)  # Submit-overwrite confirmation gate
 
     with gr.Row(visible=True) as ui['cluster_row_main']:
         with gr.Column(scale=2):
@@ -292,11 +290,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 ),
             )
             ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
-            ui['label_cluster_id'] = gr.Number(label='Cluster id', interactive=True, visible=True)
-            ui['label_cluster_name'] = gr.Textbox(label='Cluster name', interactive=True, visible=True)
-            ui['label_cluster_btn'] = gr.Button("Enter", interactive=True, visible=True)
-            ui['label_cluster_submit_btn'] = gr.Button("Submit", interactive=True, visible=True)
-            ui['enter_submit_all_btn'] = gr.Button("Enter & Submit all", interactive=True, visible=True)
+            ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
+            ui['submit_status'] = gr.Markdown("", visible=True)
             with gr.Row():
                 ui['undo_btn'] = gr.Button("↩️ Undo", interactive=False)
                 ui['redo_btn'] = gr.Button("↪️ Redo", interactive=False)
@@ -454,47 +449,30 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         inputs=[history_state],
         outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
     )
-    ui['label_cluster_btn'].click(
-        fn=label_local_cluster,
-        inputs=[local_latents, ui['label_cluster_id'], ui['label_cluster_name'], history_state],
-        outputs=[history_state],
-    ).then(
-        fn=update_history_buttons,
-        inputs=[history_state],
-        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
-    )
-    
-    # Auto-generate cluster name when ID changes
-    ui['label_cluster_id'].change(
-        fn=auto_generate_cluster_name,
-        inputs=[ui['cluster_tree_select'], ui['label_cluster_id']],
-        outputs=ui['label_cluster_name']
-    )
-
-    ui['label_cluster_submit_btn'].click(
-        fn=import_info_from_local_latent,
-        inputs=[storage_path, project_name, latents, local_latents, mulvideo],
-        outputs=[ui['syllables_plot'],
-                 ui['cluster_tree_html'], ui['cluster_tree_select'],
-                 ui['behavior_id_csv'], ui['behavior_time_series_csv'],
-                 ui['behavior_time_series_srt'], local_embedding_plot,
-                 ui['embedding_plot'], ui['display_eps']],
-    )
-
-    # Enter & Submit all: auto-label all clusters and submit
+    # Submit: auto-label all clusters and persist (with overwrite confirmation)
     ui['enter_submit_all_btn'].click(
         fn=label_all_and_submit,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo,
-                ui['cluster_tree_select'], history_state],
+                ui['cluster_tree_select'], history_state,
+                ui['umap_config_text'], ui['eps'], overwrite_state],
         outputs=[ui['syllables_plot'],
                  ui['cluster_tree_html'], ui['cluster_tree_select'],
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
                  ui['behavior_time_series_srt'], local_embedding_plot,
-                 ui['embedding_plot'], ui['display_eps'], history_state],
+                 ui['embedding_plot'], ui['display_eps'],
+                 history_state, overwrite_state, ui['submit_status']],
     ).then(
         fn=update_history_buttons,
         inputs=[history_state],
         outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
+    )
+
+    # Auto-restore prior UMAP/eps when a tree node is clicked.
+    ui['cluster_tree_select'].input(
+        fn=on_tree_node_select,
+        inputs=[ui['cluster_tree_select'], latents, storage_path, project_name],
+        outputs=[ui['umap_config_text'], ui['eps'], ui['embedding_plot'],
+                 local_latents, overwrite_state, ui['submit_status']],
     )
 
     # Undo / Redo

@@ -8,10 +8,12 @@ without depending on Gradio.
 No gradio imports.
 """
 
+import glob
 import os
 import json
 import logging
-from typing import List, Optional, Callable, Any
+from collections import Counter
+from typing import List, Optional, Callable, Any, Tuple
 
 import numpy as np
 import pandas as pd
@@ -348,6 +350,101 @@ class ClusteringSession:
             Frame as numpy array (H, W, 3) or None
         """
         return self.aggregator.get_frame(global_bin_index)
+
+
+# ---------------------------------------------------------------------------
+# Session restore helpers (ARCH-01 / P2-D)
+# ---------------------------------------------------------------------------
+
+def find_latest_cluster_npz(cluster_path: str) -> Optional[str]:
+    """Return the most recently modified ``cluster_*.npz`` in ``cluster_path``.
+
+    Args:
+        cluster_path: Directory typically ``<project>/cluster/``.
+
+    Returns:
+        Absolute path to the newest matching file, or ``None`` if no
+        ``cluster_*.npz`` exists.
+    """
+    npz_files = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
+    if not npz_files:
+        return None
+    npz_files.sort(key=os.path.getmtime, reverse=True)
+    return npz_files[0]
+
+
+def restore_local_latent_from_npz(
+    npz_path: str,
+    latents: Any,
+) -> Tuple[Optional[Any], Optional[np.ndarray]]:
+    """Reconstruct a :class:`LocalLatent` from a saved cluster ``.npz``.
+
+    The npz holds three arrays:
+
+    * ``emb``    — ``(N, 2)`` embedding with NaN for non-selected rows.
+    * ``cls``    — ``(N,)`` integer labels with ``-1`` for non-selected rows.
+    * ``config`` — UMAP config used to produce ``emb``.
+
+    Args:
+        npz_path: Path to the saved ``cluster_*.npz``.
+        latents: Parent :class:`castle.utils.latent_explorer.Latent`
+            object (provides ``data``, ``used_palette``, ``device``,
+            ``cluster``, ``cluster_meta``).
+
+    Returns:
+        ``(local_latents, embedding_array)`` or ``(None, None)`` on
+        failure. ``embedding_array`` is the ``(M, 2)`` masked embedding
+        ready to hand to ``EmbeddingScatterPlot``.
+
+    Notes:
+        The function is intentionally exception-tolerant — clustering
+        sessions sometimes carry partially-written npz files from
+        crashed runs, and restoring a session should fall back to "no
+        embedding restored" rather than refusing to open the UI.
+    """
+    try:
+        data = np.load(npz_path, allow_pickle=True)
+        emb_full = data['emb']
+        cls_full = data['cls']
+        config = data['config']
+
+        valid_mask = ~np.isnan(emb_full[:, 0])
+        masked_emb = emb_full[valid_mask]
+        masked_cls = cls_full[valid_mask]
+
+        local_data = latents.data[valid_mask] if hasattr(latents, 'data') else masked_emb
+        local_latents = LocalLatent(
+            data=local_data,
+            index_mask=valid_mask,
+            color_avoid=latents.used_palette,
+            device=latents.device,
+        )
+        local_latents.embedding = masked_emb
+        local_latents.cluster = masked_cls
+        local_latents.configs = config.tolist() if hasattr(config, 'tolist') else config
+
+        # Rebuild the export dict by matching each local cluster id to
+        # the most common global cluster id covering those rows.
+        for cid_local in np.unique(masked_cls):
+            if cid_local == -1:
+                continue
+            global_indices = np.where(valid_mask)[0]
+            global_cluster_vals = latents.cluster[global_indices]
+            local_mask = masked_cls == cid_local
+            if not np.any(local_mask):
+                continue
+            global_ids = global_cluster_vals[local_mask]
+            global_id = Counter(global_ids.tolist()).most_common(1)[0][0]
+            if global_id in latents.cluster_meta:
+                meta = latents.cluster_meta[global_id]
+                local_latents.export[cid_local] = {
+                    'name': meta['name'],
+                    'color': meta['color'],
+                }
+        return local_latents, masked_emb
+    except Exception:
+        logger.exception("Failed to restore local latent from %s", npz_path)
+        return None, None
 
 
 # ---------------------------------------------------------------------------

@@ -573,76 +573,27 @@ def check_session_exists(storage_path, project_name):
 
 
 def _find_latest_npz(cluster_path):
-    """Find the most recently modified cluster_*.npz file in cluster_path."""
-    npz_files = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
-    if not npz_files:
-        return None
-    # Sort by modification time, newest first
-    npz_files.sort(key=os.path.getmtime, reverse=True)
-    return npz_files[0]
+    """Wrapper kept for back-compat with existing handler call sites."""
+    from castle.service.clustering_service import find_latest_cluster_npz
+    return find_latest_cluster_npz(cluster_path)
 
 
 def _restore_embedding_from_npz(npz_path, latents):
-    """Restore a LocalLatent and EmbeddingScatterPlot from a saved .npz file.
+    """Restore a LocalLatent + EmbeddingScatterPlot from a saved ``.npz``.
 
-    The npz contains:
-      - emb: (N, 2) array with NaN for non-selected indices
-      - cls: (N,) int array with -1 for non-selected indices
-      - config: UMAP config used
+    Thin Gradio-side wrapper around
+    :func:`castle.service.clustering_service.restore_local_latent_from_npz`;
+    the service returns a pure ``(local_latents, embedding)`` pair and we
+    wrap it in :class:`EmbeddingScatterPlot` for the UI.
 
-    Returns (local_latents, Z_plt) or (None, None) on failure.
+    Returns ``(local_latents, Z_plt)`` or ``(None, None)`` on failure.
     """
-    from castle.utils.latent_explorer import LocalLatent
-    from collections import Counter
-    try:
-        data = np.load(npz_path, allow_pickle=True)
-        emb_full = data['emb']   # (N, 2) with NaN
-        cls_full = data['cls']   # (N,) with -1
-        config = data['config']
+    from castle.service.clustering_service import restore_local_latent_from_npz
 
-        # Determine which indices were selected (non-NaN in embedding)
-        valid_mask = ~np.isnan(emb_full[:, 0])
-
-        masked_emb = emb_full[valid_mask]
-        masked_cls = cls_full[valid_mask]
-
-        # Reconstruct LocalLatent
-        local_data = latents.data[valid_mask] if hasattr(latents, 'data') else masked_emb
-        local_latents = LocalLatent(
-            data=local_data,
-            index_mask=valid_mask,
-            color_avoid=latents.used_palette,
-            device=latents.device,
-        )
-        local_latents.embedding = masked_emb
-        local_latents.cluster = masked_cls
-        local_latents.configs = config.tolist() if hasattr(config, 'tolist') else config
-
-        # Reconstruct export dict from the cluster assignments + global meta
-        for cid_local in np.unique(masked_cls):
-            if cid_local == -1:
-                continue
-            global_indices = np.where(valid_mask)[0]
-            global_cluster_vals = latents.cluster[global_indices]
-            local_mask = masked_cls == cid_local
-            if not np.any(local_mask):
-                continue
-            global_ids = global_cluster_vals[local_mask]
-            global_id = Counter(global_ids.tolist()).most_common(1)[0][0]
-
-            if global_id in latents.cluster_meta:
-                meta = latents.cluster_meta[global_id]
-                local_latents.export[cid_local] = {
-                    'name': meta['name'],
-                    'color': meta['color'],
-                }
-
-        Z_plt = EmbeddingScatterPlot(local_latents)
-        return local_latents, Z_plt
-
-    except Exception:
-        logger.exception("Failed to restore embedding from %s", npz_path)
+    local_latents, _ = restore_local_latent_from_npz(npz_path, latents)
+    if local_latents is None:
         return None, None
+    return local_latents, EmbeddingScatterPlot(local_latents)
 
 
 def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id=None):

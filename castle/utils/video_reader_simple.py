@@ -59,6 +59,7 @@ class SimpleVideoReader:
 
     def __init__(self, path: str) -> None:
         import os
+        from castle.core.types import VideoReadError
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"Video file not found: {path}")
@@ -69,7 +70,7 @@ class SimpleVideoReader:
         streams = self._container.streams.video
         if not streams:
             self._container.close()
-            raise RuntimeError(f"No video stream found in: {path}")
+            raise VideoReadError(f"No video stream found in: {path}")
 
         self._stream = streams[0]
 
@@ -78,6 +79,23 @@ class SimpleVideoReader:
         self.width: int = self._stream.width
         self.height: int = self._stream.height
         self.n_frames: int = self._resolve_frame_count()
+
+        # BUG-08: refuse to operate on a video without usable metadata so the
+        # downstream pipeline doesn't divide-by-zero or run a 0-frame loop.
+        if self.fps <= 0:
+            self._container.close()
+            raise VideoReadError(
+                f"Could not determine frame rate for {path} (got fps={self.fps}). "
+                f"Hint: try re-encoding with `ffmpeg -i {path} -c copy "
+                f"{path}.fixed.mp4` to repair container metadata."
+            )
+        if self.n_frames <= 0:
+            self._container.close()
+            raise VideoReadError(
+                f"Could not determine frame count for {path} (got "
+                f"n_frames={self.n_frames}). Hint: the file may be truncated "
+                f"or have corrupt metadata — try ffmpeg re-encoding."
+            )
 
         # pts ↔ frame-index conversion factor
         self._pts2idx = self._stream.time_base * self._stream.average_rate

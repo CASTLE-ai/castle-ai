@@ -5,16 +5,29 @@ Core clustering logic and data aggregation.
 
 import os
 import threading
+from collections import OrderedDict
 import numpy as np
 from typing import List, Tuple, Dict, Optional
 
 from castle.core.interfaces import NotificationCallback
 from castle.core.logging_config import setup_logger
+from castle.core.types import LatentCorruptError
 from castle.utils.video_io import VideoReader
+from castle.utils.safe_load import load_latent_safe
 from castle.core.project import get_project_config
 from castle.utils.latent_explorer import Latent
 
 logger = setup_logger(__name__)
+
+# PERF-03: VideoReader pool size (was 3; 8 covers the "click clusters from
+# different videos" UX without thrashing).
+_VIDEO_READER_CACHE_MAX = 8
+# Frame LRU upper bound — ~256 frames × ~270 KB each → < 100 MB ceiling.
+_FRAME_CACHE_MAX = 256
+
+# PERF-01: aggregated latent memmap threshold (bytes). Override via env var
+# CASTLE_MEMMAP_THRESHOLD_GB. Default 2 GiB.
+_DEFAULT_MEMMAP_THRESHOLD_GB = 2.0
 
 # ---------------------------
 # Helper Functions
@@ -47,6 +60,81 @@ def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float, tree=
         tree = KDTree(embedding_data)
     distance, index = tree.query((x, y))
     return int(index), float(distance)
+
+def _memmap_threshold_bytes() -> int:
+    """Resolve the memmap threshold in bytes from env var.
+
+    Honors ``CASTLE_MEMMAP_THRESHOLD_GB`` (float, GiB). Defaults to 2 GiB.
+    """
+    raw = os.environ.get("CASTLE_MEMMAP_THRESHOLD_GB")
+    try:
+        gb = float(raw) if raw else _DEFAULT_MEMMAP_THRESHOLD_GB
+    except ValueError:
+        gb = _DEFAULT_MEMMAP_THRESHOLD_GB
+    return int(gb * (1024 ** 3))
+
+
+def _aggregate_latents(
+    chunks: List[np.ndarray],
+    *,
+    cache_dir: str,
+    notify: NotificationCallback,
+) -> np.ndarray:
+    """Concatenate latent chunks into one tall array.
+
+    Behaviour:
+
+    - Pre-allocate ``np.empty((sum(T_i), F))`` once and copy each chunk in
+      place — peak RSS is ~1x the final size instead of ~2x for
+      ``np.concatenate``.
+    - When the total exceeds :func:`_memmap_threshold_bytes`, fall back to a
+      disk-backed ``np.memmap`` under ``cache_dir`` so very large projects
+      don't OOM. The memmap is reusable across sessions and is overwritten
+      each time the aggregator runs.
+
+    Args:
+        chunks: Non-empty list of 2D arrays sharing a feature dimension.
+        cache_dir: Directory to write the memmap to (created on demand).
+        notify: User-facing notification callback for progress messages.
+
+    Returns:
+        Aggregated ``(total_T, F)`` array. For the memmap path the returned
+        object is an ``np.memmap``; downstream UMAP/DBSCAN treat it as a
+        normal ndarray.
+    """
+    if not chunks:
+        raise ValueError("Cannot aggregate empty chunk list")
+
+    feature_dim = chunks[0].shape[1]
+    total_T = sum(c.shape[0] for c in chunks)
+    dtype = chunks[0].dtype
+    total_bytes = total_T * feature_dim * np.dtype(dtype).itemsize
+    threshold_bytes = _memmap_threshold_bytes()
+
+    if total_bytes > threshold_bytes:
+        os.makedirs(cache_dir, exist_ok=True)
+        memmap_path = os.path.join(cache_dir, 'aggregated_latents.dat')
+        notify(
+            f"Aggregated latents {total_bytes / 1e9:.2f} GB exceed "
+            f"memmap threshold {threshold_bytes / 1e9:.2f} GB; "
+            f"falling back to disk-backed memmap at {memmap_path}.",
+            "warning",
+        )
+        out = np.memmap(memmap_path, dtype=dtype, mode='w+',
+                        shape=(total_T, feature_dim))
+    else:
+        out = np.empty((total_T, feature_dim), dtype=dtype)
+
+    offset = 0
+    for chunk in chunks:
+        n = chunk.shape[0]
+        out[offset:offset + n] = chunk
+        offset += n
+    # Drop references so Python can reclaim the chunk arrays immediately.
+    chunks.clear()
+
+    return out
+
 
 def auto_generate_cluster_name(parent_name, cluster_id):
     """Auto-generate a hierarchical cluster name based on parent name and cluster ID.
@@ -109,9 +197,14 @@ class LatentAggregator:
         self.model_name = model_name
         self.notify = notify or print  # Fallback to print
         
-        # C-02: VideoReader LRU cache — keeps N most recently used readers open
-        self._video_reader_cache: Dict[str, VideoReader] = {}
-        self._cache_max_size: int = 3
+        # C-02 / PERF-03: VideoReader LRU cache — keeps N most-recently-used
+        # readers open. Default 8 covers "click cluster from many videos" UX
+        # without thrashing.
+        self._video_reader_cache: "OrderedDict[str, VideoReader]" = OrderedDict()
+        self._cache_max_size: int = _VIDEO_READER_CACHE_MAX
+        # PERF-03: per-frame LRU cache so repeated hovers don't re-decode.
+        self._frame_cache: "OrderedDict[Tuple[str, int], np.ndarray]" = OrderedDict()
+        self._frame_cache_max: int = _FRAME_CACHE_MAX
         self._cache_lock = threading.Lock()
         
         # Load project configuration
@@ -154,27 +247,27 @@ class LatentAggregator:
                 latent_files.append((filename, video_source_name))
         
         total_frames_loaded = 0
-        latents_buffer = [] # Buffer for concatenating later
-        
+        latents_buffer: List[np.ndarray] = []  # Buffer for pre-alloc / memmap fill
+
         # Load and aggregate latents
         for filename, video_source_name in latent_files:
             self.notify(f'Loading latent: {video_source_name}')
             try:
                 latent_path = os.path.join(latent_dir_path, filename)
                 if not os.path.exists(latent_path):
-                     self.notify(f"Latent file missing: {latent_path}", "warning")
-                     continue
-                     
-                loaded_data = np.load(latent_path)
-                latent_chunk = loaded_data['latent']
-                
+                    self.notify(f"Latent file missing: {latent_path}", "warning")
+                    continue
+
+                # BUG-10: typed corruption errors instead of cryptic BadZipFile
+                latent_chunk = load_latent_safe(latent_path)
+
                 # Truncate to multiple of bin_size
                 n_bins = len(latent_chunk) // bin_size
                 n_frames_to_keep = n_bins * bin_size
-                
+
                 if n_frames_to_keep == 0:
                     continue
-                
+
                 # Setup fps from the first video found
                 if not latents_buffer:
                     try:
@@ -187,36 +280,40 @@ class LatentAggregator:
                 latents_buffer.append(latent_chunk[:n_frames_to_keep])
                 self.videos_meta.append((n_bins, video_source_name))
                 total_frames_loaded += n_frames_to_keep
-                
+
+            except LatentCorruptError as e:
+                # Surface the typed error with the hint, but keep loading the rest
+                # — corrupting one video should not break the whole session.
+                self.notify(str(e), "error")
             except Exception as e:
                 self.notify(f"Error loading {filename}: {e}", "error")
 
         if latents_buffer:
-             self.latents = np.concatenate(latents_buffer, axis=0)
-             self.notify(f'Finished loading. Total aggregated latents: {len(self.latents)}')
+            self.latents = _aggregate_latents(
+                latents_buffer,
+                cache_dir=os.path.join(self.project_path, 'cluster', '_cache'),
+                notify=self.notify,
+            )
+            self.notify(f'Finished loading. Total aggregated latents: {len(self.latents)}')
         else:
-             self.notify("Warning: No latents loaded.", "warning")
+            self.notify("Warning: No latents loaded.", "warning")
 
     def _get_cached_reader(self, video_path: str) -> VideoReader:
         """Get or create a cached VideoReader for a video path.
-        
-        Maintains an LRU-style cache (insertion-ordered dict) of at most
-        ``_cache_max_size`` open VideoReader instances so that repeated
-        ``get_frame`` calls for the same video avoid re-opening the file.
-        
+
+        Maintains an LRU cache of at most ``_cache_max_size`` open
+        ``VideoReader`` instances so repeated frame reads for the same
+        video avoid re-opening the file.
+
         Thread-safe via ``_cache_lock``.
         """
         with self._cache_lock:
             if video_path in self._video_reader_cache:
-                # Move to end (most recently used)
-                reader = self._video_reader_cache.pop(video_path)
-                self._video_reader_cache[video_path] = reader
-                return reader
+                self._video_reader_cache.move_to_end(video_path)
+                return self._video_reader_cache[video_path]
 
-            # Evict oldest if cache is full
             if len(self._video_reader_cache) >= self._cache_max_size:
-                oldest_key = next(iter(self._video_reader_cache))
-                old_reader = self._video_reader_cache.pop(oldest_key)
+                _, old_reader = self._video_reader_cache.popitem(last=False)
                 try:
                     old_reader.close()
                 except Exception as exc:  # noqa: BLE001 — cleanup only
@@ -226,38 +323,61 @@ class LatentAggregator:
             self._video_reader_cache[video_path] = reader
             return reader
 
-    def get_frame(self, index: int) -> Optional[np.ndarray]:
-        """
-        Retrieve the representative frame for a given global bin index.
-        
-        The frame is taken from the center of the bin (bin_size // 2).
-        Uses a cached VideoReader pool to avoid re-opening files on every call.
-        
+    def _get_cached_frame(self, video_path: str, frame_idx: int) -> np.ndarray:
+        """Return one frame, served from an LRU frame cache when possible.
+
         Args:
-            index: Global bin index across all aggregated videos
-            
+            video_path: Absolute path to the source video.
+            frame_idx: Zero-based frame index inside that video.
+
         Returns:
-            Frame as numpy array (H, W, 3) or None if retrieval fails
+            ``(H, W, 3)`` uint8 array. Cache hits avoid PyAV seek+decode
+            entirely; misses fall through to ``reader.get_frame``.
         """
-        # index is the global bin index
+        key = (video_path, frame_idx)
+        with self._cache_lock:
+            if key in self._frame_cache:
+                self._frame_cache.move_to_end(key)
+                return self._frame_cache[key]
+
+        reader = self._get_cached_reader(video_path)
+        frame = reader.get_frame(frame_idx)
+
+        with self._cache_lock:
+            self._frame_cache[key] = frame
+            if len(self._frame_cache) > self._frame_cache_max:
+                self._frame_cache.popitem(last=False)
+        return frame
+
+    def get_frame(self, index: int) -> Optional[np.ndarray]:
+        """Retrieve the representative frame for a given global bin index.
+
+        The frame is taken from the centre of the bin (``bin_size // 2``).
+        Uses an LRU reader pool + frame cache (see [PERF-03]) so repeated
+        clicks / hovers on the same cluster don't re-decode.
+
+        Args:
+            index: Global bin index across all aggregated videos.
+
+        Returns:
+            ``(H, W, 3)`` numpy frame, or ``None`` if retrieval fails or
+            the index is out of bounds (an error is surfaced via
+            :attr:`notify` in those cases).
+        """
         for n_bins_in_video, video_name in self.videos_meta:
             if index >= n_bins_in_video:
                 index -= n_bins_in_video
                 continue
-            
-            # Found the video
+
             video_path = os.path.join(self.source_path, video_name)
-            # Calculate actual frame index (center of the bin)
             frame_idx = index * self.bin_size + self.bin_size // 2
-            
             logger.debug('Retrieving frame from %s at index %d', video_name, frame_idx)
             try:
-                reader = self._get_cached_reader(video_path)
-                return reader.get_frame(frame_idx)
+                return self._get_cached_frame(video_path, frame_idx)
             except Exception as e:
                 self.notify(f"Error reading frame: {e}", "error")
                 return None
-                
+
         self.notify('Error: Index out of bounds in Aggregator', "error")
         return None
 
@@ -273,6 +393,7 @@ class LatentAggregator:
             except Exception as exc:  # noqa: BLE001 — cleanup only
                 logger.debug("VideoReader close on aggregator shutdown failed: %s", exc)
         self._video_reader_cache.clear()
+        self._frame_cache.clear()
 
     def __del__(self) -> None:
         """Clean up cached readers on garbage collection."""

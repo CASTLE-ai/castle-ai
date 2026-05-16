@@ -5,8 +5,11 @@ Core extraction logic execution engine.
 
 from collections import Counter
 from typing import Protocol, Optional
+import json
 import os
+
 import numpy as np
+import torch
 from torch.utils.data import DataLoader
 
 # Import from our new Core modules
@@ -43,6 +46,81 @@ class ProgressCallback(Protocol):
     def __call__(self, progress: float, desc: str = None) -> None: ...
 
 # --- Helper Logic ---
+def _load_prescan_cache(path: str, key: dict):
+    """Read a PERF-02 tail-ROI sidecar cache if its key matches.
+
+    Returns the cached ``interpolated_points`` dict (keyed by integer frame
+    index) on cache hit, or ``None`` when the file is missing / stale /
+    unreadable. Reads tolerate any I/O or JSON error — a corrupt cache must
+    not block extraction.
+    """
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get('key') != key:
+        return None
+    points = payload.get('points')
+    if not isinstance(points, dict):
+        return None
+    try:
+        return {int(k): tuple(v) for k, v in points.items()}
+    except (TypeError, ValueError):
+        return None
+
+
+def _save_prescan_cache(path: str, key: dict, interpolated_points: dict) -> None:
+    """Write a PERF-02 tail-ROI sidecar cache. Best-effort: failures log only."""
+    payload = {
+        "key": key,
+        "points": {str(k): list(v) for k, v in interpolated_points.items()},
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f)
+        logger.info("Pre-scan cache written to %s", path)
+    except OSError as exc:
+        logger.debug("Could not write pre-scan cache at %s: %s", path, exc)
+
+
+def _enable_cudnn_benchmark_if_not_strict() -> None:
+    """Turn cudnn.benchmark on when the user is *not* in strict-CUDA mode.
+
+    Strict mode (see :func:`castle.core.seed.set_global_seed`) sets
+    ``cudnn.deterministic = True``; respecting that flag here means the
+    deterministic guarantee wins over throughput, while the default
+    fast path still gets the heuristic-driven kernel selection that helps
+    DINO conv/patch-embed by ~10–20 %% across batches.
+    """
+    if torch.cuda.is_available() and not torch.backends.cudnn.deterministic:
+        torch.backends.cudnn.benchmark = True
+
+
+def _build_extractor_loader_kwargs(batch_size: int, num_workers: int) -> dict:
+    """Common DataLoader kwargs for both latent + rotation extraction paths.
+
+    Adds ``persistent_workers`` + ``prefetch_factor`` (PERF-07) and threads
+    the master-seed-derived ``torch.Generator`` for reproducibility
+    (BUG-09, set by P0-B).
+    """
+    kwargs = dict(
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+    gen = make_torch_generator()
+    if gen is not None:
+        kwargs["generator"] = gen
+        if num_workers > 0:
+            kwargs["worker_init_fn"] = seed_worker
+            kwargs["persistent_workers"] = True
+            kwargs["prefetch_factor"] = 4
+    return kwargs
+
+
 def _get_observer(select_model):
     """Get visual model observer with validation."""
     if select_model not in SUPPORTED_MODELS:
@@ -142,10 +220,13 @@ def extract_roi_latent_from_video(
     """
     batch_size = int(batch_size)
     roi_id = int(roi_id)
-    
+
+    # PERF-07: honour strict_cuda; otherwise turn on cudnn benchmark for speed.
+    _enable_cudnn_benchmark_if_not_strict()
+
     # 1. Setup paths
     project_path, config = get_project_config(storage_path, project_name)
-    
+
     # New Structure: latent/{model_name}/
     latent_dir_path = os.path.join(project_path, 'latent', model_name)
     os.makedirs(latent_dir_path, exist_ok=True)
@@ -212,61 +293,65 @@ def extract_roi_latent_from_video(
     # valid tail ROI points, then interpolate missing ones
     interpolated_points = None
     if preprocess_config.rotate_roi_tail_switch and preprocess_config.center_roi_switch:
-        logger.info(f"Pre-scanning {video_name} for tail ROI interpolation...")
-        valid_points = {}
-        failure_reasons: Counter = Counter()
-        tracker_scan = H5IO(mask_list_path)
-
-        for idx in range(video_len):
+        scan_cache_path = os.path.join(track_dir_path, 'tail_roi_scan.json')
+        scan_cache_key = {
+            "center_roi_id": int(preprocess_config.center_roi_id),
+            "rotate_roi_tail_id": int(preprocess_config.rotate_roi_tail_id),
+            "video_len": int(video_len),
+        }
+        cached = _load_prescan_cache(scan_cache_path, scan_cache_key)
+        if cached is not None:
+            interpolated_points = cached
+            logger.info(
+                "Pre-scan: cache hit at %s (%d frames); skipping mask sweep.",
+                scan_cache_path, video_len,
+            )
+        else:
+            logger.info(f"Pre-scanning {video_name} for tail ROI interpolation...")
+            valid_points = {}
+            failure_reasons: Counter = Counter()
+            tracker_scan = H5IO(mask_list_path)
+            BATCH = 256
             try:
-                mask = tracker_scan.read_mask(idx)
-            except (IOError, OSError, KeyError, ValueError) as e:
-                failure_reasons["mask_read"] += 1
-                logger.debug("Pre-scan mask read failed at %d: %s", idx, e)
-                continue
-            try:
-                m = center_roi(mask, mask, preprocess_config.center_roi_id)
-                point = get_roi_closest_point_safe(m, preprocess_config.rotate_roi_tail_id)
-            except Exception as e:
-                failure_reasons["preprocess"] += 1
-                logger.debug("Pre-scan preprocess failed at %d: %s", idx, e)
-                continue
-            if point is None:
-                failure_reasons["roi_not_found"] += 1
-                continue
-            valid_points[idx] = point
+                for start in range(0, video_len, BATCH):
+                    indices = range(start, min(start + BATCH, video_len))
+                    masks_batch = tracker_scan.read_masks_batch(indices)
+                    for idx in indices:
+                        mask = masks_batch.get(idx)
+                        if mask is None:
+                            failure_reasons["mask_read"] += 1
+                            continue
+                        try:
+                            m = center_roi(mask, mask, preprocess_config.center_roi_id)
+                            point = get_roi_closest_point_safe(m, preprocess_config.rotate_roi_tail_id)
+                        except Exception as e:
+                            failure_reasons["preprocess"] += 1
+                            logger.debug("Pre-scan preprocess failed at %d: %s", idx, e)
+                            continue
+                        if point is None:
+                            failure_reasons["roi_not_found"] += 1
+                            continue
+                        valid_points[idx] = point
+            finally:
+                tracker_scan.close()
 
-        del tracker_scan
+            logger.info(
+                "Pre-scan: %d/%d valid; failures: %s",
+                len(valid_points), video_len, dict(failure_reasons),
+            )
 
-        failed_count = sum(failure_reasons.values())
-        logger.info(
-            "Pre-scan: %d/%d valid; failures: %s",
-            len(valid_points), video_len, dict(failure_reasons),
-        )
-
-        if valid_points:
-            interpolated_points = interpolate_missing_points(valid_points, video_len)
-            logger.info(f"Interpolation complete: all {video_len} frames now have rotation points")
+            if valid_points:
+                interpolated_points = interpolate_missing_points(valid_points, video_len)
+                logger.info(f"Interpolation complete: all {video_len} frames now have rotation points")
+                _save_prescan_cache(scan_cache_path, scan_cache_key, interpolated_points)
 
     dataset = VideoDataset(
         source_path, video_len, mask_list_path, preprocess_config, roi_id,
         interpolated_points=interpolated_points,
         on_frame_error=on_frame_error,
     )
-        
-    loader_kwargs = dict(
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=True,
-    )
-    # BUG-09: seed DataLoader workers so augmentation / shuffle is reproducible
-    _gen = make_torch_generator()
-    if _gen is not None:
-        loader_kwargs["generator"] = _gen
-        if NUM_WORKERS > 0:
-            loader_kwargs["worker_init_fn"] = seed_worker
-    loader = DataLoader(dataset, **loader_kwargs)
+
+    loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS))
 
     latent_list = []
     total_batches = len(loader)
@@ -518,6 +603,8 @@ def extract_roi_rotation_latent_from_video(
     batch_size = int(batch_size)
     roi_id = int(roi_id)
 
+    _enable_cudnn_benchmark_if_not_strict()
+
     # 1. Setup paths
     project_path, config = get_project_config(storage_path, project_name)
     latent_dir_path = os.path.join(project_path, 'latent', model_name)
@@ -576,18 +663,7 @@ def extract_roi_rotation_latent_from_video(
         on_frame_error=on_frame_error,
     )
 
-    loader_kwargs = dict(
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=True,
-    )
-    _gen = make_torch_generator()
-    if _gen is not None:
-        loader_kwargs["generator"] = _gen
-        if NUM_WORKERS > 0:
-            loader_kwargs["worker_init_fn"] = seed_worker
-    loader = DataLoader(dataset, **loader_kwargs)
+    loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS))
 
     latent_list = []
     total_batches = len(loader)

@@ -82,9 +82,13 @@ class TestVideoReaderCache:
     def _make_aggregator(self):
         """Create a minimal LatentAggregator without triggering __init__ file I/O."""
         import threading
+        from collections import OrderedDict
         agg = object.__new__(LatentAggregator)
-        agg._video_reader_cache = {}
+        # PERF-03: cache became OrderedDict to support move_to_end + popitem.
+        agg._video_reader_cache = OrderedDict()
         agg._cache_max_size = 3
+        agg._frame_cache = OrderedDict()
+        agg._frame_cache_max = 256
         agg._cache_lock = threading.Lock()
         agg.source_path = '/fake'
         agg.bin_size = 1

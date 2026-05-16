@@ -291,3 +291,37 @@ def evaluate(
             console.print(f"  [yellow]⚠[/yellow] {w}")
 
     console.print(f"\n  Frames: {result.get('n_frames', '?')} | Files: {result.get('n_time_series_files', '?')}")
+
+
+@app.command("suggest")
+def suggest(
+    n_samples: int = typer.Argument(
+        ...,
+        help=(
+            "Number of latent samples (bins) you intend to cluster. "
+            "Roughly equal to total_frames / bin_size. Pass a rough estimate; "
+            "the suggestion is a heuristic, not a measurement."
+        ),
+    ),
+) -> None:
+    """Heuristic HDBSCAN / DBSCAN starting parameters for first-time users.
+
+    The suggestion follows B-SOiD / MoSeq conventions (smallest cluster ≥
+    ~0.5%% of samples). Sweep ``eps_range`` interactively in the Behavior
+    Microscope before exporting — these are anchors, not paper-grade
+    defaults.
+    """
+    from castle.service.clustering_service import suggest_clustering_params
+
+    s = suggest_clustering_params(n_samples)
+    table = Table(title=f"Clustering parameter suggestion (N = {s.n_samples})")
+    table.add_column("Parameter", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("HDBSCAN min_cluster_size", str(s.min_cluster_size))
+    table.add_row("HDBSCAN min_samples", str(s.min_samples))
+    table.add_row("DBSCAN eps sweep", ", ".join(f"{e:g}" for e in s.eps_range))
+    console.print(table)
+    console.print(
+        "\n[dim]Heuristics — confirm visually in the Behavior Microscope "
+        "before exporting.[/dim]"
+    )

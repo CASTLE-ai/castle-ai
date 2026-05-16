@@ -252,7 +252,9 @@ def energy_distance_test(
     Returns:
         (energy_distance, p_value)
     """
-    from scipy.spatial.distance import cdist
+    # PERF-04: route through the GPU-aware helper so large fingerprint
+    # sets benefit from torch.cdist on CUDA; CPU path keeps scipy.
+    from castle.utils.distance import pairwise_distance
 
     X = np.array([fp.to_feature_vector() for fp in group_a])
     Y = np.array([fp.to_feature_vector() for fp in group_b])
@@ -262,9 +264,9 @@ def energy_distance_test(
     def _energy_stat(idx_a: np.ndarray, idx_b: np.ndarray) -> float:
         A = Z[idx_a]
         B = Z[idx_b]
-        cross = cdist(A, B).mean()
-        within_a = cdist(A, A).mean() if len(A) > 1 else 0.0
-        within_b = cdist(B, B).mean() if len(B) > 1 else 0.0
+        cross = pairwise_distance(A, B).mean()
+        within_a = pairwise_distance(A, A).mean() if len(A) > 1 else 0.0
+        within_b = pairwise_distance(B, B).mean() if len(B) > 1 else 0.0
         return 2.0 * cross - within_a - within_b
 
     a_idx = np.arange(n_a)

@@ -677,9 +677,9 @@ def restore_local_latent_from_npz(
                 return name_to_color[child_name]
             prefix = child_name + '_'
             for nm, col in name_to_color.items():
-                if nm.startswith(prefix):
+                if nm.startswith(prefix) and col:
                     return col
-            return ''  # will be resolved by LocalLatent.palette fallback
+            return '#888888'  # neutral grey; plot_named_embedding also guards against ''
 
         for cid_local in np.unique(masked_cls):
             if cid_local == -1:

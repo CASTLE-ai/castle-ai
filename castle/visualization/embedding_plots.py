@@ -93,7 +93,7 @@ def plot_named_embedding(embedding: np.ndarray,
             if not mask.any():
                 continue
             if cid in export:
-                c = export[cid]['color']
+                c = export[cid]['color'] or palette_fn(cid)
                 label = export[cid]['name']
             else:
                 c = palette_fn(-1)

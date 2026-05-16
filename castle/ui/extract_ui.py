@@ -235,36 +235,60 @@ def ui_extract_roi_latent(
 
     # --- Optional: Rotation Latent Extraction ---
     if rotate_roi_tail_switch:
-        messages.append("\n\n--- Extracting Rotation Latents (Rotate based on Tail is ON) ---")
-        rot_success = 0
-        rot_failed = []
-        for video_name in tqdm(videos_to_process, desc="Extracting Rotation Latents"):
-            try:
-                messages.append(f"\nRotation: Processing {video_name}...")
-                rpath = extract_roi_rotation_latent_from_video(
-                    storage_path=storage_path,
-                    project_name=project_name,
-                    video_name=video_name,
-                    roi_id=int(select_roi),
-                    model_name=select_model,
-                    batch_size=int(batch_size),
-                    preprocess_config=preprocess_args,
-                    skip_existing=skip_existing,
-                    progress_callback=update_progress,
-                )
-                if rpath:
-                    messages.append(f"  ✅ Rotation latent saved to {os.path.basename(rpath)}")
-                    rot_success += 1
-                else:
-                    messages.append(f"  ⚠️ Rotation extraction returned no path for {video_name}.")
-            except Exception as e:
-                rot_failed.append(video_name)
-                messages.append(f"  ❌ Rotation error for {video_name}: {e}")
+        # Safety guard: re-validate tail ROI before GPU-heavy rotation extraction.
+        # The checkbox may have been manually re-checked after Apply locked it out.
+        import numpy as _np
+        tail_roi_id = int(preprocess_args.rotate_roi_tail_id)
+        _first_video = videos_to_process[0]
+        _mask_path = os.path.join(storage_path, project_name, 'track', _first_video, 'mask_list.h5')
+        _tail_roi_ok = True
+        try:
+            with H5IO(_mask_path) as _h5:
+                _guard_mask = _h5.read_mask(0)
+            if _guard_mask is not None:
+                _roi_ids = set(_np.unique(_guard_mask[_guard_mask > 0]).tolist())
+                if tail_roi_id not in _roi_ids or len(_roi_ids) < 2:
+                    _tail_roi_ok = False
+                    found_str = str(sorted(_roi_ids) or 'none')
+                    messages.append(
+                        f"\n⚠️ Rotation skipped: Tail ROI (ID {tail_roi_id}) not found or only 1 ROI "
+                        f"in mask (detected: {found_str}). "
+                        f"Click 'Apply' to re-validate preprocess settings."
+                    )
+        except Exception as _e:
+            messages.append(f"\n⚠️ Could not validate tail ROI ({_e}); proceeding with rotation.")
 
-        rot_summary = f"\n🎉 Rotation Extraction Complete! Processed {rot_success}/{len(videos_to_process)} videos."
-        if rot_failed:
-            rot_summary += f"\n⚠️ Failed: {', '.join(rot_failed)}"
-        messages.append(rot_summary)
+        if _tail_roi_ok:
+            messages.append("\n\n--- Extracting Rotation Latents (Rotate based on Tail is ON) ---")
+            rot_success = 0
+            rot_failed = []
+            for video_name in tqdm(videos_to_process, desc="Extracting Rotation Latents"):
+                try:
+                    messages.append(f"\nRotation: Processing {video_name}...")
+                    rpath = extract_roi_rotation_latent_from_video(
+                        storage_path=storage_path,
+                        project_name=project_name,
+                        video_name=video_name,
+                        roi_id=int(select_roi),
+                        model_name=select_model,
+                        batch_size=int(batch_size),
+                        preprocess_config=preprocess_args,
+                        skip_existing=skip_existing,
+                        progress_callback=update_progress,
+                    )
+                    if rpath:
+                        messages.append(f"  ✅ Rotation latent saved to {os.path.basename(rpath)}")
+                        rot_success += 1
+                    else:
+                        messages.append(f"  ⚠️ Rotation extraction returned no path for {video_name}.")
+                except Exception as e:
+                    rot_failed.append(video_name)
+                    messages.append(f"  ❌ Rotation error for {video_name}: {e}")
+
+            rot_summary = f"\n🎉 Rotation Extraction Complete! Processed {rot_success}/{len(videos_to_process)} videos."
+            if rot_failed:
+                rot_summary += f"\n⚠️ Failed: {', '.join(rot_failed)}"
+            messages.append(rot_summary)
 
     return "\n".join(messages)
 
@@ -374,13 +398,16 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
     # Detect which ROI IDs actually exist in the mask before applying settings
     roi_ids_in_mask: set = set(np.unique(mask[mask > 0]).tolist()) if mask is not None else set()
     tail_roi = int(rotate_roi_tail_id)
-    if bool(rotate_roi_tail_switch) and tail_roi not in roi_ids_in_mask:
-        found = sorted(roi_ids_in_mask)
-        gr.Warning(
-            f"Tail ROI (ID {tail_roi}) not found in tracking data "
-            f"(detected ROI IDs: {found or 'none'}). "
-            f"'Rotate based on Tail' has been disabled automatically."
-        )
+    # Rotation requires the tail ROI to exist AND at least 2 distinct ROIs in the mask
+    can_rotate = (tail_roi in roi_ids_in_mask) and (len(roi_ids_in_mask) >= 2)
+    if not can_rotate:
+        if bool(rotate_roi_tail_switch):
+            found = sorted(roi_ids_in_mask)
+            gr.Warning(
+                f"Tail ROI (ID {tail_roi}) not found in tracking data or only 1 ROI detected "
+                f"(detected ROI IDs: {found or 'none'}). "
+                f"'Rotate based on Tail' has been disabled and locked — re-apply after fixing tracking."
+            )
         rotate_roi_tail_switch = False
 
     # Boolean switches now arrive as bool from gr.Checkbox (no string conversion needed)
@@ -401,8 +428,15 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
     pf, pm = preprocess.transform(frame, mask)
     mixed = generate_mix_image(pf, pm)
 
-    # Third return value updates the checkbox so the UI reflects the actual setting used
-    return preprocess, mixed, gr.update(value=bool(rotate_roi_tail_switch))
+    # Third return value updates the checkbox.
+    # If rotation is not possible, lock the checkbox (interactive=False) so the
+    # user cannot re-enable it without clicking Apply again on valid tracking data.
+    rotate_update = (
+        gr.update(value=False, interactive=False)
+        if not can_rotate
+        else gr.update(value=bool(rotate_roi_tail_switch), interactive=True)
+    )
+    return preprocess, mixed, rotate_update
 
 
 # ---------------------------

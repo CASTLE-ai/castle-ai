@@ -181,13 +181,17 @@ class SimpleVideoReader:
                 yield idx, self.get_frame(idx)
 
     def close(self) -> None:
-        """Release the underlying PyAV container."""
+        """Release the underlying PyAV container.
+
+        Cleanup-phase exceptions are logged at debug level but never re-raised
+        — raising here would mask the original error that triggered the close.
+        """
         container = getattr(self, "_container", None)
         if container is not None:
             try:
                 container.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 — cleanup must not mask original error
+                logger.debug("PyAV container.close() failed during cleanup: %s", exc)
             self._container = None  # type: ignore[assignment]
 
     # ------------------------------------------------------------------

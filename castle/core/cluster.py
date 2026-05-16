@@ -219,8 +219,8 @@ class LatentAggregator:
                 old_reader = self._video_reader_cache.pop(oldest_key)
                 try:
                     old_reader.close()
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001 — cleanup only
+                    logger.debug("VideoReader close on evict failed: %s", exc)
 
             reader = VideoReader(video_path)
             self._video_reader_cache[video_path] = reader
@@ -262,12 +262,16 @@ class LatentAggregator:
         return None
 
     def close(self) -> None:
-        """Close all cached VideoReader instances and release resources."""
+        """Close all cached VideoReader instances and release resources.
+
+        Cleanup-phase exceptions are logged at debug level — raising here
+        would mask whatever triggered the close in the first place.
+        """
         for reader in self._video_reader_cache.values():
             try:
                 reader.close()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — cleanup only
+                logger.debug("VideoReader close on aggregator shutdown failed: %s", exc)
         self._video_reader_cache.clear()
 
     def __del__(self) -> None:

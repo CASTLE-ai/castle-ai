@@ -163,8 +163,11 @@ def build_cluster_tree_choices(cluster_meta, cluster_array):
         if info['cumulative'] == 0:
             continue
         depth = info['depth']
-        indent = '  ' * depth
-        prefix = '├── ' if depth > 0 else ''
+        # Use non-breaking spaces so HTML does not collapse the indentation.
+        # 4 NBSP per depth level gives clear visual separation in gr.Radio.
+        nbsp = ' '
+        indent = nbsp * 4 * depth
+        prefix = f'├──{nbsp}' if depth > 0 else ''
 
         if info['is_container']:
             icon = '📂'
@@ -172,7 +175,7 @@ def build_cluster_tree_choices(cluster_meta, cluster_array):
             color = (info['meta'] or {}).get('color', 'grey')
             icon = '🟢' if color != 'grey' else '📁'
 
-        display_label = f"{indent}{prefix}{icon} {name} ({info['cumulative']} frames)"
+        display_label = f"{indent}{prefix}{icon}{nbsp}{name} ({info['cumulative']} frames)"
         choices.append((display_label, name))
 
     return choices

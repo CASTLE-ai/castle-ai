@@ -26,9 +26,6 @@ from castle.ui.cluster_handlers import (
     on_tree_node_select,
     restore_session,
     init_mulvideo,
-    handle_undo,
-    handle_redo,
-    update_history_buttons,
     check_session_exists,
     save_cluster_model,
     apply_cluster_model,
@@ -239,7 +236,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     local_embedding_plot = gr.State(None)
     mulvideo = gr.State(None)  # Holds LatentAggregator instance
     session_info = gr.State(None)
-    history_state = gr.State(None)  # HistoryManager for undo/redo
     overwrite_state = gr.State(False)  # Submit-overwrite confirmation gate
 
     with gr.Row(visible=True) as ui['cluster_row_main']:
@@ -300,11 +296,11 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             )
             ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
             ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
+            ui['overwrite_confirm_btn'] = gr.Button(
+                "⚠️ Confirm Overwrite", variant="stop", visible=False,
+            )
+            ui['overwrite_warning_md'] = gr.Markdown("", visible=False)
             ui['submit_status'] = gr.Markdown("", visible=True)
-            with gr.Row():
-                ui['undo_btn'] = gr.Button("↩️ Undo", interactive=False)
-                ui['redo_btn'] = gr.Button("↪️ Redo", interactive=False)
-            ui['history_info'] = gr.Textbox(label="History", interactive=False, max_lines=1)
         with gr.Column(scale=8):
             ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
             ui['display'] = gr.Video(label='Display', interactive=False, visible=True, autoplay=True, loop=True)  
@@ -400,6 +396,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         inputs=latents,
         outputs=[ui['cluster_tree_html'], ui['cluster_tree_select']],
     ).then(
+        fn=lambda: "init",
+        outputs=[ui['cluster_tree_select']],
+    ).then(
         fn=collapse_accordion,
         outputs=ui['cluster_input_accordion']
     )
@@ -451,30 +450,37 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['cluster_run'].click(
         fn=generate_local_cluster,
-        inputs=[local_latents, ui['eps'], history_state],
-        outputs=[local_embedding_plot, ui['embedding_plot'], history_state],
-    ).then(
-        fn=update_history_buttons,
-        inputs=[history_state],
-        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
+        inputs=[local_latents, ui['eps']],
+        outputs=[local_embedding_plot, ui['embedding_plot']],
     )
-    # Submit: auto-label all clusters and persist (with overwrite confirmation)
+
+    _submit_inputs = [
+        storage_path, project_name, latents, local_latents, mulvideo,
+        ui['cluster_tree_select'],
+        ui['umap_config_text'], ui['eps'], overwrite_state,
+        ui['preset_dropdown'], ui['umap_seed'],
+    ]
+    _submit_outputs = [
+        ui['syllables_plot'],
+        ui['cluster_tree_html'], ui['cluster_tree_select'],
+        ui['behavior_id_csv'], ui['behavior_time_series_csv'],
+        ui['behavior_time_series_srt'], local_embedding_plot,
+        ui['embedding_plot'], ui['display_eps'],
+        overwrite_state, ui['overwrite_confirm_btn'],
+        ui['overwrite_warning_md'], ui['submit_status'],
+    ]
+
+    # Submit: auto-label all clusters and persist (with overwrite confirmation).
+    # overwrite_confirm_btn calls the same fn — by that point overwrite_state is True.
     ui['enter_submit_all_btn'].click(
         fn=label_all_and_submit,
-        inputs=[storage_path, project_name, latents, local_latents, mulvideo,
-                ui['cluster_tree_select'], history_state,
-                ui['umap_config_text'], ui['eps'], overwrite_state,
-                ui['preset_dropdown'], ui['umap_seed']],
-        outputs=[ui['syllables_plot'],
-                 ui['cluster_tree_html'], ui['cluster_tree_select'],
-                 ui['behavior_id_csv'], ui['behavior_time_series_csv'],
-                 ui['behavior_time_series_srt'], local_embedding_plot,
-                 ui['embedding_plot'], ui['display_eps'],
-                 history_state, overwrite_state, ui['submit_status']],
-    ).then(
-        fn=update_history_buttons,
-        inputs=[history_state],
-        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
+        inputs=_submit_inputs,
+        outputs=_submit_outputs,
+    )
+    ui['overwrite_confirm_btn'].click(
+        fn=label_all_and_submit,
+        inputs=_submit_inputs,
+        outputs=_submit_outputs,
     )
 
     # Auto-restore prior UMAP/eps/preset/seed when a tree node is clicked.
@@ -485,31 +491,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=on_tree_node_select,
         inputs=[ui['cluster_tree_select'], latents, storage_path, project_name],
         outputs=[ui['umap_config_text'], ui['eps'], ui['embedding_plot'],
-                 local_latents, overwrite_state, ui['submit_status'],
-                 ui['preset_dropdown'], ui['umap_seed']],
-    )
-
-    # Undo / Redo
-    ui['undo_btn'].click(
-        fn=handle_undo,
-        inputs=[local_latents, latents, history_state],
-        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'],
-                 ui['cluster_tree_html'], ui['cluster_tree_select']],
-    ).then(
-        fn=update_history_buttons,
-        inputs=[history_state],
-        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
-    )
-
-    ui['redo_btn'].click(
-        fn=handle_redo,
-        inputs=[local_latents, latents, history_state],
-        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'],
-                 ui['cluster_tree_html'], ui['cluster_tree_select']],
-    ).then(
-        fn=update_history_buttons,
-        inputs=[history_state],
-        outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
+                 local_latents, local_embedding_plot, overwrite_state,
+                 ui['submit_status'], ui['preset_dropdown'], ui['umap_seed']],
     )
 
     def _auto_update_tree(sp, pn, lat):

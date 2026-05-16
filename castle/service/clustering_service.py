@@ -1056,6 +1056,7 @@ def submit_local_to_global(
     eps_value: Optional[float] = None,
     preset_value: Optional[str] = None,
     umap_seed: Optional[int] = None,
+    overwrite: bool = False,
 ) -> SubmitArtifacts:
     """Merge local clusters into the global ``Latent`` and persist artefacts.
 
@@ -1083,11 +1084,25 @@ def submit_local_to_global(
     from castle.service.plotting_service import plot_syllables_per_video
     from castle.ui.cluster_handlers import update_select_cluster_list
 
+    cluster_path = os.path.join(storage_path, project_name, 'cluster')
+
+    if overwrite and parent_cluster_name:
+        # Delete old embedding npz referenced by the existing sidecar before
+        # adding new clusters so orphaned files do not accumulate.
+        old_meta = load_node_meta(cluster_path, parent_cluster_name)
+        if old_meta and old_meta.get('embedding_npz'):
+            old_npz = os.path.join(cluster_path, old_meta['embedding_npz'])
+            try:
+                os.unlink(old_npz)
+                logger.debug("Deleted old embedding npz on overwrite: %s", old_npz)
+            except OSError as e:
+                logger.debug("Could not delete old npz %s: %s", old_npz, e)
+        # Remove all descendants from the global latent so import starts fresh.
+        latents.remove_cluster_subtree(parent_cluster_name)
+
     latents.import_local_latent(local_latents)
     fig = plot_syllables_per_video(latents, aggregator)
     cluster_choices = update_select_cluster_list(latents)
-
-    cluster_path = os.path.join(storage_path, project_name, 'cluster')
     os.makedirs(cluster_path, exist_ok=True)
 
     df1 = pd.DataFrame({

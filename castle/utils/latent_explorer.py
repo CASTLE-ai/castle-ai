@@ -146,13 +146,23 @@ class Latent:
         if isinstance(selected_cluster, str):
             name = selected_cluster
             if name in self.behavior_name2cluster_id:
-                # Exact match — leaf cluster
+                # Exact match — may be leaf or a submitted parent whose frames
+                # have all moved to descendants.
                 cid = self.behavior_name2cluster_id[name]
                 mask = self.cluster == cid
+                if not mask.any():
+                    # Parent was submitted: fall through to prefix match so the
+                    # user can re-UMAP a node whose children exist but whose own
+                    # cid now has 0 frames.
+                    prefix = name + '_'
+                    child_ids = [
+                        cid2 for n2, cid2 in self.behavior_name2cluster_id.items()
+                        if n2.startswith(prefix)
+                    ]
+                    if child_ids:
+                        mask = np.isin(self.cluster, child_ids)
             else:
                 # Prefix match — synthetic parent node: select all descendants.
-                # A cluster belongs to this subtree if its name equals the prefix
-                # OR starts with prefix + '_'.
                 prefix = name + '_'
                 child_ids = [
                     cid for n, cid in self.behavior_name2cluster_id.items()
@@ -199,6 +209,50 @@ class Latent:
         _plot_syllables(self.cluster, self.key_frames, self.cluster_meta, palette_fn=self.palette)
 
 
+
+    def remove_cluster_subtree(self, parent_name: str) -> List[str]:
+        """Remove all descendants of ``parent_name`` and reset their frames.
+
+        Used during overwrite-submit: clears the old sub-clustering before
+        importing fresh clusters. The parent node itself is kept; only its
+        descendants are removed. Frames that were assigned to descendants are
+        reset to the parent cluster ID so ``import_local_latent`` can
+        re-assign them to new cluster IDs.
+
+        Args:
+            parent_name: Name of the parent cluster (e.g. ``'init'``).
+
+        Returns:
+            Sorted list of descendant names that were removed.
+        """
+        parent_cid = self.behavior_name2cluster_id.get(parent_name)
+        if parent_cid is None:
+            return []
+
+        prefix = parent_name + '_'
+        descendant_names = sorted([
+            n for n in list(self.behavior_name2cluster_id.keys())
+            if n.startswith(prefix)
+        ])
+        if not descendant_names:
+            return []
+
+        descendant_cids = [self.behavior_name2cluster_id[n] for n in descendant_names]
+
+        # Reset cluster array: all descendant frames → parent_cid
+        desc_mask = np.isin(self.cluster, descendant_cids)
+        self.cluster[desc_mask] = parent_cid
+
+        # Remove descendants from metadata
+        for name in descendant_names:
+            cid = self.behavior_name2cluster_id.pop(name, None)
+            if cid is not None:
+                meta = self.cluster_meta.pop(cid, None)
+                if meta:
+                    self.used_palette.discard(meta.get('color', ''))
+
+        self.need_maintain_key_frames = True
+        return descendant_names
 
     def import_local_latent(self, local_latent):
         assert hasattr(local_latent, 'cluster')

@@ -14,7 +14,6 @@ from pathlib import Path
 import gradio as gr
 import numpy as np
 
-from castle.service.history_service import HistoryManager
 from castle.service.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -124,6 +123,13 @@ def generate_embedding(
         )
         return None, None, None, ""
 
+    if not cluster_name:
+        gr.Info(
+            "No cluster selected. Click a node in the cluster tree before "
+            "generating an embedding."
+        )
+        return None, None, None, ""
+
     try:
         cfg = json.loads(cfg_str)
     except (json.JSONDecodeError, ValueError, KeyError) as e:
@@ -215,7 +221,7 @@ def _resolve_umap_log_path(storage_path, project_name) -> str | None:
         return None
 
 
-def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
+def generate_local_cluster(local_latents, eps, progress=gr.Progress()):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.run_dbscan_on_local`.
     """
@@ -223,42 +229,26 @@ def generate_local_cluster(local_latents, eps, history, progress=gr.Progress()):
     from castle.service.clustering_service import run_dbscan_on_local
     from castle.service.plotting_service import build_scatter_plot
 
-    if history is None:
-        history = HistoryManager()
-
-    if hasattr(local_latents, 'embedding') and hasattr(local_latents, 'cluster'):
-        history.save_state(local_latents, f"DBSCAN clustering (eps={eps})")
-
     progress(0, desc="Running DBSCAN...")
     try:
         run_dbscan_on_local(local_latents, float(eps))
     except InsufficientDataError as e:
         gr.Info(str(e))
-        return None, None, history
+        return None, None
     progress(1.0, desc="Building plot...")
     Z_plt, img = build_scatter_plot(local_latents)
-    return Z_plt, img, history
+    return Z_plt, img
 
 
-def label_local_cluster(local_latents, cluster_id, cluster_name, history):
+def label_local_cluster(local_latents, cluster_id, cluster_name):
     if local_latents is None:
         gr.Warning('No embedding available. Please generate an embedding and cluster before labelling.')
-        return history
-
+        return
     if not cluster_name:
         gr.Info('Please enter a name for the cluster before clicking Enter.')
-        return history
-
-    if history is None:
-        history = HistoryManager()
-
-    # Only save state if cluster exists
-    if hasattr(local_latents, 'cluster') and hasattr(local_latents, 'embedding'):
-        history.save_state(local_latents, f"Label cluster {cluster_id} as {cluster_name}")
-    
+        return
     local_latents.label_cluster(cluster_id, cluster_name)
     gr.Info(f'Named {cluster_id} as {cluster_name}')
-    return history
 
 
 def plot_syllables_per_video(latents, aggregator):
@@ -278,8 +268,8 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
 
     Outputs (in order, matching the .change binding):
         umap_config_text, eps, embedding_plot_image, local_latents_state,
-        overwrite_state (always reset to False), submit_status_md,
-        preset_dropdown, umap_seed_textbox.
+        local_embedding_plot_state, overwrite_state (always reset to False),
+        submit_status_md, preset_dropdown, umap_seed_textbox.
     """
     from castle.service.clustering_service import (
         load_node_meta, restore_local_latent_from_npz,
@@ -288,7 +278,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
     from castle.service.plotting_service import build_named_scatter_plot
 
     no_update = (
-        gr.update(), gr.update(), gr.update(), gr.update(),
+        gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
         False, gr.update(), gr.update(), gr.update(),
     )
     if not node_name or not storage_path or not project_name:
@@ -311,7 +301,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
     if meta is None and npz_path is None:
         # Fresh / un-submitted node — leave settings alone, clear status.
         return (
-            gr.update(), gr.update(), gr.update(), gr.update(),
+            gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
             False,
             gr.update(value=""),
             gr.update(), gr.update(),
@@ -334,12 +324,14 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
 
     emb_img_update = gr.update()
     local_latents_update = gr.update()
+    local_embedding_plot_update = gr.update()
     if npz_path and latents is not None:
         local_ll, _ = restore_local_latent_from_npz(npz_path, latents, parent_cluster_name=node_name)
         if local_ll is not None:
-            _, named_img = build_named_scatter_plot(local_ll)
+            Z_plt, named_img = build_named_scatter_plot(local_ll)
             emb_img_update = gr.update(value=named_img)
             local_latents_update = local_ll
+            local_embedding_plot_update = Z_plt
             # If we used the legacy fallback (no sidecar), fish the seed
             # out of the rebuilt configs so it still reaches the UI.
             if meta is None:
@@ -351,6 +343,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
 
     return (
         umap_cfg_update, eps_update, emb_img_update, local_latents_update,
+        local_embedding_plot_update,
         False,
         gr.update(value=f"📂 Loaded saved state for **{node_name}**."),
         preset_update, seed_update,
@@ -359,7 +352,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
 
 def label_all_and_submit(
     storage_path, project_name, latents, local_latents, aggregator,
-    parent_name, history,
+    parent_name,
     umap_config_str="", eps_value=None, overwrite_confirmed=False,
     preset_value=None, umap_seed_str="",
 ):
@@ -367,46 +360,67 @@ def label_all_and_submit(
 
     Delegates the auto-label loop to
     :func:`castle.service.clustering_service.auto_label_local_clusters` and
-    the submit + persist step to ``import_info_from_local_latent`` (which
-    is itself a thin wrapper around ``submit_local_to_global``).
+    the submit + persist step to ``import_info_from_local_latent``.
 
-    Returns an 11-tuple appending ``(history, overwrite_confirmed_next,
-    submit_status_markdown)`` to the 9 outputs from
-    ``import_info_from_local_latent``. When the parent node already has a
-    submitted result, the first click returns early with a warning and
-    flips ``overwrite_confirmed_next`` to True; a second click goes through.
+    Returns a 13-tuple:
+        (syllables_fig, tree_html, cluster_tree_select,
+         id_csv, time_series_csvs, srt_paths,
+         local_embedding_plot, embedding_img, display_eps,
+         overwrite_state, overwrite_confirm_btn_update,
+         overwrite_warning_md_update, submit_status)
+
+    On first click when sidecar exists: shows warning + confirm button,
+    sets overwrite_state=True.  On confirm-button click (overwrite_state
+    already True), executes the overwrite.
     """
     from castle.core.types import InsufficientDataError
     from castle.service.clustering_service import (
         auto_label_local_clusters, load_node_meta,
     )
 
-    if history is None:
-        history = HistoryManager()
+    _none9 = (None,) * 9
+    _hide_btn = gr.update(visible=False)
+    _hide_warn = gr.update(visible=False, value="")
+
+    if latents is None:
+        gr.Warning("No session initialized. Please click '⚙️ New Session' first.")
+        return _none9 + (False, _hide_btn, _hide_warn, "")
+
+    if not parent_name:
+        gr.Warning(
+            "No cluster selected. Click a node in the cluster tree before submitting."
+        )
+        return _none9 + (False, _hide_btn, _hide_warn, "")
 
     # Overwrite-confirmation gate: only kicks in when sidecar meta exists.
     cluster_path = os.path.join(storage_path or '', project_name or '', 'cluster')
-    existing_meta = load_node_meta(cluster_path, parent_name) if parent_name else None
+    existing_meta = load_node_meta(cluster_path, parent_name)
     if existing_meta is not None and not overwrite_confirmed:
-        gr.Warning(
-            f"'{parent_name}' already has a submitted clustering result. "
-            f"Click Submit again to overwrite it."
+        # Compute which clusters will be deleted so the user knows the impact.
+        prefix = parent_name + '_'
+        children_to_delete = sorted([
+            n for n in latents.behavior_name2cluster_id
+            if n.startswith(prefix)
+        ])
+        n_del = len(children_to_delete)
+        preview = ', '.join(children_to_delete[:5]) + ('…' if n_del > 5 else '')
+        warn_txt = (
+            f"⚠️ **Overwrite '{parent_name}'** will permanently delete "
+            f"**{n_del} cluster(s)**: {preview}\n\n"
+            f"Click **⚠️ Confirm Overwrite** to proceed."
         )
-        warn_md = (
-            f"⚠️ **'{parent_name}' already submitted.** "
-            f"Click **Submit** again to overwrite."
+        return _none9 + (
+            True,                                       # overwrite_state → True
+            gr.update(visible=True),                    # show confirm button
+            gr.update(visible=True, value=warn_txt),    # show warning block
+            "⚠️ Confirm overwrite required.",
         )
-        # 9 Nones (outputs of import_info_from_local_latent) + history + True + status
-        return (None,) * 9 + (history, True, warn_md)
-
-    if hasattr(local_latents, 'embedding'):
-        history.save_state(local_latents, "Submit all clusters to parent", parent=latents)
 
     try:
         count = auto_label_local_clusters(local_latents, parent_name)
     except InsufficientDataError as e:
         gr.Warning(str(e))
-        return (None,) * 9 + (history, False, "")
+        return _none9 + (False, _hide_btn, _hide_warn, "")
 
     gr.Info(f'Auto-labeled {count} clusters.')
 
@@ -424,9 +438,10 @@ def label_all_and_submit(
         eps_value=eps_value,
         preset_value=preset_value,
         umap_seed=seed_arg,
+        overwrite=overwrite_confirmed,
     )
     if result[0] is None:
-        return result + (history, False, "")
+        return result + (False, _hide_btn, _hide_warn, "")
 
     mgr = SessionManager(storage_path, project_name)
     active_id = mgr.get_active_session_id()
@@ -438,7 +453,7 @@ def label_all_and_submit(
         ])
         mgr.save_session_state(active_id, n_clusters)
 
-    return result + (history, False, f"✅ Submitted '{parent_name}'.")
+    return result + (False, _hide_btn, _hide_warn, f"✅ Submitted '{parent_name}'.")
 
 
 def check_session_exists(storage_path, project_name):
@@ -543,15 +558,19 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggr
 def import_info_from_local_latent(
     storage_path, project_name, latents, local_latents, aggregator,
     parent_cluster_name=None, umap_config_str=None, eps_value=None,
-    preset_value=None, umap_seed=None,
+    preset_value=None, umap_seed=None, overwrite=False,
 ):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.submit_local_to_global`.
 
-    Preserves the 9-tuple return shape:
-    ``(syllables_fig, cluster_html, cluster_select_reset, id_csv,
-       time_series_csvs, srt_paths, local_latents, named_embedding_image,
+    Returns a 9-tuple:
+    ``(syllables_fig, cluster_html, cluster_select_to_parent, id_csv,
+       time_series_csvs, srt_paths, local_embedding_plot, named_embedding_image,
        embedding_npz_path)``.
+
+    ``cluster_select_to_parent`` is set to ``parent_cluster_name`` so that
+    the ``cluster_tree_select.change`` event fires and the UI auto-restores
+    the submitted embedding for the parent node.
     """
     from castle.service.clustering_service import submit_local_to_global
     from castle.service.plotting_service import build_named_scatter_plot
@@ -565,16 +584,21 @@ def import_info_from_local_latent(
             eps_value=eps_value,
             preset_value=preset_value,
             umap_seed=umap_seed,
+            overwrite=overwrite,
         )
     except Exception as e:
         gr.Info(f'Failed to import cluster results into the session. Details: {e}')
         return (None,) * 9
 
-    tree_html_upd, tree_dd_upd = artifacts.cluster_choices
+    tree_html_upd, _ = artifacts.cluster_choices
+    # Auto-select the parent node after submit so on_tree_node_select fires
+    # and restores the embedding for the freshly submitted node.
+    tree_dd_upd = gr.update(value=parent_cluster_name) if parent_cluster_name else gr.update(value="")
+
     if artifacts.embedding_path is None:
         gr.Warning(
             "Embedding not available on local_latents — skipping scatter plot. "
-            "Run 'Generate Cluster' with UMAP/t-SNE enabled before submitting."
+            "Run UMAP then DBSCAN before submitting."
         )
         return (artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
                 artifacts.id_csv_path, artifacts.time_series_paths,
@@ -590,6 +614,10 @@ def import_info_from_local_latent(
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.init_clustering_aggregator`.
+
+    Returns ``(aggregator, latents, session_info)`` — the cluster_tree_select
+    auto-select to "init" is handled by the UI chain (.then lambda in
+    cluster_page_ui.py) after update_select_cluster_list runs.
     """
     from castle.service.clustering_service import init_clustering_aggregator
 
@@ -618,82 +646,6 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
         return None, None, None
 
 
-# ---------------------------
-# Undo / Redo Handlers
-# ---------------------------
-
-def _do_history_step(
-    local_latents, latents, history,
-    *, can_check, step_callable, verb_past: str,
-):
-    """Shared core of :func:`handle_undo` / :func:`handle_redo`."""
-    if history is None or not can_check(history):
-        gr.Info(f"Nothing to {verb_past.lower().rstrip('ne').rstrip('do')}do — no recorded actions yet.")
-        return gr.update(), gr.update(), history, _history_status(history), gr.update(), gr.update()
-
-    desc = step_callable(local_latents, parent=latents)
-
-    if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
-        gr.Info(f"Cannot {verb_past.lower().rstrip('ne').rstrip('do')}do: no valid state found.")
-        return gr.update(), gr.update(), history, _history_status(history), gr.update(), gr.update()
-
-    gr.Info(f"{verb_past}: {desc}")
-
-    from castle.service.plotting_service import build_scatter_plot
-    from castle.ui.cluster_tree import build_cluster_tree_html
-
-    Z_plt, img = build_scatter_plot(local_latents)
-    tree_html = gr.update()
-    tree_sel = gr.update()
-    if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
-        html = build_cluster_tree_html(latents.cluster_meta, latents.cluster)
-        tree_html = gr.update(value=html)
-        tree_sel = gr.update(value="")
-
-    return Z_plt, img, history, _history_status(history), tree_html, tree_sel
-
-
-def handle_undo(local_latents, latents, history):
-    """Undo the last clustering operation and redraw the plot."""
-    return _do_history_step(
-        local_latents, latents, history,
-        can_check=lambda h: h.can_undo,
-        step_callable=lambda ll, parent: history.undo(ll, parent=parent),
-        verb_past="Undone",
-    )
-
-
-def handle_redo(local_latents, latents, history):
-    """Redo the last undone clustering operation and redraw the plot."""
-    return _do_history_step(
-        local_latents, latents, history,
-        can_check=lambda h: h.can_redo,
-        step_callable=lambda ll, parent: history.redo(ll, parent=parent),
-        verb_past="Redone",
-    )
-
-
-def _history_status(history):
-    """Return a human-readable status string for the history UI."""
-    if history is None:
-        return ""
-    parts = []
-    if history.can_undo:
-        parts.append(f"Undo: {history.undo_description}")
-    if history.can_redo:
-        parts.append("Redo available")
-    return " | ".join(parts) if parts else "No history"
-
-
-def update_history_buttons(history):
-    """Return interactive states for undo/redo buttons + status text."""
-    if history is None:
-        return gr.update(interactive=False), gr.update(interactive=False), ""
-    return (
-        gr.update(interactive=history.can_undo),
-        gr.update(interactive=history.can_redo),
-        _history_status(history),
-    )
 
 
 # ---------------------------

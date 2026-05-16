@@ -471,7 +471,15 @@ def restore_local_latent_from_npz(
         masked_emb = emb_full[valid_mask]
         masked_cls = cls_full[valid_mask]
 
-        local_data = latents.data[valid_mask] if hasattr(latents, 'data') else masked_emb
+        # latents.data is the FULL latent (N rows); emb_full is the LOCAL
+        # subset (M rows, M ≤ N). valid_mask has M entries, so indexing
+        # latents.data with it fails when N ≠ M.  Use the embedding itself
+        # as a stand-in when the sizes do not match.
+        local_data = (
+            latents.data[valid_mask]
+            if hasattr(latents, 'data') and latents.data.shape[0] == emb_full.shape[0]
+            else masked_emb
+        )
         local_latents = LocalLatent(
             data=local_data,
             index_mask=valid_mask,

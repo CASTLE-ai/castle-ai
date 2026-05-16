@@ -1,6 +1,8 @@
 """Unit tests for castle.utils.latent_explorer (Latent / LocalLatent)."""
 
 import numpy as np
+import pytest
+
 from castle.utils.latent_explorer import Latent, LocalLatent
 
 
@@ -153,3 +155,38 @@ def test_build_embedding_progress_callback():
     callback.assert_any_call(0, 2)
     callback.assert_any_call(1, 2)
     assert hasattr(local, 'embedding')
+
+
+# ---- BUG-13: UMAP n_neighbors lower bound ----
+
+def test_build_embedding_raises_when_too_few_samples():
+    """BUG-13: <10 samples should hit the lower-bound guard."""
+    from castle.core.types import InsufficientDataError
+
+    data = np.random.randn(6, 10).astype(np.float32)  # 6 < 2*5
+    mask = np.ones(6, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+    with pytest.raises(InsufficientDataError, match="Need at least"):
+        local.build_embedding([{"n_neighbors": 5}])
+
+
+def test_build_embedding_raises_when_n_neighbors_too_small():
+    """BUG-13: n_neighbors < 5 → InsufficientDataError."""
+    from castle.core.types import InsufficientDataError
+
+    data = np.random.randn(30, 10).astype(np.float32)
+    mask = np.ones(30, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+    with pytest.raises(InsufficientDataError, match="below minimum"):
+        local.build_embedding([{"n_neighbors": 2}])
+
+
+def test_build_embedding_raises_when_n_neighbors_exceeds_samples():
+    """BUG-13: n_neighbors >= n_samples → InsufficientDataError."""
+    from castle.core.types import InsufficientDataError
+
+    data = np.random.randn(20, 10).astype(np.float32)
+    mask = np.ones(20, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+    with pytest.raises(InsufficientDataError, match="must be < n_samples"):
+        local.build_embedding([{"n_neighbors": 20}])

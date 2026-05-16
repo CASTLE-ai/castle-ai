@@ -74,6 +74,22 @@ def test_frame_to_timestamp_complex():
     assert ts.startswith("01:01:01")
 
 
+def test_frame_to_timestamp_no_float_drift_at_minute_boundary():
+    """BUG-15: 30 * 59.99999... should NOT roll back to 59 — integer μs path keeps it correct."""
+    # 1799 frames @ 30 fps = 59.9666...s; 1800 frames = 60.0s exact
+    assert frame_to_timestamp(1800, 30.0) == "00:01:00,000"
+
+
+def test_frame_to_timestamp_long_video_no_drift():
+    """BUG-15: at frame 30*3600*10 we should land exactly on 10:00:00,000."""
+    assert frame_to_timestamp(30 * 3600 * 10, 30.0) == "10:00:00,000"
+
+
+def test_frame_to_timestamp_subsecond_resolution():
+    """Half-frame at 30fps = 16ms (frame 1 → 33ms)."""
+    assert frame_to_timestamp(1, 30.0) == "00:00:00,033"
+
+
 # ---- LatentAggregator VideoReader cache (C-02) ----
 
 class TestVideoReaderCache:

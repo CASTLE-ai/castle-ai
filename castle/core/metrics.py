@@ -99,7 +99,8 @@ def bout_quality_metrics(labels: np.ndarray) -> dict:
     median_dur = float(np.median(durations))
     mean_dur = float(np.mean(durations))
     std_dur = float(np.std(durations))
-    cv = std_dur / mean_dur if mean_dur > 0 else 0.0
+    # BUG-16: guard against NaN-tainted std propagating into output CV.
+    cv = std_dur / mean_dur if (mean_dur > 0 and np.isfinite(std_dur)) else 0.0
 
     return {
         "n_bouts": n_bouts,

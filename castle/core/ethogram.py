@@ -140,7 +140,8 @@ def compute_bout_statistics(
         total_cluster_frames = sum(b.duration_frames for b in cid_bouts)
         mean_d = float(np.mean(durations))
         std_d = float(np.std(durations, ddof=0))
-        cv = std_d / mean_d if mean_d > 0 else 0.0
+        # BUG-16: guard against NaN-tainted std propagating into output CV.
+        cv = std_d / mean_d if (mean_d > 0 and np.isfinite(std_d)) else 0.0
 
         # Inter-bout interval: time between end of one bout and start of next
         # for the same cluster (sorted by start_frame)

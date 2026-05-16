@@ -34,13 +34,30 @@ from castle.defaults import MEMMAP_THRESHOLD_GB as _DEFAULT_MEMMAP_THRESHOLD_GB
 # ---------------------------
 
 def frame_to_timestamp(frame_number: int, fps: float) -> str:
-    """Convert frame number to timestamp string (HH:MM:SS,mmm)."""
-    seconds = frame_number / fps
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    seconds_rem = seconds % 60
-    milliseconds = (seconds_rem % 1) * 1000
-    return f"{hours:02}:{minutes:02}:{int(seconds_rem):02},{int(milliseconds):03}"
+    """Convert frame number to a SubRip ``HH:MM:SS,mmm`` timestamp.
+
+    BUG-15: the old implementation ran ``seconds = frame_number / fps``
+    and chained float ``//`` / ``%`` operations to extract HMS+ms. On
+    long videos that compounds float rounding so the SRT clock can drift
+    by up to one millisecond per hour and ``int(59.99999...)`` rolls
+    backwards to 59. This version stays in integer microseconds the
+    whole way, which is exact for any (frame, fps) pair representable
+    in IEEE-754 doubles.
+
+    Args:
+        frame_number: 0-indexed frame.
+        fps: Frame rate (frames per second). Must be > 0.
+
+    Returns:
+        ``HH:MM:SS,mmm`` string (SRT convention; comma between seconds
+        and milliseconds).
+    """
+    total_us = int(round(frame_number * 1_000_000 / fps))
+    hours, rem = divmod(total_us, 3600 * 1_000_000)
+    minutes, rem = divmod(rem, 60 * 1_000_000)
+    seconds, micro = divmod(rem, 1_000_000)
+    millis = micro // 1000
+    return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
 
 def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float, tree=None) -> Tuple[int, float]:
     """

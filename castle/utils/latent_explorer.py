@@ -13,6 +13,12 @@ import numpy as np
 
 from castle.core.environment import get_device
 from castle.core.config import PALETTE_HEX
+from castle.core.types import InsufficientDataError
+
+# BUG-13: lower bound for UMAP n_neighbors. Below ~5 UMAP becomes
+# numerically pathological (k-NN graph too sparse to identify manifold
+# structure). 5 is also UMAP's documented minimum.
+_UMAP_MIN_N_NEIGHBORS = 5
 
 _logger = _logging.getLogger(__name__)
 
@@ -287,6 +293,36 @@ class LocalLatent:
 
         if not isinstance(configs, list):
             configs = [configs]
+
+        # BUG-13: catch pathological configs before UMAP raises a cryptic
+        # internal error. UMAP requires n_neighbors < n_samples and
+        # n_neighbors >= 5 (its documented minimum). Surface a CastleError
+        # with hints instead.
+        n_samples = int(Z.shape[0])
+        if n_samples < 2 * _UMAP_MIN_N_NEIGHBORS:
+            raise InsufficientDataError(
+                f"Only {n_samples} samples available for UMAP. "
+                f"Need at least {2 * _UMAP_MIN_N_NEIGHBORS}. "
+                f"Hint: check whether pre-scan dropped most frames "
+                f"(rotate_roi_tail missing on most masks?) or pick a "
+                f"larger ROI."
+            )
+        for i, raw_cfg in enumerate(configs):
+            nn = raw_cfg.get('n_neighbors')
+            if nn is None:
+                continue
+            nn = int(nn)
+            if nn < _UMAP_MIN_N_NEIGHBORS:
+                raise InsufficientDataError(
+                    f"UMAP stage {i}: n_neighbors={nn} below minimum "
+                    f"{_UMAP_MIN_N_NEIGHBORS}. UMAP's k-NN graph becomes "
+                    f"degenerate at very small k."
+                )
+            if nn >= n_samples:
+                raise InsufficientDataError(
+                    f"UMAP stage {i}: n_neighbors={nn} must be < n_samples="
+                    f"{n_samples}. Reduce n_neighbors or supply more frames."
+                )
 
         resolved_seeds: List[int] = []
         resolved_configs: List[dict] = []

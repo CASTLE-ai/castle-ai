@@ -358,6 +358,7 @@ def extract_roi_latent_from_video(
     total_batches = len(loader)
     n_batches_failed = 0
     abs_failure_threshold = max(1, int(max_batch_failure_rate * total_batches))
+    first_batch_error: Optional[str] = None
 
     for i, (frames, masks) in enumerate(loader):
         try:
@@ -381,6 +382,8 @@ def extract_roi_latent_from_video(
                 raise
         except Exception as e:
             n_batches_failed += 1
+            if first_batch_error is None:
+                first_batch_error = repr(e)
             logger.error(
                 "Batch %d/%d failed for %s: %s",
                 i + 1, total_batches, video_name, e,
@@ -390,8 +393,7 @@ def extract_roi_latent_from_video(
                     f"Aborting {video_name}: {n_batches_failed}/{i + 1} batches "
                     f"failed (threshold {abs_failure_threshold} of "
                     f"{total_batches}, max_rate={max_batch_failure_rate:.0%}). "
-                    f"Common causes: GPU OOM (reduce --batch-size), corrupted "
-                    f"mask, all-NaN frames."
+                    f"Cause: {first_batch_error}."
                 ) from e
 
         if progress_callback:
@@ -684,6 +686,7 @@ def extract_roi_rotation_latent_from_video(
     total_batches = len(loader)
     n_batches_failed = 0
     abs_failure_threshold = max(1, int(max_batch_failure_rate * total_batches))
+    first_batch_error: Optional[str] = None
 
     try:
         for i, (frames, masks) in enumerate(loader):
@@ -713,6 +716,8 @@ def extract_roi_rotation_latent_from_video(
                     raise
             except Exception as e:
                 n_batches_failed += 1
+                if first_batch_error is None:
+                    first_batch_error = repr(e)
                 logger.error(
                     "Rotation batch %d/%d failed for %s: %s",
                     i + 1, total_batches, video_name, e,
@@ -722,7 +727,8 @@ def extract_roi_rotation_latent_from_video(
                         f"Aborting {video_name}: {n_batches_failed}/{i + 1} "
                         f"rotation batches failed (threshold "
                         f"{abs_failure_threshold} of {total_batches}, "
-                        f"max_rate={max_batch_failure_rate:.0%})."
+                        f"max_rate={max_batch_failure_rate:.0%}). "
+                        f"Cause: {first_batch_error}."
                     ) from e
 
         if not latent_list:

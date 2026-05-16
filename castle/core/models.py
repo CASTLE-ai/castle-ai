@@ -357,7 +357,13 @@ class DINOv3Encoder(VisualEncoder):
 
     def load_model(self):
         """Load DINOv3 weights and processor from HuggingFace."""
-        from transformers import AutoModel, AutoImageProcessor
+        try:
+            from transformers import AutoModel, AutoImageProcessor
+        except ImportError as exc:
+            raise ImportError(
+                "DINOv3 requires the 'transformers' package, which is not installed. "
+                "Fix: pip install 'transformers>=4.45.0'"
+            ) from exc
 
         logger.info(f"Loading DINOv3 from HuggingFace: {self.hf_id}")
         try:

@@ -474,6 +474,10 @@ def find_cluster_npz_for_parent(
 
     parent_depth = len(parent_cluster_name.split('_'))
     candidates = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
+    # cluster_model.npz is the save/apply-model artefact (different schema,
+    # no 'emb' key) — skip it.
+    candidates = [c for c in candidates
+                  if os.path.basename(c) != 'cluster_model.npz']
     best: Optional[str] = None
     best_mtime = -1.0
 
@@ -546,6 +550,16 @@ def restore_local_latent_from_npz(
     """
     try:
         data = np.load(npz_path, allow_pickle=True)
+        # Other npz artefacts (e.g. cluster_model.npz from save_cluster_model)
+        # live in the same directory but use a different schema. Bail out
+        # quietly rather than logging a full traceback.
+        required_keys = {'emb', 'cls', 'config'}
+        if not required_keys.issubset(set(data.files)):
+            logger.debug(
+                "Skipping %s: missing required keys (have %s)",
+                npz_path, list(data.files),
+            )
+            return None, None
         emb_full = data['emb']
         cls_full = data['cls']
         config = data['config']

@@ -19,9 +19,14 @@ from typing import Callable, Optional
 
 import torch
 
+from castle.core import models as _models_mod
+from castle.core.data import Preprocess
 from castle.core.environment import get_device
 from castle.core.logging_config import setup_logger
 from castle.core.model_registry import ModelRegistry, _TrackingModelSentinel
+from castle.core.project import get_project_config
+from castle.service.extraction_service import extract_latent
+from castle.service.tracking_service import track_video
 
 logger = setup_logger(__name__)
 
@@ -155,8 +160,6 @@ class Pipeline:
         """Resolve the list of videos for this pipeline run."""
         if self.config.videos:
             return list(self.config.videos)
-        from castle.core.project import get_project_config  # noqa: PLC0415
-
         _, cfg = get_project_config(self.config.storage_path, self.config.project_name)
         return sorted(cfg.get("source", []))
 
@@ -173,8 +176,6 @@ class Pipeline:
         Returns:
             Dict mapping ``video_name → status string``.
         """
-        from castle.service.tracking_service import track_video  # noqa: PLC0415
-
         results: dict = {}
         n = len(video_list)
         _log_vram("tracking-start")
@@ -237,9 +238,6 @@ class Pipeline:
             Dict mapping ``video_name → latent file path`` (empty string on
             failure).
         """
-        from castle.core.data import Preprocess  # noqa: PLC0415
-        from castle.service.extraction_service import extract_latent  # noqa: PLC0415
-
         preprocess_config = Preprocess(
             center_roi_switch=self.config.center_roi_switch,
             center_roi_id=self.config.center_roi_id,
@@ -286,8 +284,6 @@ class Pipeline:
         self.registry.unload_family("dinov2", "dinov3")
 
         # Belt-and-suspenders: evict the models-module cache too.
-        from castle.core import models as _models_mod  # noqa: PLC0415
-
         _models_mod._evict_model_cache()
 
         if torch.cuda.is_available():

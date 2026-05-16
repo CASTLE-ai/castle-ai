@@ -11,6 +11,14 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
+from castle.defaults import (
+    BIN_SIZE,
+    DBSCAN_EPS,
+    EXTRACTION_BATCH_SIZE,
+    UMAP_MIN_DIST,
+    UMAP_N_NEIGHBORS,
+)
+
 # ---------------------------------------------------------------------------
 # Default storage path — can be overridden via CASTLE_STORAGE env var
 # ---------------------------------------------------------------------------
@@ -173,7 +181,7 @@ def extract_run(
     video: str = "All",
     model: str = "dinov2_vitb14_reg",
     roi: int = 1,
-    batch_size: int = 32,
+    batch_size: int = EXTRACTION_BATCH_SIZE,
     pooling_scales: str = "1",
     feature_layers: str = "",
 ) -> dict:
@@ -221,13 +229,13 @@ def extract_run(
 def cluster_run(
     project: str,
     roi: int = 1,
-    bin_size: int = 1,
+    bin_size: int = BIN_SIZE,
     model: str = "dinov2_vitb14_reg",
-    n_neighbors: int = 100,
-    min_dist: float = 0.0,
+    n_neighbors: int = UMAP_N_NEIGHBORS,
+    min_dist: float = UMAP_MIN_DIST,
     n_components: int = 2,
     n_epochs: int = 5000,
-    eps: float = 1.0,
+    eps: float = DBSCAN_EPS,
 ) -> dict:
     """Run UMAP dimensionality reduction and DBSCAN clustering.
 

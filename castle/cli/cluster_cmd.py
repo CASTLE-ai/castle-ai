@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from castle.defaults import BIN_SIZE, DBSCAN_EPS
 from castle.service.clustering_service import ClusteringSession
 from castle.cli.storage_util import get_storage
 
@@ -21,14 +22,14 @@ def run(
     project: str = typer.Argument(..., help="Project name"),
     storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
     roi: int = typer.Option(1, "--roi", help="ROI ID"),
-    bin_size: int = typer.Option(1, "--bin-size", help="Temporal bin size (frames)"),
+    bin_size: int = typer.Option(BIN_SIZE, "--bin-size", help="Temporal bin size (frames)"),
     model: str = typer.Option("dinov3_vitb16", "--model", "-m", help="Visual model name"),
     umap_config: str = typer.Option(
         '[{"n_neighbors": 100, "min_dist": 0.0, "n_components": 2, "n_epochs": 5000}]',
         "--umap-config",
         help="UMAP config as JSON string",
     ),
-    eps: float = typer.Option(1.0, "--eps", help="DBSCAN epsilon-neighborhood radius"),
+    eps: float = typer.Option(DBSCAN_EPS, "--eps", help="DBSCAN epsilon-neighborhood radius"),
 ):
     """Run full clustering pipeline: UMAP + DBSCAN + auto-label + submit."""
     storage = get_storage(storage)

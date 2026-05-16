@@ -3,6 +3,10 @@ castle/cli/main.py
 Main typer application and subcommand registration.
 """
 
+import json
+from pathlib import Path
+from typing import Optional
+
 import typer
 
 from castle.cli.storage_util import get_storage
@@ -12,6 +16,63 @@ app = typer.Typer(
     help="CASTLE — Animal Behavior Analysis CLI",
     no_args_is_help=True,
 )
+
+
+def _load_config_file(path: Path) -> dict:
+    """Read a JSON or YAML config file into a plain dict.
+
+    Args:
+        path: Path to a ``.json``, ``.yaml`` or ``.yml`` file.
+
+    Returns:
+        Parsed config as a dict. Returns an empty dict for empty files.
+
+    Raises:
+        typer.BadParameter: If the file does not exist, has an unsupported
+            extension, or contains invalid syntax.
+    """
+    if not path.exists():
+        raise typer.BadParameter(f"Config file not found: {path}")
+    suffix = path.suffix.lower()
+    text = path.read_text()
+    if suffix == ".json":
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as e:
+            raise typer.BadParameter(f"Invalid JSON in {path}: {e}") from e
+    elif suffix in (".yaml", ".yml"):
+        import yaml
+
+        try:
+            data = yaml.safe_load(text) or {}
+        except yaml.YAMLError as e:
+            raise typer.BadParameter(f"Invalid YAML in {path}: {e}") from e
+    else:
+        raise typer.BadParameter(
+            f"Unsupported config extension {suffix!r}; expected .json, .yaml or .yml"
+        )
+    if not isinstance(data, dict):
+        raise typer.BadParameter(
+            f"Config file must be a mapping at the top level (got {type(data).__name__})"
+        )
+    return data
+
+
+def _apply_device_override(device: str) -> str:
+    """Apply ``--device`` to :mod:`castle.core.environment`'s singleton.
+
+    Args:
+        device: ``'auto'``, ``'cuda'``, ``'mps'``, or ``'cpu'``.
+
+    Returns:
+        The device string that was actually applied (after resolving ``'auto'``).
+    """
+    from castle.core import environment as _env_mod
+
+    if device == "auto":
+        return _env_mod.env.device
+    _env_mod.env.device = device
+    return device
 
 
 @app.callback()
@@ -36,13 +97,38 @@ def main_callback(
             "use_deterministic_algorithms). ~10%% slower; use for paper-grade runs."
         ),
     ),
+    device: str = typer.Option(
+        "auto",
+        "--device",
+        envvar="CASTLE_DEVICE",
+        help=(
+            "Compute device. 'auto' (default) detects CUDA/MPS/CPU. "
+            "Set explicitly to override — e.g. 'cpu' to force CPU even when CUDA is present."
+        ),
+    ),
+    config: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        envvar="CASTLE_CONFIG",
+        help=(
+            "Optional JSON or YAML config file. Loaded values land in ctx.obj['config'] "
+            "and are read by subcommands as default overrides (subcommand CLI flags still win)."
+        ),
+    ),
 ) -> None:
-    """Apply the master seed before any subcommand runs."""
+    """Apply global options before any subcommand runs."""
     from castle.core.seed import set_global_seed
+
     set_global_seed(seed, strict_cuda=strict_cuda)
+    resolved_device = _apply_device_override(device)
+    config_data = _load_config_file(config) if config else {}
+
     ctx.ensure_object(dict)
     ctx.obj["master_seed"] = seed
     ctx.obj["strict_cuda"] = strict_cuda
+    ctx.obj["device"] = resolved_device
+    ctx.obj["config"] = config_data
 
 # Register subcommands — must appear after app is created (CLI pattern)
 from castle.cli import project_cmd, track_cmd, extract_cmd, cluster_cmd, mcp_cmd  # noqa: E402

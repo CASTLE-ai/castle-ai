@@ -7,6 +7,8 @@ without freezing the UI.
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from castle.defaults import EXTRACTION_BATCH_SIZE
+
 
 class ServiceWorker(QThread):
     """Generic background thread for any callable.
@@ -73,7 +75,7 @@ class ExtractionWorker(QThread):
     error = pyqtSignal(str)
 
     def __init__(self, storage_path, project_name, video_name, model,
-                 roi, batch_size=32, preprocess_config=None,
+                 roi, batch_size=EXTRACTION_BATCH_SIZE, preprocess_config=None,
                  skip_existing=True, pooling_method='weighted_average',
                  pooling_scales=None, feature_layers=None):
         super().__init__()

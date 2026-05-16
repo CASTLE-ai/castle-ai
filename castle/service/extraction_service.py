@@ -16,6 +16,7 @@ from castle.core.extractor import (
     extract_roi_rotation_latent_from_video,
 )
 from castle.core.project import get_project_config
+from castle.defaults import EXTRACTION_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def extract_latent(
     video_name: str,
     model: str,
     roi: int,
-    batch_size: int = 32,
+    batch_size: int = EXTRACTION_BATCH_SIZE,
     preprocess_config: Optional[Preprocess] = None,
     skip_existing: bool = True,
     progress_callback: Optional[Callable] = None,
@@ -175,7 +176,7 @@ def extract_rotation_latent(
     video_name: str,
     model: str,
     roi: int,
-    batch_size: int = 32,
+    batch_size: int = EXTRACTION_BATCH_SIZE,
     preprocess_config: Optional[Preprocess] = None,
     skip_existing: bool = True,
     progress_callback: Optional[Callable] = None,

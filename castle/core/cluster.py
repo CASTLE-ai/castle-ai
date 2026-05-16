@@ -26,8 +26,8 @@ _VIDEO_READER_CACHE_MAX = 8
 _FRAME_CACHE_MAX = 256
 
 # PERF-01: aggregated latent memmap threshold (bytes). Override via env var
-# CASTLE_MEMMAP_THRESHOLD_GB. Default 2 GiB.
-_DEFAULT_MEMMAP_THRESHOLD_GB = 2.0
+# CASTLE_MEMMAP_THRESHOLD_GB. Default sourced from castle.defaults.MEMMAP_THRESHOLD_GB.
+from castle.defaults import MEMMAP_THRESHOLD_GB as _DEFAULT_MEMMAP_THRESHOLD_GB
 
 # ---------------------------
 # Helper Functions

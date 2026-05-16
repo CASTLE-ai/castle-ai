@@ -21,6 +21,15 @@ from typing import List, Optional
 import json
 import logging
 
+from castle.defaults import (
+    BIN_SIZE,
+    DBSCAN_EPS,
+    EXTRACTION_BATCH_SIZE,
+    TRACKING_BATCH_SIZE,
+    UMAP_MIN_DIST,
+    UMAP_N_NEIGHBORS,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,8 +48,8 @@ class PreprocessConfig:
 @dataclass
 class UMAPConfig:
     """UMAP dimensionality reduction parameters."""
-    n_neighbors: int = 100
-    min_dist: float = 0.0
+    n_neighbors: int = UMAP_N_NEIGHBORS
+    min_dist: float = UMAP_MIN_DIST
     n_components: int = 2
     n_epochs: int = 5000
 
@@ -49,7 +58,7 @@ class UMAPConfig:
 class ClusterConfig:
     """Clustering parameters."""
     method: str = 'dbscan'
-    eps: float = 1.0
+    eps: float = DBSCAN_EPS
     umap_stages: List[UMAPConfig] = field(default_factory=lambda: [UMAPConfig()])
 
 
@@ -58,7 +67,7 @@ class TrackingConfig:
     """ROI tracking parameters."""
     model: str = 'r50_deaotl'
     smart_filter_ratio: float = 0.1
-    batch_size: int = 16
+    batch_size: int = TRACKING_BATCH_SIZE
 
 
 @dataclass
@@ -66,8 +75,8 @@ class ExtractionConfig:
     """Latent extraction parameters."""
     model: str = 'dinov3_vitb16'
     roi_ids: List[int] = field(default_factory=lambda: [1])
-    batch_size: int = 32
-    bin_size: int = 1
+    batch_size: int = EXTRACTION_BATCH_SIZE
+    bin_size: int = BIN_SIZE
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     # A-06: Multi-scale pooling
     pooling_method: str = 'weighted_average'  # 'weighted_average' or 'multiscale'

@@ -142,9 +142,31 @@ class Latent:
         return self.time_window
 
     def select(self, selected_cluster):
+        import numpy as np
         if isinstance(selected_cluster, str):
-            selected_cluster = self.behavior_name2cluster_id[selected_cluster]
-        return LocalLatent(self.data[self.cluster == selected_cluster], self.cluster == selected_cluster, color_avoid=self.used_palette, device=self.device)
+            name = selected_cluster
+            if name in self.behavior_name2cluster_id:
+                # Exact match — leaf cluster
+                cid = self.behavior_name2cluster_id[name]
+                mask = self.cluster == cid
+            else:
+                # Prefix match — synthetic parent node: select all descendants.
+                # A cluster belongs to this subtree if its name equals the prefix
+                # OR starts with prefix + '_'.
+                prefix = name + '_'
+                child_ids = [
+                    cid for n, cid in self.behavior_name2cluster_id.items()
+                    if n == name or n.startswith(prefix)
+                ]
+                if not child_ids:
+                    raise KeyError(
+                        f"Cluster '{name}' not found and has no children. "
+                        f"Known clusters: {list(self.behavior_name2cluster_id)}"
+                    )
+                mask = np.isin(self.cluster, child_ids)
+        else:
+            mask = self.cluster == selected_cluster
+        return LocalLatent(self.data[mask], mask, color_avoid=self.used_palette, device=self.device)
     
     def merge(self, cluster_ids):
         cluster_ids = np.array(cluster_ids)

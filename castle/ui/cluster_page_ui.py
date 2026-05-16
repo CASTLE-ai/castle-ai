@@ -463,7 +463,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=label_all_and_submit,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo,
                 ui['cluster_tree_select'], history_state,
-                ui['umap_config_text'], ui['eps'], overwrite_state],
+                ui['umap_config_text'], ui['eps'], overwrite_state,
+                ui['preset_dropdown'], ui['umap_seed']],
         outputs=[ui['syllables_plot'],
                  ui['cluster_tree_html'], ui['cluster_tree_select'],
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
@@ -476,7 +477,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
     )
 
-    # Auto-restore prior UMAP/eps when a tree node is clicked.
+    # Auto-restore prior UMAP/eps/preset/seed when a tree node is clicked.
     # NB: use .change() not .input() — .input() requires a "real" user-typed
     # event and does not fire reliably for hidden textboxes whose value is
     # mutated via JS native setter + dispatchEvent.
@@ -484,7 +485,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=on_tree_node_select,
         inputs=[ui['cluster_tree_select'], latents, storage_path, project_name],
         outputs=[ui['umap_config_text'], ui['eps'], ui['embedding_plot'],
-                 local_latents, overwrite_state, ui['submit_status']],
+                 local_latents, overwrite_state, ui['submit_status'],
+                 ui['preset_dropdown'], ui['umap_seed']],
     )
 
     # Undo / Redo

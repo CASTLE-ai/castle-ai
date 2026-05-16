@@ -268,61 +268,92 @@ def plot_syllables_per_video(latents, aggregator):
 
 
 def on_tree_node_select(node_name, latents, storage_path, project_name):
-    """Restore prior UMAP/eps state when a cluster tree node is selected.
+    """Restore prior UMAP/eps/preset/seed state when a cluster tree node
+    is selected.
 
-    If the selected parent node has a sidecar ``node_{name}_meta.json``,
-    its UMAP config string and eps are pushed back into the left-panel
-    inputs and the saved embedding npz is rebuilt into a scatter plot.
+    Resolution order:
+        1. ``cluster/node_{name}_meta.json`` sidecar (new submissions).
+        2. Legacy fallback: pick the ``cluster_*.npz`` whose export names
+           are immediate children of ``node_name`` and rebuild from there.
 
-    Outputs (in order, matching the .input binding):
+    Outputs (in order, matching the .change binding):
         umap_config_text, eps, embedding_plot_image, local_latents_state,
-        overwrite_state (always reset to False), submit_status_md.
+        overwrite_state (always reset to False), submit_status_md,
+        preset_dropdown, umap_seed_textbox.
     """
     from castle.service.clustering_service import (
         load_node_meta, restore_local_latent_from_npz,
+        find_cluster_npz_for_parent,
     )
     from castle.service.plotting_service import build_named_scatter_plot
 
     no_update = (
-        gr.update(), gr.update(), gr.update(), gr.update(), False, gr.update(),
+        gr.update(), gr.update(), gr.update(), gr.update(),
+        False, gr.update(), gr.update(), gr.update(),
     )
     if not node_name or not storage_path or not project_name:
         return no_update
 
     cluster_path = os.path.join(storage_path, project_name, 'cluster')
+
     meta = load_node_meta(cluster_path, node_name)
-    if meta is None:
-        # Fresh / un-submitted node — clear status, leave settings alone.
+    npz_path: str | None = None
+    if meta is not None and meta.get('embedding_npz'):
+        candidate = os.path.join(cluster_path, meta['embedding_npz'])
+        if os.path.exists(candidate):
+            npz_path = candidate
+
+    # Legacy fallback: no sidecar (or its npz is missing) → infer from
+    # cluster_*.npz files whose export names match this parent.
+    if npz_path is None and latents is not None:
+        npz_path = find_cluster_npz_for_parent(cluster_path, node_name, latents)
+
+    if meta is None and npz_path is None:
+        # Fresh / un-submitted node — leave settings alone, clear status.
         return (
             gr.update(), gr.update(), gr.update(), gr.update(),
             False,
             gr.update(value=""),
+            gr.update(), gr.update(),
         )
 
     umap_cfg_update = gr.update()
-    if meta.get('umap_config'):
-        umap_cfg_update = gr.update(value=meta['umap_config'])
-
     eps_update = gr.update()
-    if meta.get('eps') is not None:
-        eps_update = gr.update(value=meta['eps'])
+    preset_update = gr.update()
+    seed_update = gr.update()
+
+    if meta is not None:
+        if meta.get('umap_config'):
+            umap_cfg_update = gr.update(value=meta['umap_config'])
+        if meta.get('eps') is not None:
+            eps_update = gr.update(value=meta['eps'])
+        if meta.get('preset'):
+            preset_update = gr.update(value=meta['preset'])
+        if meta.get('umap_seed') is not None:
+            seed_update = gr.update(value=str(meta['umap_seed']))
 
     emb_img_update = gr.update()
     local_latents_update = gr.update()
-    npz_basename = meta.get('embedding_npz')
-    if npz_basename and latents is not None:
-        npz_path = os.path.join(cluster_path, npz_basename)
-        if os.path.exists(npz_path):
-            local_ll, _ = restore_local_latent_from_npz(npz_path, latents)
-            if local_ll is not None:
-                _, named_img = build_named_scatter_plot(local_ll)
-                emb_img_update = gr.update(value=named_img)
-                local_latents_update = local_ll
+    if npz_path and latents is not None:
+        local_ll, _ = restore_local_latent_from_npz(npz_path, latents)
+        if local_ll is not None:
+            _, named_img = build_named_scatter_plot(local_ll)
+            emb_img_update = gr.update(value=named_img)
+            local_latents_update = local_ll
+            # If we used the legacy fallback (no sidecar), fish the seed
+            # out of the rebuilt configs so it still reaches the UI.
+            if meta is None:
+                cfgs = getattr(local_ll, 'configs', None)
+                if cfgs:
+                    first = cfgs[0] if isinstance(cfgs, list) else cfgs
+                    if isinstance(first, dict) and first.get('random_state') is not None:
+                        seed_update = gr.update(value=str(int(first['random_state'])))
 
     return (
         umap_cfg_update, eps_update, emb_img_update, local_latents_update,
         False,
         gr.update(value=f"📂 Loaded saved state for **{node_name}**."),
+        preset_update, seed_update,
     )
 
 
@@ -330,6 +361,7 @@ def label_all_and_submit(
     storage_path, project_name, latents, local_latents, aggregator,
     parent_name, history,
     umap_config_str="", eps_value=None, overwrite_confirmed=False,
+    preset_value=None, umap_seed_str="",
 ):
     """Thin Gradio wrapper: auto-label every DBSCAN cluster then submit.
 
@@ -378,11 +410,20 @@ def label_all_and_submit(
 
     gr.Info(f'Auto-labeled {count} clusters.')
 
+    seed_arg: int | None = None
+    if isinstance(umap_seed_str, str) and umap_seed_str.strip():
+        try:
+            seed_arg = int(umap_seed_str.strip())
+        except ValueError:
+            seed_arg = None
+
     result = import_info_from_local_latent(
         storage_path, project_name, latents, local_latents, aggregator,
         parent_cluster_name=parent_name,
         umap_config_str=umap_config_str,
         eps_value=eps_value,
+        preset_value=preset_value,
+        umap_seed=seed_arg,
     )
     if result[0] is None:
         return result + (history, False, "")
@@ -502,6 +543,7 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggr
 def import_info_from_local_latent(
     storage_path, project_name, latents, local_latents, aggregator,
     parent_cluster_name=None, umap_config_str=None, eps_value=None,
+    preset_value=None, umap_seed=None,
 ):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.submit_local_to_global`.
@@ -521,6 +563,8 @@ def import_info_from_local_latent(
             parent_cluster_name=parent_cluster_name,
             umap_config_str=umap_config_str,
             eps_value=eps_value,
+            preset_value=preset_value,
+            umap_seed=umap_seed,
         )
     except Exception as e:
         gr.Info(f'Failed to import cluster results into the session. Details: {e}')

@@ -445,6 +445,59 @@ def load_node_meta(cluster_path: str, parent_cluster_name: str) -> Optional[dict
         return None
 
 
+def find_cluster_npz_for_parent(
+    cluster_path: str,
+    parent_cluster_name: str,
+    latents: Any,
+) -> Optional[str]:
+    """Fallback locator: pick the ``cluster_*.npz`` whose immediate children
+    are direct descendants of ``parent_cluster_name``.
+
+    Used when a node has no ``node_{parent}_meta.json`` sidecar (e.g.
+    submissions made before the sidecar feature landed). We inspect each
+    candidate npz, rebuild its export-name list, and keep the file whose
+    every export name is an *immediate* child of ``parent_cluster_name``
+    (one more underscore-segment, prefix match). When several files match,
+    we return the most recently modified one.
+
+    Args:
+        cluster_path: Directory typically ``<project>/cluster/``.
+        parent_cluster_name: Parent node name (e.g. ``'init'``).
+        latents: Parent :class:`Latent` providing ``cluster_meta`` so that
+            ``restore_local_latent_from_npz`` can populate ``export``.
+
+    Returns:
+        Absolute path to the best-matching npz, or ``None``.
+    """
+    if not parent_cluster_name or latents is None:
+        return None
+
+    parent_depth = len(parent_cluster_name.split('_'))
+    candidates = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
+    best: Optional[str] = None
+    best_mtime = -1.0
+
+    for npz in candidates:
+        ll, _ = restore_local_latent_from_npz(npz, latents)
+        if ll is None:
+            continue
+        export = getattr(ll, 'export', None) or {}
+        names = [v.get('name', '') for v in export.values()]
+        if not names:
+            continue
+        prefix = parent_cluster_name + '_'
+        if not all(n.startswith(prefix) for n in names):
+            continue
+        if not all(len(n.split('_')) == parent_depth + 1 for n in names):
+            continue
+        mt = os.path.getmtime(npz)
+        if mt > best_mtime:
+            best = npz
+            best_mtime = mt
+
+    return best
+
+
 def find_latest_cluster_npz(cluster_path: str) -> Optional[str]:
     """Return the most recently modified ``cluster_*.npz`` in ``cluster_path``.
 
@@ -886,6 +939,8 @@ def submit_local_to_global(
     parent_cluster_name: Optional[str] = None,
     umap_config_str: Optional[str] = None,
     eps_value: Optional[float] = None,
+    preset_value: Optional[str] = None,
+    umap_seed: Optional[int] = None,
 ) -> SubmitArtifacts:
     """Merge local clusters into the global ``Latent`` and persist artefacts.
 
@@ -958,8 +1013,24 @@ def submit_local_to_global(
         Z_plt.save_named_embedding(save_path=embedding_path)
 
     # Sidecar metadata indexed by parent cluster name so the UI can restore
-    # umap_config / eps / embedding npz when the user reclicks the node.
+    # umap_config / eps / preset / seed / embedding npz when the user
+    # reclicks the node.
     if parent_cluster_name:
+        # Pull the resolved seed from local_latents when caller didn't pass
+        # one explicitly — generate_embedding writes umap_seeds onto the
+        # LocalLatent after build_embedding completes.
+        resolved_seed = umap_seed
+        if resolved_seed is None and local_latents is not None:
+            seeds = getattr(local_latents, 'umap_seeds', None)
+            if seeds:
+                resolved_seed = int(seeds[0])
+            else:
+                cfgs = getattr(local_latents, 'configs', None)
+                if cfgs:
+                    first = cfgs[0] if isinstance(cfgs, list) else cfgs
+                    if isinstance(first, dict) and first.get('random_state') is not None:
+                        resolved_seed = int(first['random_state'])
+
         meta_path = os.path.join(
             cluster_path, f'node_{parent_cluster_name}_meta.json'
         )
@@ -967,6 +1038,8 @@ def submit_local_to_global(
             'parent_cluster_name': parent_cluster_name,
             'umap_config': umap_config_str,
             'eps': eps_value,
+            'preset': preset_value,
+            'umap_seed': resolved_seed,
             'embedding_npz': (
                 os.path.basename(embedding_path) if embedding_path else None
             ),

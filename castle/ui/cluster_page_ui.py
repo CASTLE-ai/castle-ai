@@ -5,7 +5,7 @@ UI Layer for Clustering — layout construction and event binding only.
 Heavy logic has been extracted to:
   - castle.ui.embedding_scatter   (EmbeddingScatterPlot)
   - castle.ui.cluster_handlers    (event handler functions)
-  - castle.ui.cluster_tree        (build_cluster_tree_markdown)
+  - castle.ui.cluster_tree        (build_cluster_tree_html, build_cluster_tree_choices)
 """
 
 import logging
@@ -246,7 +246,17 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
     with gr.Row(visible=True) as ui['cluster_row_main']:
         with gr.Column(scale=2):
-            ui['cluster_tree_radio'] = gr.Radio(label="Cluster Tree", choices=[], interactive=True, visible=True)
+            ui['cluster_tree_html'] = gr.HTML(
+                value="<em style='color:#888;font-size:12px'>No clusters yet.</em>",
+                label="Cluster Tree",
+            )
+            ui['cluster_tree_select'] = gr.Dropdown(
+                label="Select Cluster",
+                choices=[],
+                interactive=True,
+                visible=True,
+                info="Pick a cluster (or parent node) to run UMAP on its frames.",
+            )
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
             with gr.Row():
@@ -381,7 +391,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=update_select_cluster_list,
         inputs=latents,
-        outputs=ui['cluster_tree_radio']
+        outputs=[ui['cluster_tree_html'], ui['cluster_tree_select']],
     ).then(
         fn=collapse_accordion,
         outputs=ui['cluster_input_accordion']
@@ -391,9 +401,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['restore_btn'].click(
         fn=restore_session,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'], ui['session_dropdown']],
-        outputs=[mulvideo, latents, ui['syllables_plot'], ui['cluster_tree_radio'],
+        outputs=[mulvideo, latents, ui['syllables_plot'],
+                 ui['cluster_tree_html'], ui['cluster_tree_select'],
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
-                 local_embedding_plot, ui['embedding_plot']]
+                 local_embedding_plot, ui['embedding_plot']],
     ).then(
         fn=lambda: (gr.update(visible=False), gr.update(value="Session restored successfully."), gr.update(visible=False)),
         outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
@@ -408,7 +419,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=generate_embedding,
         inputs=[
             latents,
-            ui['cluster_tree_radio'],
+            ui['cluster_tree_select'],
             ui['umap_config_text'],
             ui['umap_seed'],
             storage_path,
@@ -453,21 +464,30 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # Auto-generate cluster name when ID changes
     ui['label_cluster_id'].change(
         fn=auto_generate_cluster_name,
-        inputs=[ui['cluster_tree_radio'], ui['label_cluster_id']],
+        inputs=[ui['cluster_tree_select'], ui['label_cluster_id']],
         outputs=ui['label_cluster_name']
     )
 
     ui['label_cluster_submit_btn'].click(
         fn=import_info_from_local_latent,
         inputs=[storage_path, project_name, latents, local_latents, mulvideo],
-        outputs=[ui['syllables_plot'], ui['cluster_tree_radio'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps']],
+        outputs=[ui['syllables_plot'],
+                 ui['cluster_tree_html'], ui['cluster_tree_select'],
+                 ui['behavior_id_csv'], ui['behavior_time_series_csv'],
+                 ui['behavior_time_series_srt'], local_embedding_plot,
+                 ui['embedding_plot'], ui['display_eps']],
     )
 
     # Enter & Submit all: auto-label all clusters and submit
     ui['enter_submit_all_btn'].click(
         fn=label_all_and_submit,
-        inputs=[storage_path, project_name, latents, local_latents, mulvideo, ui['cluster_tree_radio'], history_state],
-        outputs=[ui['syllables_plot'], ui['cluster_tree_radio'], ui['behavior_id_csv'], ui['behavior_time_series_csv'], ui['behavior_time_series_srt'], local_embedding_plot, ui['embedding_plot'], ui['display_eps'], history_state],
+        inputs=[storage_path, project_name, latents, local_latents, mulvideo,
+                ui['cluster_tree_select'], history_state],
+        outputs=[ui['syllables_plot'],
+                 ui['cluster_tree_html'], ui['cluster_tree_select'],
+                 ui['behavior_id_csv'], ui['behavior_time_series_csv'],
+                 ui['behavior_time_series_srt'], local_embedding_plot,
+                 ui['embedding_plot'], ui['display_eps'], history_state],
     ).then(
         fn=update_history_buttons,
         inputs=[history_state],
@@ -478,7 +498,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['undo_btn'].click(
         fn=handle_undo,
         inputs=[local_latents, latents, history_state],
-        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'], ui['cluster_tree_radio']],
+        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'],
+                 ui['cluster_tree_html'], ui['cluster_tree_select']],
     ).then(
         fn=update_history_buttons,
         inputs=[history_state],
@@ -488,18 +509,23 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['redo_btn'].click(
         fn=handle_redo,
         inputs=[local_latents, latents, history_state],
-        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'], ui['cluster_tree_radio']],
+        outputs=[local_embedding_plot, ui['embedding_plot'], history_state, ui['history_info'],
+                 ui['cluster_tree_html'], ui['cluster_tree_select']],
     ).then(
         fn=update_history_buttons,
         inputs=[history_state],
         outputs=[ui['undo_btn'], ui['redo_btn'], ui['history_info']],
     )
 
-    # Auto-update cluster list when tab is selected (only when session is active)
+    def _auto_update_tree(sp, pn, lat):
+        if check_session_exists(sp, pn) is not None:
+            return update_select_cluster_list(lat)
+        return gr.update(), gr.update()
+
     cluster_page_tab.select(
-        fn=lambda sp, pn, lat: update_select_cluster_list(lat) if check_session_exists(sp, pn) is not None else gr.update(),
+        fn=_auto_update_tree,
         inputs=[storage_path, project_name, latents],
-        outputs=ui['cluster_tree_radio']
+        outputs=[ui['cluster_tree_html'], ui['cluster_tree_select']],
     )
 
     # Save Cluster Model

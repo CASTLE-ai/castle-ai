@@ -74,20 +74,29 @@ def collapse_accordion():
 
 
 def update_select_cluster_list(latents):
-    from castle.ui.cluster_tree import build_cluster_tree_choices
+    """Return ``(html_update, dropdown_update)`` for the tree HTML + selector Dropdown.
+
+    The 2-tuple maps to ``(ui['cluster_tree_html'], ui['cluster_tree_select'])``
+    in every Gradio output binding.
+    """
+    from castle.ui.cluster_tree import build_cluster_tree_html, build_cluster_tree_choices
 
     if latents is None:
-        return gr.update(choices=[], value=None)
+        return (
+            gr.update(value="<em style='color:#888'>No session.</em>"),
+            gr.update(choices=[], value=None),
+        )
 
     if not hasattr(latents, 'cluster_meta') or not hasattr(latents, 'cluster'):
         gr.Info('Session not ready yet. Please wait for initialization to complete, then try again.')
-        return gr.update(choices=[], value=None)
+        return (
+            gr.update(value=""),
+            gr.update(choices=[], value=None),
+        )
 
+    html = build_cluster_tree_html(latents.cluster_meta, latents.cluster)
     choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-    # Bug 13 fix: always pass value=None when refreshing choices so the Radio
-    # component does not retain a stale value that is absent from the new list,
-    # which would cause a Gradio validation error.
-    return gr.update(choices=choices, value=None)
+    return gr.update(value=html), gr.update(choices=choices, value=None)
 
 
 def generate_embedding(
@@ -279,7 +288,7 @@ def label_all_and_submit(storage_path, project_name, latents, local_latents, agg
         count = auto_label_local_clusters(local_latents, parent_name)
     except InsufficientDataError as e:
         gr.Warning(str(e))
-        return (None, None, None, None, None, None, None, None, history)
+        return (None, None, None, None, None, None, None, None, None, history)
 
     gr.Info(f'Auto-labeled {count} clusters.')
 
@@ -342,7 +351,7 @@ def _restore_embedding_from_npz(npz_path, latents):
 
 def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id=None):
     """Restore latents from saved CSV files and optionally restore UMAP embedding."""
-    _empty = (None, None, None, None, None, None, None, None)
+    _empty = (None, None, None, None, None, None, None, None, None)
     if project_name is None:
         return _empty
 
@@ -389,8 +398,9 @@ def _do_restore_session(storage_path, project_name, select_roi_id, bin_size, sel
 
     gr.Info(f'Restored session with {artifacts.latents.num_cluster - 1} clusters')
 
+    tree_html_upd, tree_dd_upd = artifacts.cluster_choices
     return (artifacts.aggregator, artifacts.latents,
-            artifacts.syllables_fig, artifacts.cluster_choices,
+            artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
             artifacts.id_csv_path, artifacts.time_series_paths,
             restored_Z_plt, restored_emb_img)
 
@@ -418,19 +428,20 @@ def import_info_from_local_latent(storage_path, project_name, latents, local_lat
         )
     except Exception as e:
         gr.Info(f'Failed to import cluster results into the session. Details: {e}')
-        return (None,) * 8
+        return (None,) * 9
 
+    tree_html_upd, tree_dd_upd = artifacts.cluster_choices
     if artifacts.embedding_path is None:
         gr.Warning(
             "Embedding not available on local_latents — skipping scatter plot. "
             "Run 'Generate Cluster' with UMAP/t-SNE enabled before submitting."
         )
-        return (artifacts.syllables_fig, artifacts.cluster_choices,
+        return (artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
                 artifacts.id_csv_path, artifacts.time_series_paths,
                 artifacts.subtitle_paths, None, None, None)
 
     Z_plt, named_img = build_named_scatter_plot(artifacts.local_latents)
-    return (artifacts.syllables_fig, artifacts.cluster_choices,
+    return (artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
             artifacts.id_csv_path, artifacts.time_series_paths,
             artifacts.subtitle_paths, Z_plt, named_img,
             artifacts.embedding_path)
@@ -478,26 +489,29 @@ def _do_history_step(
     """Shared core of :func:`handle_undo` / :func:`handle_redo`."""
     if history is None or not can_check(history):
         gr.Info(f"Nothing to {verb_past.lower().rstrip('ne').rstrip('do')}do — no recorded actions yet.")
-        return gr.update(), gr.update(), history, _history_status(history), gr.update()
+        return gr.update(), gr.update(), history, _history_status(history), gr.update(), gr.update()
 
     desc = step_callable(local_latents, parent=latents)
 
     if not hasattr(local_latents, 'cluster') or not hasattr(local_latents, 'embedding'):
         gr.Info(f"Cannot {verb_past.lower().rstrip('ne').rstrip('do')}do: no valid state found.")
-        return gr.update(), gr.update(), history, _history_status(history), gr.update()
+        return gr.update(), gr.update(), history, _history_status(history), gr.update(), gr.update()
 
     gr.Info(f"{verb_past}: {desc}")
 
     from castle.service.plotting_service import build_scatter_plot
-    from castle.ui.cluster_tree import build_cluster_tree_choices
+    from castle.ui.cluster_tree import build_cluster_tree_html, build_cluster_tree_choices
 
     Z_plt, img = build_scatter_plot(local_latents)
-    tree_update = gr.update()
+    tree_html = gr.update()
+    tree_dd = gr.update()
     if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
+        html = build_cluster_tree_html(latents.cluster_meta, latents.cluster)
         choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-        tree_update = gr.update(choices=choices, value=None)
+        tree_html = gr.update(value=html)
+        tree_dd = gr.update(choices=choices, value=None)
 
-    return Z_plt, img, history, _history_status(history), tree_update
+    return Z_plt, img, history, _history_status(history), tree_html, tree_dd
 
 
 def handle_undo(local_latents, latents, history):

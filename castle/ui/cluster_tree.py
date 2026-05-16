@@ -140,6 +140,72 @@ def build_cluster_tree_markdown(cluster_meta, cluster_array):
     return "### 📊 Cluster Tree\n\n" + "\n\n".join(lines)
 
 
+_TREE_CSS = """\
+<style>
+.castle-cluster-tree{font-family:"Courier New",Consolas,monospace;font-size:12.5px;
+  border:1px solid #e0e0e0;border-radius:6px;padding:4px;max-height:280px;
+  overflow-y:auto;background:#fcfcfc;margin-bottom:2px;}
+.cct-node{display:flex;align-items:center;padding:2px 4px;border-radius:3px;gap:4px;line-height:1.6;}
+.cct-icon{flex-shrink:0;}
+.cct-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cct-count{flex-shrink:0;font-size:10.5px;color:#666;background:#eee;
+  padding:0 4px;border-radius:8px;white-space:nowrap;}
+</style>"""
+
+
+def build_cluster_tree_html(cluster_meta: dict, cluster_array) -> str:
+    """Build an HTML visual tree of the cluster hierarchy (display-only).
+
+    Uses CSS ``padding-left`` for indentation — reliable across all browsers
+    and unaffected by HTML whitespace collapsing.
+
+    Args:
+        cluster_meta: dict {id: {name, color, ...}}
+        cluster_array: numpy array of per-frame cluster assignments.
+
+    Returns:
+        HTML string for ``gr.HTML`` component.
+    """
+    tree = _build_tree(cluster_meta, cluster_array)
+
+    rows = []
+    for name, info in tree.items():
+        if info['cumulative'] == 0:
+            continue
+        depth = info['depth']
+        indent_px = 8 + depth * 20
+
+        if info['is_container']:
+            icon = '📂'
+        else:
+            color = (info['meta'] or {}).get('color', 'grey')
+            icon = '🟢' if color != 'grey' else '📁'
+
+        rows.append(
+            f'<div class="cct-node" style="padding-left:{indent_px}px">'
+            f'<span class="cct-icon">{icon}</span>'
+            f'<span class="cct-name">{name}</span>'
+            f'<span class="cct-count">{info["cumulative"]} frames</span>'
+            f'</div>'
+        )
+
+    if not rows:
+        return (
+            f'{_TREE_CSS}'
+            '<div class="castle-cluster-tree">'
+            '<span style="color:#888;font-style:italic;padding:6px;display:block">'
+            'No clusters yet — run DBSCAN to create clusters.'
+            '</span></div>'
+        )
+
+    return (
+        f'{_TREE_CSS}'
+        '<div class="castle-cluster-tree">\n'
+        + '\n'.join(rows)
+        + '\n</div>'
+    )
+
+
 def build_cluster_tree_choices(cluster_meta, cluster_array):
     """Build tree-formatted choices for gr.Radio.
 

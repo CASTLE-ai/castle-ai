@@ -249,14 +249,23 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 label="Cluster Tree",
             )
             # Hidden textbox — JS onclick on tree nodes writes here via native
-            # value setter + input event dispatch (castleTreeClick in main_ui.py).
-            # Gradio reads it as a normal input on button clicks.
+            # value setter + input/change event dispatch (castleTreeClick in
+            # main_ui.py).  We use CSS to hide rather than visible=False
+            # because hidden Gradio components occasionally swallow
+            # synthetic .change() / .input() events, which breaks the
+            # auto-restore handler bound below.
             ui['cluster_tree_select'] = gr.Textbox(
                 value="",
-                visible=False,
                 interactive=True,
                 elem_id="castle-tree-select",
-                label="Selected cluster (internal)",
+                elem_classes=["castle-tree-select-hidden"],
+                show_label=False,
+                container=False,
+            )
+            gr.HTML(
+                "<style>.castle-tree-select-hidden{position:absolute!important;"
+                "left:-9999px!important;width:1px!important;height:1px!important;"
+                "overflow:hidden!important;}</style>"
             )
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
@@ -468,7 +477,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
 
     # Auto-restore prior UMAP/eps when a tree node is clicked.
-    ui['cluster_tree_select'].input(
+    # NB: use .change() not .input() — .input() requires a "real" user-typed
+    # event and does not fire reliably for hidden textboxes whose value is
+    # mutated via JS native setter + dispatchEvent.
+    ui['cluster_tree_select'].change(
         fn=on_tree_node_select,
         inputs=[ui['cluster_tree_select'], latents, storage_path, project_name],
         outputs=[ui['umap_config_text'], ui['eps'], ui['embedding_plot'],

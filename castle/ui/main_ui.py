@@ -44,6 +44,7 @@ function castleTreeClick(el, name) {
         tb.value = name;
     }
     tb.dispatchEvent(new Event('input', { bubbles: true }));
+    tb.dispatchEvent(new Event('change', { bubbles: true }));
 }
 """
 

@@ -14,7 +14,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import List, Optional, Callable, Any, Tuple
+from typing import Dict, List, Optional, Callable, Any, Tuple
 
 import numpy as np
 import pandas as pd
@@ -541,9 +541,45 @@ def find_latest_cluster_npz(cluster_path: str) -> Optional[str]:
     return npz_files[0]
 
 
+def _extract_child_names_from_filename(
+    basename: str,
+    parent_cluster_name: str,
+) -> List[str]:
+    """Parse child cluster names from a ``cluster_*.npz`` filename.
+
+    The file is named ``cluster_{c1}_{c2}_..._{ck}_.npz`` where each ``c_i``
+    is an immediate child of ``parent_cluster_name``.  Because children have
+    exactly ``parent_depth + 1`` underscore-segments we can recover the
+    ordered list without touching ``cluster_meta``.
+
+    Args:
+        basename: Filename (no directory), e.g. ``cluster_init_a0_init_a1_.npz``.
+        parent_cluster_name: Parent node name, e.g. ``'init'``.
+
+    Returns:
+        Ordered list of child names (empty list on parse failure).
+    """
+    if not basename.startswith('cluster_') or not basename.endswith('.npz'):
+        return []
+    core = basename[len('cluster_'):-len('.npz')]
+    if not core.endswith('_'):
+        return []
+    segments = core.rstrip('_').split('_')
+    parent_depth = len(parent_cluster_name.split('_'))
+    seg_per_child = parent_depth + 1
+    if seg_per_child <= 0 or len(segments) % seg_per_child != 0:
+        return []
+    child_count = len(segments) // seg_per_child
+    return [
+        '_'.join(segments[i * seg_per_child:(i + 1) * seg_per_child])
+        for i in range(child_count)
+    ]
+
+
 def restore_local_latent_from_npz(
     npz_path: str,
     latents: Any,
+    parent_cluster_name: Optional[str] = None,
 ) -> Tuple[Optional[Any], Optional[np.ndarray]]:
     """Reconstruct a :class:`LocalLatent` from a saved cluster ``.npz``.
 
@@ -558,6 +594,11 @@ def restore_local_latent_from_npz(
         latents: Parent :class:`castle.utils.latent_explorer.Latent`
             object (provides ``data``, ``used_palette``, ``device``,
             ``cluster``, ``cluster_meta``).
+        parent_cluster_name: Name of the parent node (e.g. ``'init'``).
+            When supplied, the filename is parsed as a fallback to recover
+            the original child names for any local cluster IDs whose current
+            global counterpart has since been evicted from ``cluster_meta``
+            due to deeper splits.
 
     Returns:
         ``(local_latents, embedding_array)`` or ``(None, None)`` on
@@ -609,11 +650,49 @@ def restore_local_latent_from_npz(
         local_latents.cluster = masked_cls
         local_latents.configs = config.tolist() if hasattr(config, 'tolist') else config
 
-        # Rebuild the export dict by matching each local cluster id to
-        # the most common global cluster id covering those rows.
+        # Step 1: try to recover historic child names from the filename.
+        # The file is named cluster_{c1}_{c2}_..._{ck}_.npz in submission
+        # order (c_i corresponds to local cluster ID i).  This gives us the
+        # correct names even when deeper splits have evicted the original
+        # children from cluster_meta.
+        basename = os.path.basename(npz_path)
+        filename_child_names: List[str] = []
+        if parent_cluster_name:
+            filename_child_names = _extract_child_names_from_filename(
+                basename, parent_cluster_name,
+            )
+
+        # Step 2: build export — prefer filename-derived historic names;
+        # fall back to current cluster_meta for any ID not covered.
+        # Build a name→color lookup from current cluster_meta so we can
+        # assign colours to historic clusters whose descendants are still live.
+        name_to_color: Dict[str, str] = {
+            meta['name']: meta['color']
+            for meta in latents.cluster_meta.values()
+        }
+
+        def _find_color_for_historic(child_name: str) -> str:
+            """Return color for a historic cluster, walking to descendants."""
+            if child_name in name_to_color:
+                return name_to_color[child_name]
+            prefix = child_name + '_'
+            for nm, col in name_to_color.items():
+                if nm.startswith(prefix):
+                    return col
+            return ''  # will be resolved by LocalLatent.palette fallback
+
         for cid_local in np.unique(masked_cls):
             if cid_local == -1:
                 continue
+            # Prefer historic name from filename when available.
+            if cid_local < len(filename_child_names):
+                child_name = filename_child_names[cid_local]
+                local_latents.export[cid_local] = {
+                    'name': child_name,
+                    'color': _find_color_for_historic(child_name),
+                }
+                continue
+            # Fallback: map via current global cluster_meta.
             global_indices = np.where(valid_mask)[0]
             global_cluster_vals = latents.cluster[global_indices]
             local_mask = masked_cls == cid_local

@@ -335,7 +335,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
     emb_img_update = gr.update()
     local_latents_update = gr.update()
     if npz_path and latents is not None:
-        local_ll, _ = restore_local_latent_from_npz(npz_path, latents)
+        local_ll, _ = restore_local_latent_from_npz(npz_path, latents, parent_cluster_name=node_name)
         if local_ll is not None:
             _, named_img = build_named_scatter_plot(local_ll)
             emb_img_update = gr.update(value=named_img)

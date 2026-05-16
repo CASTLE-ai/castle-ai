@@ -145,7 +145,12 @@ _TREE_CSS = """\
 .castle-cluster-tree{font-family:"Courier New",Consolas,monospace;font-size:12.5px;
   border:1px solid #e0e0e0;border-radius:6px;padding:4px;max-height:280px;
   overflow-y:auto;background:#fcfcfc;margin-bottom:2px;}
-.cct-node{display:flex;align-items:center;padding:2px 4px;border-radius:3px;gap:4px;line-height:1.6;}
+.cct-node{display:flex;align-items:center;padding:3px 6px;border-radius:4px;
+  gap:5px;line-height:1.6;cursor:pointer;user-select:none;
+  transition:background 0.1s;}
+.cct-node:hover{background:#e8f0fe;}
+.cct-node.cct-selected{background:#c8e0ff;font-weight:600;
+  border-left:3px solid #1a73e8;padding-left:3px;}
 .cct-icon{flex-shrink:0;}
 .cct-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cct-count{flex-shrink:0;font-size:10.5px;color:#666;background:#eee;
@@ -181,8 +186,11 @@ def build_cluster_tree_html(cluster_meta: dict, cluster_array) -> str:
             color = (info['meta'] or {}).get('color', 'grey')
             icon = '🟢' if color != 'grey' else '📁'
 
+        safe_name = name.replace("'", "\\'")
         rows.append(
-            f'<div class="cct-node" style="padding-left:{indent_px}px">'
+            f'<div class="cct-node" style="padding-left:{indent_px}px"'
+            f' onclick="castleTreeClick(this,\'{safe_name}\')"'
+            f' data-name="{name}">'
             f'<span class="cct-icon">{icon}</span>'
             f'<span class="cct-name">{name}</span>'
             f'<span class="cct-count">{info["cumulative"]} frames</span>'

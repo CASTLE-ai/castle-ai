@@ -250,12 +250,15 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 value="<em style='color:#888;font-size:12px'>No clusters yet.</em>",
                 label="Cluster Tree",
             )
-            ui['cluster_tree_select'] = gr.Dropdown(
-                label="Select Cluster",
-                choices=[],
+            # Hidden textbox — JS onclick on tree nodes writes here via native
+            # value setter + input event dispatch (castleTreeClick in main_ui.py).
+            # Gradio reads it as a normal input on button clicks.
+            ui['cluster_tree_select'] = gr.Textbox(
+                value="",
+                visible=False,
                 interactive=True,
-                visible=True,
-                info="Pick a cluster (or parent node) to run UMAP on its frames.",
+                elem_id="castle-tree-select",
+                label="Selected cluster (internal)",
             )
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)

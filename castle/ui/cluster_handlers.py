@@ -74,29 +74,29 @@ def collapse_accordion():
 
 
 def update_select_cluster_list(latents):
-    """Return ``(html_update, dropdown_update)`` for the tree HTML + selector Dropdown.
+    """Return ``(html_update, textbox_reset)`` for the tree HTML and selection state.
 
     The 2-tuple maps to ``(ui['cluster_tree_html'], ui['cluster_tree_select'])``
-    in every Gradio output binding.
+    in every Gradio output binding.  The textbox reset clears any prior
+    selection whenever the tree is rebuilt.
     """
-    from castle.ui.cluster_tree import build_cluster_tree_html, build_cluster_tree_choices
+    from castle.ui.cluster_tree import build_cluster_tree_html
 
     if latents is None:
         return (
             gr.update(value="<em style='color:#888'>No session.</em>"),
-            gr.update(choices=[], value=None),
+            gr.update(value=""),
         )
 
     if not hasattr(latents, 'cluster_meta') or not hasattr(latents, 'cluster'):
         gr.Info('Session not ready yet. Please wait for initialization to complete, then try again.')
         return (
             gr.update(value=""),
-            gr.update(choices=[], value=None),
+            gr.update(value=""),
         )
 
     html = build_cluster_tree_html(latents.cluster_meta, latents.cluster)
-    choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
-    return gr.update(value=html), gr.update(choices=choices, value=None)
+    return gr.update(value=html), gr.update(value="")
 
 
 def generate_embedding(
@@ -500,18 +500,17 @@ def _do_history_step(
     gr.Info(f"{verb_past}: {desc}")
 
     from castle.service.plotting_service import build_scatter_plot
-    from castle.ui.cluster_tree import build_cluster_tree_html, build_cluster_tree_choices
+    from castle.ui.cluster_tree import build_cluster_tree_html
 
     Z_plt, img = build_scatter_plot(local_latents)
     tree_html = gr.update()
-    tree_dd = gr.update()
+    tree_sel = gr.update()
     if latents is not None and hasattr(latents, 'cluster_meta') and hasattr(latents, 'cluster'):
         html = build_cluster_tree_html(latents.cluster_meta, latents.cluster)
-        choices = build_cluster_tree_choices(latents.cluster_meta, latents.cluster)
         tree_html = gr.update(value=html)
-        tree_dd = gr.update(choices=choices, value=None)
+        tree_sel = gr.update(value="")
 
-    return Z_plt, img, history, _history_status(history), tree_html, tree_dd
+    return Z_plt, img, history, _history_status(history), tree_html, tree_sel
 
 
 def handle_undo(local_latents, latents, history):

@@ -14,6 +14,7 @@ from castle.core.logging_config import setup_logger
 from castle.core.types import LatentCorruptError
 from castle.utils.video_io import VideoReader
 from castle.utils.safe_load import load_latent_safe
+from castle.utils.latent_metadata import load_latent_metadata
 from castle.core.project import get_project_config
 from castle.utils.latent_explorer import Latent
 
@@ -245,23 +246,34 @@ class LatentAggregator:
                 if roi_key not in filename:
                     continue
                 
-                # Check 2: Must match Model Name (exact segment) OR exist in model-specific directory.
-                # Rotation latent filenames don't contain model_name, but are stored
-                # under latent/{model_name}/ directory, so also check file existence.
-                # Use exact stem-segment matching to avoid "dinov2" matching
-                # "dinov2_vitb14_reg4_pretrain" filenames.
+                # Check 2: Match Model Name. BUG-14 — prefer the metadata
+                # embedded in the npz (or its sidecar .json) over fragile
+                # filename splitting. Fall back to the old stem-split when
+                # the npz predates the metadata helper.
                 latent_file_path = os.path.join(latent_dir_path, filename)
-                stem = os.path.splitext(filename)[0]
-                stem_after_roi = stem.split(f'_ROI_{select_roi_id}_', 1)
-                model_name_matches = (
-                    len(stem_after_roi) > 1
-                    and (stem_after_roi[1] == model_name
-                         or stem_after_roi[1].startswith(model_name + '_'))
-                )
-                if not model_name_matches and not os.path.exists(latent_file_path):
-                    continue
-                
-                latent_files.append((filename, video_source_name))
+                model_name_matches = False
+                if os.path.exists(latent_file_path):
+                    meta = load_latent_metadata(latent_file_path)
+                    if meta is not None and meta.get("model_name") == model_name:
+                        model_name_matches = True
+                    elif meta is not None and meta.get("roi_id") is not None:
+                        # Metadata present but model mismatch → definitively skip.
+                        continue
+                if not model_name_matches:
+                    stem = os.path.splitext(filename)[0]
+                    stem_after_roi = stem.split(f'_ROI_{select_roi_id}_', 1)
+                    legacy_match = (
+                        len(stem_after_roi) > 1
+                        and (stem_after_roi[1] == model_name
+                             or stem_after_roi[1].startswith(model_name + '_'))
+                    )
+                    if not legacy_match and not os.path.exists(latent_file_path):
+                        continue
+                    # Legacy file in model-specific directory — accept it.
+                    model_name_matches = legacy_match or os.path.exists(latent_file_path)
+
+                if model_name_matches:
+                    latent_files.append((filename, video_source_name))
         
         total_frames_loaded = 0
         latents_buffer: List[np.ndarray] = []  # Buffer for pre-alloc / memmap fill

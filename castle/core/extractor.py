@@ -29,6 +29,7 @@ from castle.core.types import (
 )
 from castle.utils.video_io import VideoWriter, VideoReader
 from castle.utils.h5_io import H5IO
+from castle.utils.latent_metadata import save_latent_with_metadata
 from castle.utils.video_align import center_roi, get_roi_closest_point_safe, blank_page
 
 # Setup logger
@@ -417,7 +418,21 @@ def extract_roi_latent_from_video(
 
     latent_array = np.concatenate(latent_list, axis=0)
 
-    np.savez_compressed(latent_path, latent=latent_array)
+    # BUG-14: embed video / ROI / model identity so loaders can stop relying
+    # on filename parsing.
+    save_latent_with_metadata(
+        latent_path,
+        latent_array,
+        video_name=video_name,
+        roi_id=int(roi),
+        model_name=model,
+        tags={
+            "pooling_method": pooling_method,
+            "pooling_scales": list(pooling_scales) if pooling_scales else None,
+            "feature_layers": list(feature_layers) if feature_layers else None,
+            "rotation": False,
+        },
+    )
 
     if n_batches_failed:
         logger.warning(
@@ -717,7 +732,16 @@ def extract_roi_rotation_latent_from_video(
 
         # Concatenate final results
         latent_array = np.concatenate(latent_list, axis=0)
-        np.savez_compressed(latent_path, latent=latent_array)
+        # BUG-14: include metadata so loaders can stop relying on filename
+        # parsing (rotation files don't carry model_name in the filename).
+        save_latent_with_metadata(
+            latent_path,
+            latent_array,
+            video_name=video_name,
+            roi_id=int(roi_id),
+            model_name=model_name,
+            tags={"rotation": True},
+        )
 
         # Update Config
         _, config = get_project_config(storage_path, project_name)

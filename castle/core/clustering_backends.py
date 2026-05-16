@@ -1,0 +1,307 @@
+"""Default adapter implementations of the clustering protocols (ARCH-02).
+
+The :mod:`castle.core.clustering_protocols` module defines the structural
+type seam — ``DimensionReducer`` and ``Clusterer``. This module is the
+**concrete other side** of that seam: every reducer / clusterer CASTLE
+currently uses (UMAP from ``umap-learn`` / ``cuml`` / ``myumap``, DBSCAN
+from ``sklearn`` / ``cuml``, optionally HDBSCAN) lives here, packaged
+as a class that satisfies the Protocol.
+
+Why this matters:
+
+* Adding a new reducer / clusterer (HDBSCAN, GMM, spectral …) is now a
+  matter of writing one class that conforms to the relevant Protocol.
+  Nothing in :class:`castle.utils.latent_explorer.LocalLatent` needs to
+  change — pass a factory or instance into ``build_embedding`` /
+  ``build_cluster`` and the existing pipeline picks it up.
+* The device-aware UMAP / DBSCAN class resolution (umap-learn vs cuml
+  vs the in-repo ``myumap`` fallback) is encapsulated in a single
+  helper, not duplicated across call sites.
+
+Backwards compatibility:
+
+The default behaviour of ``LocalLatent.build_embedding`` /
+``build_cluster`` calls into ``UMAPReducer`` / ``DBSCANClusterer`` here.
+The class resolution table inside the adapters reproduces the exact
+priority order the previous inline code used, so existing
+reproducibility tests stay bit-identical.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "UMAPReducer",
+    "DBSCANClusterer",
+    "HDBSCANClusterer",
+    "resolve_umap_class",
+    "resolve_dbscan_class",
+    "build_default_clusterer",
+]
+
+
+# ---------------------------------------------------------------------------
+# Backend class resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_umap_class(device: str) -> Any:
+    """Pick the UMAP class to use for ``device``.
+
+    Mirrors the priority order the legacy inline code in
+    :meth:`LocalLatent.build_embedding` used:
+
+    * CPU / MPS → :class:`umap.UMAP`.
+    * CUDA → ``cuml.manifold.UMAP`` → ``castle.utils.myumap.UMAP`` →
+      ``umap.UMAP`` (each falling back on ImportError).
+
+    Args:
+        device: ``'cpu'``, ``'mps'``, or ``'cuda'`` / ``'cuda:N'``.
+
+    Returns:
+        The UMAP class object (not an instance).
+
+    Raises:
+        ValueError: Unsupported device string.
+    """
+    if device in ('cpu', 'mps'):
+        from umap import UMAP
+        return UMAP
+    if 'cuda' in device:
+        try:
+            from cuml.manifold import UMAP
+            return UMAP
+        except ImportError:
+            pass
+        try:
+            from castle.utils.myumap import UMAP
+            return UMAP
+        except ImportError:
+            from umap import UMAP
+            return UMAP
+    raise ValueError(
+        f"Unsupported device {device!r}; expected 'cpu', 'mps', or 'cuda'."
+    )
+
+
+def resolve_dbscan_class(device: str) -> Any:
+    """Pick the DBSCAN class for ``device``.
+
+    CUDA path prefers ``cuml.cluster.DBSCAN`` and falls back to
+    ``sklearn.cluster.DBSCAN`` if cuml isn't available — matches the
+    legacy inline behaviour.
+
+    Args:
+        device: ``'cpu'``, ``'mps'``, or ``'cuda'``.
+
+    Returns:
+        The DBSCAN class object.
+    """
+    if device in ('cpu', 'mps'):
+        from sklearn.cluster import DBSCAN
+        return DBSCAN
+    if 'cuda' in device:
+        try:
+            from cuml.cluster import DBSCAN
+            return DBSCAN
+        except ImportError:
+            from sklearn.cluster import DBSCAN
+            return DBSCAN
+    raise ValueError(
+        f"Unsupported device {device!r}; expected 'cpu', 'mps', or 'cuda'."
+    )
+
+
+# ---------------------------------------------------------------------------
+# DimensionReducer adapters
+# ---------------------------------------------------------------------------
+
+
+class UMAPReducer:
+    """:class:`DimensionReducer` adapter wrapping the device-appropriate UMAP.
+
+    Stores the per-stage config dict at construction (minus any
+    ``random_state`` entry — that goes through ``fit_transform``'s
+    explicit kwarg so :class:`castle.utils.latent_explorer.LocalLatent`
+    can manage per-stage seed resolution).
+    """
+
+    def __init__(self, cfg: dict, device: str = 'cpu'):
+        """Build a reducer for a single UMAP stage.
+
+        Args:
+            cfg: UMAP config dict (``n_neighbors``, ``min_dist``, etc.).
+                Any ``random_state`` key is dropped — pass it through
+                ``fit_transform`` instead.
+            device: Compute device. Resolves which UMAP class to use.
+        """
+        self.cfg = {k: v for k, v in cfg.items() if k != 'random_state'}
+        self.device = device
+        self._umap_cls = resolve_umap_class(device)
+
+    def fit_transform(
+        self,
+        X: np.ndarray,  # [N, F]
+        *,
+        random_state: int,
+    ) -> np.ndarray:  # [N, D]
+        """Run UMAP on ``X`` with the stored config + given seed.
+
+        Args:
+            X: Input features, shape ``(N, F)``.
+            random_state: Seed for UMAP's stochastic optimisation.
+
+        Returns:
+            ``(N, D)`` embedding, where ``D`` comes from
+            ``cfg['n_components']`` (default 2).
+        """
+        full_cfg = {**self.cfg, 'random_state': int(random_state)}
+        return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))
+
+
+# ---------------------------------------------------------------------------
+# Clusterer adapters
+# ---------------------------------------------------------------------------
+
+
+class DBSCANClusterer:
+    """:class:`Clusterer` adapter wrapping the device-appropriate DBSCAN.
+
+    DBSCAN itself is deterministic — the ``random_state`` parameter in
+    :meth:`fit_predict` is accepted for API uniformity and ignored.
+    """
+
+    def __init__(self, *, eps: float = 1.0, device: str = 'cpu', **kwargs: Any):
+        """Build a DBSCAN clusterer.
+
+        Args:
+            eps: Neighbourhood radius. See ``sklearn.cluster.DBSCAN``.
+            device: Compute device.
+            **kwargs: Forwarded to the underlying DBSCAN constructor
+                (e.g. ``min_samples``, ``metric``).
+        """
+        self.eps = float(eps)
+        self.device = device
+        self.kwargs = dict(kwargs)
+        self._dbscan_cls = resolve_dbscan_class(device)
+
+    def fit_predict(
+        self,
+        X: np.ndarray,  # [N, D]
+        *,
+        random_state: int = 0,
+    ) -> np.ndarray:  # [N] int, -1 = noise
+        """Assign cluster ids to each row of ``X``.
+
+        Args:
+            X: ``(N, D)`` input — typically a UMAP embedding.
+            random_state: Ignored; DBSCAN is deterministic.
+
+        Returns:
+            ``(N,)`` integer labels with ``-1`` denoting noise.
+        """
+        del random_state  # DBSCAN is deterministic — accepted for protocol parity
+        cl = self._dbscan_cls(eps=self.eps, **self.kwargs)
+        return np.asarray(cl.fit_predict(X)).astype(int)
+
+
+class HDBSCANClusterer:
+    """:class:`Clusterer` adapter wrapping :mod:`hdbscan`.
+
+    Optional adapter — only constructable if the ``hdbscan`` package is
+    installed. Importing the class without ``hdbscan`` raises
+    :class:`ImportError` at ``__init__`` time so the
+    :class:`Clusterer` protocol check on the *class itself* still works.
+    """
+
+    def __init__(
+        self,
+        *,
+        min_cluster_size: int = 10,
+        min_samples: Optional[int] = None,
+        **kwargs: Any,
+    ):
+        """Build an HDBSCAN clusterer.
+
+        Args:
+            min_cluster_size: Minimum cluster size; see
+                :class:`hdbscan.HDBSCAN`.
+            min_samples: HDBSCAN ``min_samples`` (defaults to ``min_cluster_size``
+                when ``None``).
+            **kwargs: Forwarded to ``hdbscan.HDBSCAN`` constructor.
+
+        Raises:
+            ImportError: ``hdbscan`` is not installed.
+        """
+        try:
+            import hdbscan  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "HDBSCANClusterer requires the 'hdbscan' package. "
+                "Install with: pip install hdbscan"
+            ) from exc
+        self.min_cluster_size = int(min_cluster_size)
+        self.min_samples = min_samples
+        self.kwargs = dict(kwargs)
+
+    def fit_predict(
+        self,
+        X: np.ndarray,
+        *,
+        random_state: int = 0,
+    ) -> np.ndarray:
+        """Run HDBSCAN. ``random_state`` is accepted for protocol parity.
+
+        HDBSCAN itself doesn't use a random_state — its tree-building
+        algorithm is deterministic. We accept the keyword for uniform
+        :class:`Clusterer` signature.
+        """
+        del random_state
+        import hdbscan
+
+        cl = hdbscan.HDBSCAN(
+            min_cluster_size=self.min_cluster_size,
+            min_samples=self.min_samples,
+            **self.kwargs,
+        )
+        return np.asarray(cl.fit_predict(X)).astype(int)
+
+
+# ---------------------------------------------------------------------------
+# Convenience factory
+# ---------------------------------------------------------------------------
+
+
+def build_default_clusterer(method: str, configs: dict, device: str = 'cpu') -> Any:
+    """Build the default :class:`Clusterer` for a legacy ``method`` string.
+
+    Bridges the old ``LocalLatent.build_cluster(method='dbscan', configs=...)``
+    API into the new Protocol-based world. Currently DBSCAN is the only
+    legacy method; pass a :class:`HDBSCANClusterer` instance directly via
+    ``build_cluster(clusterer=...)`` for anything else.
+
+    Args:
+        method: Legacy method name (``'dbscan'`` for now).
+        configs: Method-specific config dict.
+        device: Compute device.
+
+    Returns:
+        A :class:`Clusterer` instance.
+
+    Raises:
+        ValueError: Unknown method name.
+    """
+    if method == 'dbscan':
+        eps = configs.get('eps', 1.0)
+        extra = {k: v for k, v in configs.items() if k != 'eps'}
+        return DBSCANClusterer(eps=eps, device=device, **extra)
+    raise ValueError(
+        f"Unknown clusterer method {method!r}. Pass a Clusterer instance "
+        f"via `clusterer=` for non-DBSCAN backends."
+    )

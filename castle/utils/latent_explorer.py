@@ -7,13 +7,16 @@ import json as _json
 import logging as _logging
 import secrets
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import numpy as np
 
 from castle.core.environment import get_device
 from castle.core.config import PALETTE_HEX
 from castle.core.types import InsufficientDataError
+
+if TYPE_CHECKING:
+    from castle.core.clustering_protocols import Clusterer, DimensionReducer
 
 # BUG-13: lower bound for UMAP n_neighbors. Below ~5 UMAP becomes
 # numerically pathological (k-NN graph too sparse to identify manifold
@@ -240,6 +243,7 @@ class LocalLatent:
         *,
         base_seed: Optional[int] = None,
         log_path: Optional[Union[str, Path]] = None,
+        reducer_factory: Optional[Callable[[dict], "DimensionReducer"]] = None,
     ) -> List[int]:
         """Run multi-stage UMAP dimensionality reduction.
 
@@ -264,6 +268,15 @@ class LocalLatent:
             log_path: If provided, append one JSON line per stage to this path
                 with ``{timestamp, stage, seed, source, config}``. Created if
                 missing; parent directory must already exist.
+            reducer_factory: Optional ``cfg → DimensionReducer`` factory. The
+                returned protocol object's ``fit_transform(X, *, random_state)``
+                is called once per stage. When ``None`` (default), a
+                device-appropriate :class:`UMAPReducer` is used — preserving
+                the legacy umap-learn / cuml / myumap fallback chain.
+
+                Pass a custom factory to plug in HDBSCAN, GMM, or any other
+                Protocol-conforming reducer without modifying ``LocalLatent``
+                (ARCH-02).
 
         Returns:
             List of integers — the seed actually used at each stage (length
@@ -274,19 +287,19 @@ class LocalLatent:
             >>> seeds = local.build_embedding(cfg_list, base_seed=42)
             >>> # Re-roll (fresh draw per stage)
             >>> seeds = local.build_embedding(cfg_list)
+            >>> # Plug a different reducer (ARCH-02)
+            >>> from my_pkg import PCAReducer
+            >>> seeds = local.build_embedding(
+            ...     cfg_list,
+            ...     reducer_factory=lambda cfg: PCAReducer(**cfg),
+            ... )
         """
-        if self.device == 'cpu' or self.device == 'mps':
-            from umap import UMAP
-        elif 'cuda' in self.device:
-            try:
-                from cuml.manifold import UMAP
-            except ImportError:
-                try:
-                    from castle.utils.myumap import UMAP
-                except ImportError:
-                    from umap import UMAP
-        else:
-            raise ValueError(f'Unsupported device: {self.device}, expected cpu, mps, or cuda')
+        if reducer_factory is None:
+            # Default: device-aware UMAP via the Protocol adapter (ARCH-02).
+            from castle.core.clustering_backends import UMAPReducer
+            device = self.device
+            reducer_factory = lambda cfg: UMAPReducer(cfg, device=device)
+
         Z = self.data
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
@@ -340,7 +353,9 @@ class LocalLatent:
 
             if progress_callback is not None:
                 progress_callback(i, total_stages)
-            Z = UMAP(**stage_cfg).fit_transform(Z)
+
+            reducer = reducer_factory(raw_cfg)
+            Z = reducer.fit_transform(Z, random_state=seed)
 
         self.embedding = np.array(Z)
         self.configs = resolved_configs
@@ -349,27 +364,52 @@ class LocalLatent:
 
 
 
-    def build_cluster(self, method, configs):
-        if self.device == 'cpu' or self.device == 'mps':
-            from sklearn.cluster import DBSCAN
+    def build_cluster(
+        self,
+        method: str = 'dbscan',
+        configs: Optional[dict] = None,
+        *,
+        clusterer: Optional["Clusterer"] = None,
+        random_state: int = 0,
+    ) -> None:
+        """Run a clusterer on the current embedding.
 
-        elif 'cuda' in self.device:
-            try:
-                from cuml.cluster import DBSCAN
-            except ImportError:
-                from sklearn.cluster import DBSCAN
+        Args:
+            method: Legacy method-name switch. ``'dbscan'`` (default) builds
+                a :class:`DBSCANClusterer`. Any other value raises unless
+                ``clusterer`` is passed explicitly.
+            configs: Method-specific config dict (e.g. ``{'eps': 1.0}`` for
+                DBSCAN). Ignored when ``clusterer`` is passed directly.
+            clusterer: Optional :class:`Clusterer` Protocol instance. When
+                provided, ``method`` and ``configs`` are ignored — this is
+                the ARCH-02 injection point that lets callers plug HDBSCAN /
+                GMM / spectral without modifying :class:`LocalLatent`.
+            random_state: Seed for stochastic clusterers (KMeans-style).
+                Density-based clusterers (DBSCAN, HDBSCAN) accept the kwarg
+                for API uniformity but ignore it.
 
+        Raises:
+            AssertionError: No embedding has been built yet.
+            ValueError: Unknown ``method`` and no ``clusterer`` was passed.
 
-
-        assert hasattr(self, 'embedding')
+        Example:
+            >>> # Legacy default — DBSCAN
+            >>> local.build_cluster(method='dbscan', configs={'eps': 0.5})
+            >>> # ARCH-02 injection — HDBSCAN without touching LocalLatent
+            >>> from castle.core.clustering_backends import HDBSCANClusterer
+            >>> local.build_cluster(clusterer=HDBSCANClusterer(min_cluster_size=20))
+        """
+        assert hasattr(self, 'embedding'), (
+            "Embedding not built yet — call build_embedding() before build_cluster()."
+        )
         if hasattr(self, 'cluster'):
             delattr(self, 'cluster')
 
+        if clusterer is None:
+            from castle.core.clustering_backends import build_default_clusterer
+            clusterer = build_default_clusterer(method, configs or {}, device=self.device)
 
-        if method == 'dbscan':
-            self.cluster = DBSCAN(**configs).fit_predict(self.embedding)
-        else:
-            assert False, f"method name should be dbscan, but got {method}."
+        self.cluster = clusterer.fit_predict(self.embedding, random_state=random_state)
 
     def palette(self, x):
         if x == -1:

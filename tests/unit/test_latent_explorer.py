@@ -190,3 +190,121 @@ def test_build_embedding_raises_when_n_neighbors_exceeds_samples():
     local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
     with pytest.raises(InsufficientDataError, match="must be < n_samples"):
         local.build_embedding([{"n_neighbors": 20}])
+
+
+# ---- ARCH-02: reducer_factory + clusterer injection ----
+
+
+class _StubReducer:
+    """Test stub satisfying :class:`DimensionReducer`."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.seen_seeds = []
+        self.seen_shapes = []
+
+    def fit_transform(self, X, *, random_state):
+        self.seen_seeds.append(int(random_state))
+        self.seen_shapes.append(X.shape)
+        # Return a (N, 2) projection of the first two columns.
+        return np.asarray(X[:, :2], dtype=np.float32)
+
+
+class _StubClusterer:
+    """Test stub satisfying :class:`Clusterer`."""
+
+    def __init__(self, fixed_label: int = 7):
+        self.fixed_label = fixed_label
+        self.last_random_state = None
+        self.last_shape = None
+
+    def fit_predict(self, X, *, random_state):
+        self.last_random_state = int(random_state)
+        self.last_shape = X.shape
+        return np.full(X.shape[0], self.fixed_label, dtype=int)
+
+
+def test_build_embedding_accepts_reducer_factory():
+    """ARCH-02: caller-supplied reducer_factory should be invoked per stage."""
+    data = np.random.randn(30, 6).astype(np.float32)
+    mask = np.ones(30, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+
+    reducers: list = []
+
+    def factory(cfg):
+        r = _StubReducer(cfg)
+        reducers.append(r)
+        return r
+
+    seeds = local.build_embedding(
+        [{"n_neighbors": 5}, {"n_neighbors": 5}],
+        base_seed=100,
+        reducer_factory=factory,
+    )
+    assert seeds == [100, 101]
+    assert len(reducers) == 2
+    assert reducers[0].seen_seeds == [100]
+    assert reducers[1].seen_seeds == [101]
+    assert local.embedding is not None
+    assert local.embedding.shape == (30, 2)
+
+
+def test_build_embedding_default_factory_still_uses_umap():
+    """ARCH-02: when reducer_factory is None the default path runs UMAP."""
+    from unittest.mock import MagicMock, patch
+
+    data = np.random.randn(30, 6).astype(np.float32)
+    mask = np.ones(30, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+
+    mock_umap_instance = MagicMock()
+    mock_umap_instance.fit_transform.return_value = np.zeros((30, 2))
+    mock_umap_cls = MagicMock(return_value=mock_umap_instance)
+
+    # Patch the UMAP class that resolve_umap_class('cpu') returns.
+    with patch('umap.UMAP', mock_umap_cls):
+        local.build_embedding([{"n_neighbors": 5}], base_seed=42)
+
+    assert mock_umap_cls.called
+
+
+def test_build_cluster_accepts_clusterer():
+    """ARCH-02: caller-supplied Clusterer should be used instead of DBSCAN."""
+    data = np.random.randn(20, 4).astype(np.float32)
+    mask = np.ones(20, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+    # Bypass build_embedding by injecting a tiny embedding directly.
+    local.embedding = np.zeros((20, 2), dtype=np.float32)
+
+    stub = _StubClusterer(fixed_label=3)
+    local.build_cluster(clusterer=stub, random_state=99)
+
+    assert (local.cluster == 3).all()
+    assert stub.last_random_state == 99
+    assert stub.last_shape == (20, 2)
+
+
+def test_build_cluster_default_path_runs_dbscan():
+    """ARCH-02: default path still wires DBSCAN via the new adapter."""
+    data = np.random.randn(40, 4).astype(np.float32)
+    mask = np.ones(40, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+    # Two well-separated 2D clusters
+    local.embedding = np.vstack([
+        np.random.default_rng(0).standard_normal((20, 2)),
+        np.random.default_rng(1).standard_normal((20, 2)) + 10.0,
+    ])
+    local.build_cluster(method='dbscan', configs={'eps': 1.0})
+    assert hasattr(local, 'cluster')
+    assert local.cluster.dtype.kind == 'i'
+
+
+def test_build_cluster_unknown_method_without_clusterer_raises():
+    """ARCH-02: unknown method + no clusterer → ValueError from factory."""
+    data = np.random.randn(20, 4).astype(np.float32)
+    mask = np.ones(20, dtype=bool)
+    local = LocalLatent(data, mask, color_avoid=set(), device='cpu')
+    local.embedding = np.zeros((20, 2), dtype=np.float32)
+    with pytest.raises(ValueError, match="Unknown clusterer method"):
+        local.build_cluster(method='spectral', configs={})

@@ -55,11 +55,16 @@ try:
                                          dim=self.n_components, 
                                          random_state=self.random_state)
             elif self.init == 'pca':
+                # BUG-11: the previous slice `argsort()[-n_samples+1:]` used
+                # *n_samples* as a feature-count, which is semantically wrong:
+                # when n_samples > n_features it took every feature (no
+                # selection at all); when n_samples < n_features it dropped
+                # most of them. The intent was "top-k variance features"
+                # before PCA. cuML's PCA already does SVD on the full input,
+                # so the feature pre-selection is redundant — skip it.
                 pca = PCA(n_components=self.n_components)
                 X = cp.array(X)
-                n_samples = len(X)
-                selected = X.std(axis=0).argsort()[-n_samples+1:]
-                layout = pca.fit_transform(X[:,selected])
+                layout = pca.fit_transform(X)
             else:
                 raise ValueError(f'Unknown init method: {self.init}')
                 

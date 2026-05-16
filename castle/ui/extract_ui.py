@@ -348,27 +348,17 @@ def ui_extract_roi_crop_video(
 @handle_assertion_error
 def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_switch, center_roi_id,
                        center_roi_crop_width, center_roi_crop_height, rotate_roi_tail_switch, rotate_roi_tail_id, remove_background_switch):
-    
-    # Boolean switches now arrive as bool from gr.Checkbox (no string conversion needed)
-    preprocess = Preprocess(
-        center_roi_switch=bool(center_roi_switch),
-        center_roi_id=center_roi_id,
-        center_roi_crop_width=center_roi_crop_width,
-        center_roi_crop_height=center_roi_crop_height,
-        rotate_roi_tail_switch=bool(rotate_roi_tail_switch),
-        rotate_roi_tail_id=rotate_roi_tail_id,
-        remove_background_switch=bool(remove_background_switch)
-    )
-    
+    import numpy as np
+
     # Preview logic
     _, config = get_project_config(storage_path, project_name)
     video_list = sorted(config['source']) if select_video == "All" else [select_video]
     if not video_list:
         raise ValueError("No videos.")
-    
+
     first_video = video_list[0]
     source_path = os.path.join(storage_path, project_name, 'sources', first_video)
-    
+
     # Get mask — find first frame where mask area > 0
     track_dir = os.path.join(storage_path, project_name, 'track', first_video)
     with H5IO(os.path.join(track_dir, 'mask_list.h5')) as tracker:
@@ -379,17 +369,40 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
             if m is not None and m.sum() > 0:
                 preview_idx = fi
                 break
-
         mask = tracker.read_mask(preview_idx)
-    
+
+    # Detect which ROI IDs actually exist in the mask before applying settings
+    roi_ids_in_mask: set = set(np.unique(mask[mask > 0]).tolist()) if mask is not None else set()
+    tail_roi = int(rotate_roi_tail_id)
+    if bool(rotate_roi_tail_switch) and tail_roi not in roi_ids_in_mask:
+        found = sorted(roi_ids_in_mask)
+        gr.Warning(
+            f"Tail ROI (ID {tail_roi}) not found in tracking data "
+            f"(detected ROI IDs: {found or 'none'}). "
+            f"'Rotate based on Tail' has been disabled automatically."
+        )
+        rotate_roi_tail_switch = False
+
+    # Boolean switches now arrive as bool from gr.Checkbox (no string conversion needed)
+    preprocess = Preprocess(
+        center_roi_switch=bool(center_roi_switch),
+        center_roi_id=center_roi_id,
+        center_roi_crop_width=center_roi_crop_width,
+        center_roi_crop_height=center_roi_crop_height,
+        rotate_roi_tail_switch=bool(rotate_roi_tail_switch),
+        rotate_roi_tail_id=rotate_roi_tail_id,
+        remove_background_switch=bool(remove_background_switch)
+    )
+
     # Use VideoReader for preview
     with VideoReader(source_path) as vr:
         frame = vr.get_frame(preview_idx)
-    
+
     pf, pm = preprocess.transform(frame, mask)
     mixed = generate_mix_image(pf, pm)
-    
-    return preprocess, mixed
+
+    # Third return value updates the checkbox so the UI reflects the actual setting used
+    return preprocess, mixed, gr.update(value=bool(rotate_roi_tail_switch))
 
 
 # ---------------------------
@@ -558,7 +571,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         inputs=[storage_path, project_name, ui['select_video'], ui['center_roi_switch'],
                 ui['center_roi_id'], ui['center_roi_crop_width'], ui['center_roi_crop_height'],
                 ui['rotate_roi_tail_switch'], ui['rotate_roi_tail_id'], ui['remove_background_switch']],
-        outputs=[preprocess_state, ui['display']]
+        outputs=[preprocess_state, ui['display'], ui['rotate_roi_tail_switch']]
     )
 
     ui['extract_btn'].click(

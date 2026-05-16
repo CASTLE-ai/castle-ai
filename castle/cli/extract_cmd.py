@@ -49,6 +49,19 @@ def extract(
     if parsed_layers:
         extra_info += f", layers={parsed_layers}"
 
+    # Pre-flight memory check
+    try:
+        import torch
+        from castle.core.memory_guard import check as _mem_check, suggest_batch_size as _suggest_bs
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        _n_scales = len(parsed_scales or [1, 2, 4]) if pooling == 'multiscale' else 1
+        _risky, _warn = _mem_check(model, batch_size, _n_scales, _device)
+        if _risky:
+            console.print(f"[yellow]{_warn}[/yellow]")
+            console.print(f"[yellow]Tip: re-run with --batch-size {_suggest_bs(model, _n_scales, _device)} to stay within safe limits.[/yellow]")
+    except Exception:
+        pass  # memory check is advisory; never block extraction
+
     console.print(
         f"Extracting latents for {len(videos)} videos "
         f"with model [bold]{model}[/bold], ROI={roi}, batch_size={batch_size}{extra_info}..."

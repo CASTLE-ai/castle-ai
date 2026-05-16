@@ -56,7 +56,9 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False), # adv_accordion
         gr.update(visible=False), # extract_btn
         gr.update(visible=False), # extract_crop_video_btn
-        gr.update(visible=False)  # latent_file_list
+        gr.update(visible=False), # latent_file_list
+        gr.update(visible=False), # auto_batch_btn
+        gr.update(value="", visible=False),  # mem_warning
     ])
 
     if not storage_path or not project_name:
@@ -96,6 +98,8 @@ def init_select_video_list(storage_path, project_name):
             updates[14] = gr.update(visible=True) # extract_btn
             updates[15] = gr.update(visible=True) # extract_crop_video_btn
             updates[16] = gr.update(visible=True) # latent_file_list
+            updates[17] = gr.update(visible=True) # auto_batch_btn
+            # mem_warning (updates[18]) stays hidden until reactive check triggers
         else:
             gr.Warning(
                 "No videos found in this project. Please add videos in the "
@@ -417,11 +421,9 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                 label="Batch Size",
                 value="32",
                 visible=False,
-                info=(
-                    "Frames processed per GPU batch. Default: 32. "
-                    "Reduce to 8–16 if you encounter out-of-memory errors."
-                ),
+                info="Frames processed per GPU/CPU batch. Use 'Auto Batch Size' to pick a safe value.",
             )
+            ui['auto_batch_btn'] = gr.Button("Auto Batch Size", size="sm", visible=False)
             ui['select_video'] = gr.Dropdown(
                 label="Target Video",
                 value=None,
@@ -514,9 +516,10 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                 )
             ui['adv_accordion'] = adv_accordion
             
+            ui['mem_warning'] = gr.HTML(value="", visible=False)
             ui['extract_btn'] = gr.Button("Extract", visible=False)
             ui['extract_crop_video_btn'] = gr.Button("Extract Crop Video", visible=False)
- 
+
             ui['latent_file_list'] = gr.Textbox(
                 label="Log Output", 
                 visible=False,
@@ -526,23 +529,25 @@ def create_extract_ui(storage_path, project_name, extract_tab):
 
     # 收集所有需要控制可見性的 UI 元件 (rotate/tail 元件在 accordion 內，不需要單獨控制)
     all_ui_elements_to_control = [
-        ui['select_model'],
-        ui['select_roi_id'],
-        ui['batch_size'],
-        ui['select_video'],
-        ui['video_count'],
-        ui['skip_existing'],
-        ui['center_roi_switch'],
-        ui['center_roi_id'],
-        ui['center_roi_crop_width'],
-        ui['center_roi_crop_height'],
-        ui['remove_background_switch'],
-        ui['apply_preprocess'],
-        ui['display'],
-        ui['adv_accordion'],
-        ui['extract_btn'],
-        ui['extract_crop_video_btn'],
-        ui['latent_file_list'],
+        ui['select_model'],       # 0
+        ui['select_roi_id'],      # 1
+        ui['batch_size'],         # 2
+        ui['select_video'],       # 3
+        ui['video_count'],        # 4
+        ui['skip_existing'],      # 5
+        ui['center_roi_switch'],  # 6
+        ui['center_roi_id'],      # 7
+        ui['center_roi_crop_width'],   # 8
+        ui['center_roi_crop_height'],  # 9
+        ui['remove_background_switch'], # 10
+        ui['apply_preprocess'],   # 11
+        ui['display'],            # 12
+        ui['adv_accordion'],      # 13
+        ui['extract_btn'],        # 14
+        ui['extract_crop_video_btn'],  # 15
+        ui['latent_file_list'],   # 16
+        ui['auto_batch_btn'],     # 17
+        ui['mem_warning'],        # 18
     ]
 
     # Event Binding
@@ -570,6 +575,42 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         inputs=[storage_path, project_name, ui['select_roi_id'],
                 ui['select_video'], preprocess_state, ui['skip_existing']],
         outputs=ui['latent_file_list']
+    )
+
+    # Memory guard: reactive OOM check + auto batch size
+    _mem_inputs = [ui['select_model'], ui['batch_size'], ui['pooling_method'], ui['pooling_scales']]
+
+    def _mem_update(model_type, batch_size_str, pooling_method, pooling_scales_list):
+        import torch
+        from castle.core.memory_guard import check as _check
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            batch_size = int(batch_size_str)
+        except (ValueError, TypeError):
+            return gr.update(value="", visible=False)
+        n_scales = len(pooling_scales_list) if pooling_method == 'multiscale' and pooling_scales_list else 1
+        risky, msg = _check(model_type, batch_size, n_scales, device)
+        if risky:
+            return gr.update(
+                value=f'<p style="color:#c05000;background:#fff4e6;padding:6px 10px;border-radius:4px;margin:4px 0">{msg}</p>',
+                visible=True,
+            )
+        return gr.update(value="", visible=False)
+
+    for _comp in _mem_inputs:
+        _comp.change(_mem_update, inputs=_mem_inputs, outputs=ui['mem_warning'])
+
+    def _auto_batch(model_type, pooling_method, pooling_scales_list):
+        import torch
+        from castle.core.memory_guard import suggest_batch_size as _suggest
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        n_scales = len(pooling_scales_list) if pooling_method == 'multiscale' and pooling_scales_list else 1
+        return str(_suggest(model_type, n_scales, device))
+
+    ui['auto_batch_btn'].click(
+        _auto_batch,
+        inputs=[ui['select_model'], ui['pooling_method'], ui['pooling_scales']],
+        outputs=ui['batch_size'],
     )
 
     return ui

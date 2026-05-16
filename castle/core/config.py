@@ -20,19 +20,15 @@ CKPT_AOT_IDS: Dict[str, str] = {
     'swinb_deaotl': '1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq'
 }
 
-# DINO Models — DINOv2 is loaded via torch.hub; DINOv3 now via HuggingFace.
-# Legacy Google Drive IDs for DINOv3 were removed in P0-A' (see DINOV3_HF_MAP).
+# DINO Models — DINOv2 is loaded via torch.hub; DINOv3 via Google Drive (gdown).
 CKPT_DINO_IDS: Dict[str, str] = {
-    # DINOv2 (Usually loaded via torch.hub, IDs mostly for manual backup/reference)
+    # DINOv2 (loaded via torch.hub)
     'dinov2_vitb14': '',
     'dinov2_vitl14': '',
-}
 
-# DINOv3 — official HuggingFace model IDs (replaces the private gdown flow).
-DINOV3_HF_MAP: Dict[str, str] = {
-    "dinov3_vitb16": "facebook/dinov3-vitb16-pretrain-lvd1689m",
-    "dinov3_vitl16": "facebook/dinov3-vitl16-pretrain-lvd1689m",
-    "dinov3_vits16": "facebook/dinov3-vits16-pretrain-lvd1689m",
+    # DINOv3 (private Google Drive checkpoints)
+    "dinov3_vitb16": "18doehnHWWnz9zBtOdgYZ3XMTpgPYbYZ6",
+    "dinov3_vitl16": "195H5UHKJ0r4qRDY7Ly6WJrXGnpdlHMSu",
 }
 
 # Supported Models
@@ -45,14 +41,21 @@ SUPPORTED_MODELS: List[str] = [
     'dinov3_vits16',
 ]
 
-# DINOv3 Constants. Per-variant feature dim and layer count are read from
-# `model.config` at load time (HF AutoConfig), so we no longer hard-code them.
+# DINOv3 Constants
 DINOV3_CONSTANTS = {
     "PATCH_SIZE": 16,
     "TARGET_PATCHES_PER_SIDE": 37,
     "IMAGE_SIZE": 37 * 16,  # 592
     "IMAGENET_MEAN": (0.485, 0.456, 0.406),
     "IMAGENET_STD": (0.229, 0.224, 0.225),
+    "MODEL_TO_CKPT_FILENAME": {
+        "dinov3_vitb16": "dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth",
+        "dinov3_vitl16": "dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth",
+    },
+    "MODEL_TO_NUM_LAYERS": {
+        "dinov3_vitb16": 12,
+        "dinov3_vitl16": 24,
+    },
 }
 
 

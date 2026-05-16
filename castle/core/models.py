@@ -3,7 +3,6 @@ castle/core/models.py
 Unified Visual Encoder Interface.
 """
 
-import os
 import torch
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
@@ -13,12 +12,10 @@ from torchvision import transforms
 from PIL import Image
 import torchvision.transforms.functional as TF
 
-from castle.core.config import (
-    DINOV3_CONSTANTS,
-    DINOV3_HF_MAP,
-)
+from castle.core.config import CKPT_DINO_IDS, DINOV3_CONSTANTS, DEFAULT_CKPT_DIR
 from castle.core.environment import get_device
 from castle.core.logging_config import setup_logger
+from castle.utils.download import download_with_gdown
 
 logger = setup_logger(__name__)
 
@@ -288,132 +285,65 @@ class DINOv2Encoder(VisualEncoder):
 
 
 class DINOv3Encoder(VisualEncoder):
-    """DINOv3 visual encoder, loaded from HuggingFace (official Facebook weights).
+    """DINOv3 visual encoder using ViT-B/16 (or ViT-L variant).
 
-    Uses 592×592 input resolution with 16×16 patches (37×37 patch grid).
-    Supports weighted-average and multi-scale spatial pyramid pooling.
-
-    Attention backend is auto-selected at load time: ``flash_attention_2``
-    when ``flash-attn`` is installed on Ampere+ GPUs (compute capability ≥ 8),
-    otherwise ``sdpa``. CPU falls back to ``eager``.
-
-    Numeric dtype is bf16 on bf16-capable CUDA devices and fp32 otherwise.
-    The legacy fp16 autocast wrapper is preserved for fp32 model weights.
-
-    Set ``CASTLE_COMPILE_DINO=1`` to enable ``torch.compile`` for steady-state
-    speedup (incurs ~30–60 s warm-up on first batch).
+    Loads a custom checkpoint from Google Drive and uses 592×592 input
+    resolution with 16×16 patches (37×37 patch grid). Supports weighted-average
+    and multi-scale spatial pyramid pooling.
     """
 
     def __init__(self, model_type: str = 'dinov3_vitb16', device: Optional[str] = None):
         super().__init__(device)
         self.model_type = model_type
-        if model_type not in DINOV3_HF_MAP:
-            raise ValueError(
-                f"Unknown DINOv3 variant: {model_type!r}. "
-                f"Supported: {sorted(DINOV3_HF_MAP)}"
-            )
-        self.hf_id = DINOV3_HF_MAP[model_type]
+        self.filename = DINOV3_CONSTANTS['MODEL_TO_CKPT_FILENAME'].get(model_type, "")
+        self.n_layers = DINOV3_CONSTANTS['MODEL_TO_NUM_LAYERS'].get(model_type, 12)
 
-        # DINOv3 constants (square 592×592 input, 16-pixel patches → 37×37 grid).
+        if 'vitl' in model_type:
+            self.n_feature = 1024
+        else:
+            self.n_feature = 768
+
+        # DINOv3 constants
         self.patch_size = DINOV3_CONSTANTS['PATCH_SIZE']
         self.target_patches = DINOV3_CONSTANTS['TARGET_PATCHES_PER_SIDE']  # 37
         self.image_size = DINOV3_CONSTANTS['IMAGE_SIZE']  # 592
-        assert self.image_size % self.patch_size == 0, \
-            "Image size must be divisible by patch size"
+        assert self.image_size % self.patch_size == 0, "Image size must be divisible by patch size"
 
         self.mean = DINOV3_CONSTANTS['IMAGENET_MEAN']
         self.std = DINOV3_CONSTANTS['IMAGENET_STD']
 
-        # Filled in by load_model() from HF AutoConfig — variant-specific.
-        # n_feature default 768 from VisualEncoder.__init__; overwritten below.
-        self.n_layers: int = 12
-        self.num_register_tokens: int = 0
-        self.processor = None  # HF AutoImageProcessor instance
-
-    def _select_attn_impl(self) -> str:
-        """Pick the fastest available attention backend.
-
-        Order: flash_attention_2 (Ampere+ with flash-attn) → sdpa → eager.
-        """
-        if self.device != 'cuda':
-            return 'eager'
-        try:
-            import flash_attn  # noqa: F401
-            cap = torch.cuda.get_device_capability(self.device)
-            if cap[0] >= 8:
-                return 'flash_attention_2'
-        except ImportError:
-            pass
-        return 'sdpa'
-
-    def _supports_bf16(self) -> bool:
-        """bf16 needs Ampere+ on CUDA."""
-        if self.device == 'cuda':
-            try:
-                return torch.cuda.is_bf16_supported()
-            except Exception:
-                return False
-        return False
-
     def load_model(self):
-        """Load DINOv3 weights and processor from HuggingFace."""
+        logger.info(f"Loading DINOv3: {self.model_type}")
+
+        # 1. Download Checkpoint
+        ckpt_path = DEFAULT_CKPT_DIR / self.filename
+        if not ckpt_path.exists():
+            logger.info(f"Checkpoint missing. Downloading {self.filename}...")
+            file_id = CKPT_DINO_IDS.get(self.model_type)
+            if not file_id:
+                raise ValueError(f"No Google Drive ID for {self.model_type}")
+            download_with_gdown(file_id, str(ckpt_path))
+
+        # 2. Create Model Architecture (Hub)
         try:
-            from transformers import AutoModel, AutoImageProcessor
-        except ImportError as exc:
-            raise ImportError(
-                "DINOv3 requires the 'transformers' package, which is not installed. "
-                "Fix: pip install 'transformers>=4.45.0'"
-            ) from exc
+            self.model = torch.hub.load('facebookresearch/dinov3', self.model_type, pretrained=False)
+        except Exception:
+            raise RuntimeError("Failed to load DINOv3 from torch.hub")
 
-        logger.info(f"Loading DINOv3 from HuggingFace: {self.hf_id}")
-        try:
-            self.processor = AutoImageProcessor.from_pretrained(self.hf_id)
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to load DINOv3 image processor for {self.hf_id!r}. "
-                f"If this is a gated repo, run `huggingface-cli login` first. "
-                f"Original error: {exc}"
-            ) from exc
+        # 3. Load Weights
+        logger.info(f"Loading weights from {ckpt_path}")
+        checkpoint = torch.load(ckpt_path, map_location='cpu')
 
-        attn_impl = self._select_attn_impl()
-        torch_dtype = torch.bfloat16 if self._supports_bf16() else torch.float32
-        logger.info(
-            "DINOv3 backend: device=%s attn_implementation=%s dtype=%s",
-            self.device, attn_impl, torch_dtype,
-        )
+        state_dict = checkpoint
+        if isinstance(checkpoint, dict):
+            if 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
 
-        try:
-            self.model = AutoModel.from_pretrained(
-                self.hf_id,
-                torch_dtype=torch_dtype,
-                attn_implementation=attn_impl,
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to load DINOv3 model {self.hf_id!r}. "
-                f"If this is a gated repo, run `huggingface-cli login` first. "
-                f"Original error: {exc}"
-            ) from exc
-
-        self.model.to(self.device).eval()
-
-        # Pull architecture metadata back from the HF config.
-        cfg = self.model.config
-        self.n_feature = int(cfg.hidden_size)
-        self.n_layers = int(cfg.num_hidden_layers)
-        self.num_register_tokens = int(getattr(cfg, 'num_register_tokens', 0))
-
-        # Optional steady-state speedup; opt-in via env var to avoid warm-up
-        # surprising new users.
-        if os.environ.get("CASTLE_COMPILE_DINO", "0") == "1":
-            logger.info("Compiling DINOv3 with torch.compile(mode='reduce-overhead') ...")
-            self.model = torch.compile(self.model, mode='reduce-overhead', dynamic=False)
-
-        logger.info(
-            "DINOv3 ready: hidden_size=%d, num_hidden_layers=%d, "
-            "num_register_tokens=%d",
-            self.n_feature, self.n_layers, self.num_register_tokens,
-        )
+        self.model.load_state_dict(state_dict, strict=False)
+        self.model.eval().to(self.device)
+        logger.info(f"DINOv3 ready: {self.model_type}, n_feature={self.n_feature}")
 
     def _resize_transform(self, image_pil):
         """Resize-then-center-crop a PIL image to ``self.image_size`` (square)."""
@@ -432,9 +362,7 @@ class DINOv3Encoder(VisualEncoder):
     def preprocess_batch(self, frame_list, mask_list, roi_id):
         """Prepare a batch of frames for DINOv3 inference.
 
-        Returns a float tensor of shape [B, 3, 592, 592] on ``self.device``,
-        normalized with ImageNet statistics. dtype is float32 (autocast or
-        a bf16 model handles the rest at forward time).
+        Returns a float tensor of shape [B, 3, 592, 592] on ``self.device``.
         """
         if isinstance(frame_list, torch.Tensor):
             img_t = frame_list.permute(0, 3, 1, 2).float().div(255.0)
@@ -476,57 +404,43 @@ class DINOv3Encoder(VisualEncoder):
 
         return torch.stack(processed).to(self.device)
 
-    def _patch_offset(self) -> int:
-        """Index of the first patch token. HF DINOv3 layout: [CLS, register..., patches]."""
-        return 1 + self.num_register_tokens
-
-    def _patches_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
-        """Slice CLS + register tokens off a [B, S, C] hidden-state tensor."""
-        return hidden[:, self._patch_offset():, :]
-
     def extract_features(self, x, layers=None):
-        """Extract patch features from DINOv3.
+        """Extract features from specified layers.
 
         Args:
             x: Preprocessed input. Shape [B, 3, 592, 592] on ``self.device``.
-            layers: Optional list of layer indices (0-indexed). None = last layer only.
-
-        Returns:
-            Patch features. Shape [B, N, C] where N = 37*37 = 1369 and C is
-            ``hidden_size`` (or ``len(layers) * hidden_size`` when multi-layer).
+            layers: list of layer indices (0-indexed). None = last layer only.
+                    e.g., [3, 7, 11] for layers 4, 8, 12.
         """
-        need_hidden_states = layers is not None
+        if layers is None:
+            layer_ids = [self.n_layers - 1]
+        else:
+            layer_ids = layers
 
         with torch.inference_mode():
-            if self.device == 'cuda' and self.model.dtype == torch.float32:
-                # Legacy fp16 autocast path for fp32 weights (older GPUs that
-                # cannot run bf16 natively).
+            if self.device == 'cuda':
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
-                    outputs = self.model(
-                        pixel_values=x,
-                        output_hidden_states=need_hidden_states,
-                    )
+                    feats = self.model.get_intermediate_layers(x, n=layer_ids, reshape=True, norm=True)
             else:
-                outputs = self.model(
-                    pixel_values=x,
-                    output_hidden_states=need_hidden_states,
-                )
+                feats = self.model.get_intermediate_layers(x, n=layer_ids, reshape=True, norm=True)
 
-            if not need_hidden_states:
-                return self._patches_from_hidden(outputs.last_hidden_state)
-
-            hidden_states = outputs.hidden_states  # tuple of [B, S, C]
-            picked = [self._patches_from_hidden(hidden_states[i]) for i in layers]
-            if len(picked) == 1:
-                return picked[0]
-            return torch.cat(picked, dim=2)
+            if len(feats) == 1:
+                x_out = feats[0]  # B, C, H, W
+                B, C, H, W = x_out.shape
+                return x_out.view(B, C, -1).permute(0, 2, 1)  # B, N, C
+            else:
+                combined = []
+                for feat in feats:
+                    B, C, H, W = feat.shape
+                    combined.append(feat.view(B, C, -1).permute(0, 2, 1))  # B, N, C
+                return torch.cat(combined, dim=2)  # B, N, C_total
 
     def extract_tensor_batch(self, frame_batch, mask_batch, roi_id,
                              pooling='weighted_average', scales=None, layers=None):
         """Extract latent features with configurable pooling and layers.
 
         Args:
-            pooling: 'weighted_average' (default) or 'multiscale'.
+            pooling: 'weighted_average' (original) or 'multiscale'
             scales: list of ints for multiscale, e.g. [1, 2, 4].
             layers: list of layer indices. None = last layer only.
         """
@@ -541,10 +455,6 @@ class DINOv3Encoder(VisualEncoder):
 
         with torch.no_grad():
             feats = self.extract_features(x, layers=layers)
-            # feats is in model dtype (bf16/fp32). Pooling helpers expect fp32
-            # tensors for the weighted-average and area math.
-            if feats.dtype != torch.float32:
-                feats = feats.float()
             if pooling == 'multiscale' and scales:
                 latents = self._multiscale_pooling(feats, masks_t, self.image_size, self.patch_size, scales)
             else:

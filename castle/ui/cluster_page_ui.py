@@ -271,19 +271,16 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             )
             ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
             ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
-            with gr.Row():
-                ui['umap_seed'] = gr.Textbox(
-                    label='UMAP seed',
-                    value='',
-                    placeholder='Empty = re-roll',
-                    interactive=True,
-                    scale=4,
-                    info=(
-                        "Leave blank to draw a fresh seed each run. Paste a seed "
-                        "from a previous status line to lock the layout."
-                    ),
-                )
-                ui['umap_reroll'] = gr.Button("🎲 Re-roll", scale=1, variant="secondary")
+            ui['umap_seed'] = gr.Textbox(
+                label='UMAP seed',
+                value='',
+                placeholder='Empty = randomize each run',
+                interactive=True,
+                info=(
+                    "Leave blank to draw a fresh seed each run. "
+                    "Paste a seed from the status line below to reproduce a layout."
+                ),
+            )
             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
             ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
             ui['eps'] = gr.Number(
@@ -418,8 +415,13 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
                  local_embedding_plot, ui['embedding_plot']],
     ).then(
-        fn=lambda: (gr.update(visible=False), gr.update(value="Session restored successfully."), gr.update(visible=False)),
-        outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
+        fn=lambda: (
+            gr.update(visible=False),
+            gr.update(value="Session restored successfully."),
+            gr.update(visible=False),
+            gr.update(visible=False),
+        ),
+        outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown'], ui['delete_session_btn']]
     )
 
     # Delete session — double-confirm flow
@@ -464,12 +466,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             local_latents, local_embedding_plot,
             ui['embedding_plot'], ui['umap_seed_status'],
         ],
-    )
-
-    # 🎲 Re-roll: clear the seed textbox so the next run draws a fresh seed.
-    ui['umap_reroll'].click(
-        fn=lambda: ("", ""),
-        outputs=[ui['umap_seed'], ui['umap_seed_status']],
     )
 
     ui['embedding_plot'].select(

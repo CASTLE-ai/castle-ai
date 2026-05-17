@@ -146,21 +146,25 @@ def generate_embedding(
         except ValueError:
             gr.Info(
                 f"UMAP seed must be an integer; got {umap_seed_str!r}. "
-                f"Leave blank to re-roll, or enter an integer to lock."
+                f"Leave blank to randomize, or enter an integer to lock."
             )
             return None, None, None, ""
 
-    # When locking to a specific seed, strip any pre-existing random_state
-    # from the dicts so the service's seed-injection path takes priority.
-    if base_seed is not None:
-        if isinstance(cfg, list):
-            cfg = [(dict(c) if isinstance(c, dict) else c) for c in cfg]
-            for c in cfg:
-                if isinstance(c, dict):
-                    c.pop('random_state', None)
-        elif isinstance(cfg, dict):
-            cfg = dict(cfg)
-            cfg.pop('random_state', None)
+    # Always strip random_state from the config JSON before passing to the
+    # service layer.  The seed textbox is the single source of truth:
+    # - non-empty → base_seed injected per stage (deterministic)
+    # - empty     → secrets.randbits(32) drawn per stage (random)
+    # Without this strip, restoring a tree node embeds the OLD random_state
+    # values into the config JSON, which then silently override the seed box
+    # (even an empty box intended to re-roll would always re-use the old seed).
+    if isinstance(cfg, list):
+        cfg = [dict(c) if isinstance(c, dict) else c for c in cfg]
+        for c in cfg:
+            if isinstance(c, dict):
+                c.pop('random_state', None)
+    elif isinstance(cfg, dict):
+        cfg = dict(cfg)
+        cfg.pop('random_state', None)
 
     log_path = _resolve_umap_log_path(storage_path, project_name)
 

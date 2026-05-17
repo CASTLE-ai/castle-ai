@@ -144,6 +144,14 @@ class SessionManager:
             if os.path.exists(src):
                 shutil.copyfile(src, dst)
         
+        # Clear stale npz files from cluster/ root before restoring this session's files,
+        # so a previous session's npz can't leak into the newly activated one.
+        for stale in glob.glob(os.path.join(self.cluster_path, 'cluster_*.npz')):
+            try:
+                os.unlink(stale)
+            except OSError:
+                pass
+
         # Copy npz files
         for npz in glob.glob(os.path.join(session_dir, 'cluster_*.npz')):
             shutil.copyfile(npz, os.path.join(self.cluster_path, os.path.basename(npz)))
@@ -166,12 +174,21 @@ class SessionManager:
             shutil.copyfile(npz, os.path.join(session_dir, os.path.basename(npz)))
     
     def delete_session(self, session_id: str) -> bool:
-        """Delete a session."""
+        """Delete a session and deactivate it if it was the active one."""
         session_dir = self.get_session_dir(session_id)
-        if os.path.exists(session_dir):
-            shutil.rmtree(session_dir)
-            return True
-        return False
+        if not os.path.exists(session_dir):
+            return False
+        shutil.rmtree(session_dir)
+        # If this was the active session, switch to the next most-recent one (or clear).
+        if self.get_active_session_id() == session_id:
+            remaining = self.list_sessions()
+            if remaining:
+                self.set_active_session(remaining[0].session_id)
+            else:
+                active_file = os.path.join(self.sessions_path, '_active.txt')
+                if os.path.exists(active_file):
+                    os.unlink(active_file)
+        return True
     
     def migrate_legacy(self, model: str = "dinov3_vitb16", roi_id: int = 1, 
                        bin_size: int = 1) -> Optional[SessionInfo]:

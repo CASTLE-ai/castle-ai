@@ -27,6 +27,8 @@ from castle.ui.cluster_handlers import (
     restore_session,
     init_mulvideo,
     check_session_exists,
+    show_delete_confirmation,
+    confirm_delete_session,
     save_cluster_model,
     apply_cluster_model,
     export_representatives,
@@ -196,7 +198,11 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     with gr.Accordion("📂 Previous Sessions", open=True) as ui['previous_sessions_accordion']:
         ui['session_status'] = gr.Markdown("*Checking for previous sessions...*")
         ui['session_dropdown'] = gr.Dropdown(label="Select Session", choices=[], interactive=True, visible=False)
-        ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
+        with gr.Row():
+            ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
+            ui['delete_session_btn'] = gr.Button("🗑 Delete Session", variant="secondary", interactive=True, visible=True)
+        ui['delete_warning_md'] = gr.Markdown("", visible=False)
+        ui['delete_confirm_btn'] = gr.Button("⚠️ Confirm Delete", variant="stop", visible=False)
     
     # Section 2: New Session
     with gr.Accordion("⚙️ New Session", open=False) as ui['cluster_input_accordion']:
@@ -414,6 +420,29 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=lambda: (gr.update(visible=False), gr.update(value="Session restored successfully."), gr.update(visible=False)),
         outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
+    )
+
+    # Delete session — double-confirm flow
+    # Step 1: show warning + confirm button
+    ui['delete_session_btn'].click(
+        fn=show_delete_confirmation,
+        inputs=[ui['session_dropdown']],
+        outputs=[ui['delete_warning_md'], ui['delete_confirm_btn']],
+    )
+    # Step 2: actually delete + refresh session list
+    ui['delete_confirm_btn'].click(
+        fn=confirm_delete_session,
+        inputs=[storage_path, project_name, ui['session_dropdown']],
+        outputs=[session_info, ui['delete_warning_md'], ui['delete_confirm_btn']],
+    ).then(
+        fn=_format_session_status,
+        inputs=[session_info],
+        outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']],
+    )
+    # Reset warning when user picks a different session in the dropdown
+    ui['session_dropdown'].change(
+        fn=lambda: (gr.update(visible=False, value=""), gr.update(visible=False)),
+        outputs=[ui['delete_warning_md'], ui['delete_confirm_btn']],
     )
 
     ui['preset_dropdown'].select(

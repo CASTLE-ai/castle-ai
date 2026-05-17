@@ -476,6 +476,33 @@ def check_session_exists(storage_path, project_name):
     }
 
 
+def show_delete_confirmation(session_id):
+    """First click of delete flow: show warning + confirm button."""
+    import gradio as gr
+    if not session_id:
+        return gr.update(visible=False, value=""), gr.update(visible=False)
+    warn = (
+        f"⚠️ **Permanently delete session `{session_id}`?**  \n"
+        "All clustering data for this session will be removed and **cannot be recovered**."
+    )
+    return gr.update(visible=True, value=warn), gr.update(visible=True)
+
+
+def confirm_delete_session(storage_path, project_name, session_id):
+    """Second click of delete flow: actually delete the session."""
+    import gradio as gr
+    if not session_id or not project_name:
+        return None, gr.update(visible=False, value=""), gr.update(visible=False)
+    mgr = SessionManager(storage_path, project_name)
+    deleted = mgr.delete_session(session_id)
+    if not deleted:
+        gr.Warning(f"Session '{session_id}' not found or already deleted.")
+    else:
+        gr.Info(f"Session '{session_id}' deleted.")
+    new_info = check_session_exists(storage_path, project_name)
+    return new_info, gr.update(visible=False, value=""), gr.update(visible=False)
+
+
 def _find_latest_npz(cluster_path):
     """Wrapper kept for back-compat with existing handler call sites."""
     from castle.service.clustering_service import find_latest_cluster_npz

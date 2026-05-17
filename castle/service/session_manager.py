@@ -129,49 +129,61 @@ class SessionManager:
         """Get the directory path for a session."""
         return os.path.join(self.sessions_path, session_id)
     
+    # Files that belong to a session and must be synced on snapshot / activate.
+    _SESSION_PATTERNS = ['cluster_*.npz', 'time_series_*.csv', 'node_*_meta.json']
+    _SESSION_FILES    = ['id.csv']
+
+    def _clear_cluster_root(self) -> None:
+        """Remove all session-owned files from the cluster/ root directory."""
+        for fname in self._SESSION_FILES:
+            fpath = os.path.join(self.cluster_path, fname)
+            try:
+                os.unlink(fpath)
+            except OSError:
+                pass
+        for pattern in self._SESSION_PATTERNS:
+            for fpath in glob.glob(os.path.join(self.cluster_path, pattern)):
+                try:
+                    os.unlink(fpath)
+                except OSError:
+                    pass
+
     def activate_session(self, session_id: str) -> Optional[SessionInfo]:
-        """Switch to a session: copy its data to project/cluster/ for CASTLE to use."""
+        """Switch to a session: atomically clear cluster/ root then copy session files."""
         info = self.get_session(session_id)
         if info is None:
             return None
-        
-        session_dir = self.get_session_dir(session_id)
-        
-        # Copy session files to cluster/ root (where CASTLE expects them)
-        for fname in ['id.csv']:
-            src = os.path.join(session_dir, fname)
-            dst = os.path.join(self.cluster_path, fname)
-            if os.path.exists(src):
-                shutil.copyfile(src, dst)
-        
-        # Clear stale npz files from cluster/ root before restoring this session's files,
-        # so a previous session's npz can't leak into the newly activated one.
-        for stale in glob.glob(os.path.join(self.cluster_path, 'cluster_*.npz')):
-            try:
-                os.unlink(stale)
-            except OSError:
-                pass
 
-        # Copy npz files
-        for npz in glob.glob(os.path.join(session_dir, 'cluster_*.npz')):
-            shutil.copyfile(npz, os.path.join(self.cluster_path, os.path.basename(npz)))
-        
+        session_dir = self.get_session_dir(session_id)
+
+        # Step 1: wipe ALL session-owned files from cluster/ root so no stale
+        # data from a previous session can leak into this one.
+        self._clear_cluster_root()
+
+        # Step 2: copy this session's saved files back into cluster/ root.
+        for fname in self._SESSION_FILES:
+            src = os.path.join(session_dir, fname)
+            if os.path.exists(src):
+                shutil.copyfile(src, os.path.join(self.cluster_path, fname))
+        for pattern in self._SESSION_PATTERNS:
+            for src in glob.glob(os.path.join(session_dir, pattern)):
+                shutil.copyfile(src, os.path.join(self.cluster_path, os.path.basename(src)))
+
         self.set_active_session(session_id)
         return info
-    
+
     def snapshot_to_session(self, session_id: str):
-        """Copy current cluster/ state into the session directory."""
+        """Copy the full current cluster/ state into the session directory."""
         session_dir = self.get_session_dir(session_id)
         os.makedirs(session_dir, exist_ok=True)
-        
-        # Copy id.csv
-        id_csv = os.path.join(self.cluster_path, 'id.csv')
-        if os.path.exists(id_csv):
-            shutil.copyfile(id_csv, os.path.join(session_dir, 'id.csv'))
-        
-        # Copy all cluster_*.npz
-        for npz in glob.glob(os.path.join(self.cluster_path, 'cluster_*.npz')):
-            shutil.copyfile(npz, os.path.join(session_dir, os.path.basename(npz)))
+
+        for fname in self._SESSION_FILES:
+            src = os.path.join(self.cluster_path, fname)
+            if os.path.exists(src):
+                shutil.copyfile(src, os.path.join(session_dir, fname))
+        for pattern in self._SESSION_PATTERNS:
+            for src in glob.glob(os.path.join(self.cluster_path, pattern)):
+                shutil.copyfile(src, os.path.join(session_dir, os.path.basename(src)))
     
     def delete_session(self, session_id: str) -> bool:
         """Delete a session and deactivate it if it was the active one."""

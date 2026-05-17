@@ -1381,6 +1381,12 @@ def init_clustering_aggregator(
     """
     from castle.core.cluster import LatentAggregator
 
+    # Clear cluster/ root before starting a new session so no files from a
+    # previous session can pollute this one.  Do this before creating the
+    # LatentAggregator so that any memmap cache from the old session is gone.
+    mgr = SessionManager(storage_path, project_name)
+    mgr._clear_cluster_root()
+
     aggregator = LatentAggregator(
         storage_path, project_name, select_roi_id, int(bin_size),
         model_name=select_model,
@@ -1388,7 +1394,6 @@ def init_clustering_aggregator(
     )
     latents = aggregator.get_latent_object()
 
-    mgr = SessionManager(storage_path, project_name)
     mgr.create_session(
         model=select_model,
         roi_id=int(select_roi_id) if select_roi_id else 1,

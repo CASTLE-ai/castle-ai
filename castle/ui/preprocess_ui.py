@@ -586,14 +586,16 @@ def create_preprocess_ui(
     ]
 
     def _on_tab_select(sp, pn):
+        is_open = bool(sp and pn)
         vupd = _list_videos(sp, pn)
         supd = _list_sessions_dropdown(sp, pn)
-        return vupd, supd
+        wrapper_upd = gr.update(visible=is_open)
+        return wrapper_upd, vupd, supd
 
     preprocess_tab.select(
         fn=_on_tab_select,
         inputs=[storage_path, project_name],
-        outputs=[ui["video_drop"], ui["sessions_dropdown"]],
+        outputs=[ui["wrapper"], ui["video_drop"], ui["sessions_dropdown"]],
     )
 
     # Populate ROI dropdowns when video changes

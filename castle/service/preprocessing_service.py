@@ -9,8 +9,10 @@ No gradio imports.
 from __future__ import annotations
 
 import logging
+import multiprocessing
+import os
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +278,122 @@ def _encode_stabilized_video(
     finally:
         output_container.close()
         input_container.close()
+
+
+# ---------------------------------------------------------------------------
+# Batch KIT preprocessing
+# ---------------------------------------------------------------------------
+
+# Module-level worker — must be top-level (not nested / lambda) so multiprocessing
+# can pickle it when using the "spawn" start method.
+def _process_single_video_worker(
+    args: Tuple[str, str, str, dict, bool],
+) -> Tuple[str, str]:
+    """Worker function executed in a subprocess for one video.
+
+    Args:
+        args: Tuple of ``(storage_path, project_name, video_name, kit_params,
+            skip_existing)``.
+
+    Returns:
+        ``(video_name, status)`` where *status* is one of ``"success"``,
+        ``"skipped"``, or ``"error: <message>"``.
+    """
+    storage_path, project_name, video_name, kit_params, skip_existing = args
+
+    # Pre-flight: mask file must exist
+    mask_h5 = (
+        Path(storage_path) / project_name / "track" / video_name / "mask_list.h5"
+    )
+    if not mask_h5.exists():
+        return video_name, f"error: mask not found at {mask_h5}"
+
+    if skip_existing:
+        out_path = (
+            Path(storage_path) / project_name / "preprocessed" / video_name / "stabilized.mp4"
+        )
+        if out_path.exists():
+            return video_name, "skipped"
+
+    try:
+        preprocess_stabilized_camera(
+            storage_path=storage_path,
+            project_name=project_name,
+            video_name=video_name,
+            **kit_params,
+        )
+        return video_name, "success"
+    except Exception as exc:  # noqa: BLE001
+        return video_name, f"error: {exc}"
+
+
+def batch_preprocess_stabilized_camera(
+    storage_path: str,
+    project_name: str,
+    video_list: List[str],
+    kit_params: dict,
+    skip_existing: bool = True,
+    n_workers: Optional[int] = None,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+) -> List[Tuple[str, str]]:
+    """Run KIT preprocessing on multiple videos using multiprocessing.
+
+    Uses ``multiprocessing.get_context("spawn")`` to avoid HDF5 / CUDA
+    fork-safety issues.  Each video is processed in an isolated subprocess.
+
+    Args:
+        storage_path: Root storage directory.
+        project_name: Project name.
+        video_list: List of video filenames to process.
+        kit_params: KIT parameter dict forwarded verbatim to
+            :func:`preprocess_stabilized_camera`.  Expected keys:
+            ``body_roi_id``, ``head_roi_id``, ``fc``, ``order``, ``margin``,
+            ``min_crop``, ``output_size``.
+        skip_existing: If ``True`` (default), skip videos that already have
+            ``preprocessed/{video}/stabilized.mp4``.
+        n_workers: Number of worker processes.  Defaults to
+            ``max(1, os.cpu_count() - 2)``.
+        progress_callback: Called as ``callback(current, total, message)``
+            after each video completes.
+
+    Returns:
+        List of ``(video_name, status)`` tuples in completion order.
+        *status* is ``"success"``, ``"skipped"``, or ``"error: <message>"``.
+
+    Example:
+        >>> results = batch_preprocess_stabilized_camera(
+        ...     '/data', 'my_exp',
+        ...     ['a.mp4', 'b.mp4'],
+        ...     kit_params={'body_roi_id': 1, 'head_roi_id': 2, 'fc': 0.25,
+        ...                 'order': 2, 'margin': 75, 'min_crop': 300,
+        ...                 'output_size': 518},
+        ... )
+        >>> all(s in ('success', 'skipped') for _, s in results)
+        True
+    """
+    n_workers = n_workers or max(1, (os.cpu_count() or 1) - 2)
+    n_workers = min(n_workers, len(video_list))
+
+    args_list = [
+        (storage_path, project_name, v, kit_params, skip_existing)
+        for v in video_list
+    ]
+
+    results: List[Tuple[str, str]] = []
+    ctx = multiprocessing.get_context("spawn")
+    with ctx.Pool(processes=n_workers) as pool:
+        for i, result in enumerate(pool.imap(_process_single_video_worker, args_list)):
+            results.append(result)
+            vname, status = result
+            logger.info("Batch KIT [%d/%d] %s: %s", i + 1, len(video_list), vname, status)
+            if progress_callback:
+                progress_callback(
+                    i + 1,
+                    len(video_list),
+                    f"[{i + 1}/{len(video_list)}] {vname}: {status}",
+                )
+
+    return results
 
 
 # ---------------------------------------------------------------------------

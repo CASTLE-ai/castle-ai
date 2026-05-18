@@ -30,9 +30,14 @@ _SENTINEL = None
 class ParallelExtractor:
     """Three-stage parallel pipeline for feature extraction.
 
-    Stage 1 (I/O thread): VideoReader decode → frame_queue
-    Stage 2 (CPU thread): Preprocess (StabilizedCamera.generate_frame) → tensor_queue
-    Stage 3 (GPU main):   DINOv2 inference → latent list → returned as (N, D) array
+    Stage 1 (I/O thread): VideoReader decode (+ optional H5IO mask read) → frame_queue
+    Stage 2 (CPU thread): Preprocess frame (+ optional mask) → tensor_queue
+    Stage 3 (GPU main):   DINOv2 inference with ROI-weighted pooling → return (N, D)
+
+    When *mask_path* and *stabilized_camera* are both provided, Stage 2 applies
+    :meth:`StabilizedCamera.generate_mask` with the same affine matrix as
+    :meth:`StabilizedCamera.generate_frame`, guaranteeing pixel-perfect frame/mask
+    alignment in the KIT (Kinematics Info Transfusion) pipeline.
 
     Parameters
     ----------
@@ -41,6 +46,11 @@ class ParallelExtractor:
     stabilized_camera : StabilizedCamera, optional
         Pre-constructed StabilizedCamera instance.  When *None*, frames are
         passed through without preprocessing.
+    mask_path : str, optional
+        Path to the HDF5 mask file (``mask_list.h5``).  When provided, Stage 1
+        reads the corresponding mask for every frame and Stage 2 applies the
+        same KIT transform to it.  The transformed mask is then used for
+        ROI-weighted pooling in Stage 3 instead of a dummy all-ROI mask.
     model : object, optional
         Visual encoder with an ``extract_tensor_batch(frames, masks, roi_id)``
         or ``extract_batch_latent(frames, masks, roi_id)`` method.  When
@@ -58,6 +68,7 @@ class ParallelExtractor:
         self,
         video_path: str,
         stabilized_camera=None,
+        mask_path: Optional[str] = None,
         model=None,
         batch_size: int = 8,
         queue_size: int = 32,
@@ -65,6 +76,7 @@ class ParallelExtractor:
     ) -> None:
         self.video_path = video_path
         self.stabilized_camera = stabilized_camera
+        self.mask_path = mask_path
         self.model = model
         self.batch_size = int(batch_size)
         self.queue_size = int(queue_size)
@@ -80,15 +92,39 @@ class ParallelExtractor:
         error_holder: list,
         error_event: threading.Event,
     ) -> None:
-        """Read raw frames from disk and push them onto *frame_queue*."""
+        """Read raw frames (and optionally masks) from disk.
+
+        When ``self.mask_path`` is set, opens the HDF5 mask file alongside the
+        video reader and reads the mask for each frame.  Missing masks produce
+        ``None`` entries which Stage 2 handles gracefully.
+        """
         try:
-            with VideoReader(self.video_path) as reader:
-                total = len(reader)
-                for idx in range(total):
-                    if error_event.is_set():
-                        break
-                    frame = reader.get_frame(idx)
-                    frame_queue.put((idx, total, frame))
+            h5_ctx = None
+            if self.mask_path is not None:
+                from castle.utils.h5_io import H5IO
+                h5_ctx = H5IO(self.mask_path)
+
+            try:
+                with VideoReader(self.video_path) as reader:
+                    total = len(reader)
+                    for idx in range(total):
+                        if error_event.is_set():
+                            break
+                        frame = reader.get_frame(idx)
+                        mask = None
+                        if h5_ctx is not None:
+                            try:
+                                mask = h5_ctx.read_mask(idx)
+                            except Exception as exc:  # noqa: BLE001
+                                logger.debug("Stage-1: mask read failed frame %d: %s", idx, exc)
+                        frame_queue.put((idx, total, frame, mask))
+            finally:
+                if h5_ctx is not None:
+                    try:
+                        h5_ctx.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+
             frame_queue.put(_SENTINEL)
         except Exception as exc:  # noqa: BLE001
             error_holder.append(exc)
@@ -102,7 +138,13 @@ class ParallelExtractor:
         error_holder: list,
         error_event: threading.Event,
     ) -> None:
-        """Apply preprocessing and push tensors onto *tensor_queue*."""
+        """Apply StabilizedCamera transform to frame and (optionally) mask.
+
+        When KIT is active (``stabilized_camera`` + ``mask_path`` both set),
+        both frame and mask are transformed with the **same** affine matrix via
+        :meth:`_get_warp_params` — ensuring pixel-perfect alignment between the
+        stabilised frame and the transformed ROI mask.
+        """
         try:
             while True:
                 item = frame_queue.get()
@@ -112,17 +154,24 @@ class ParallelExtractor:
                     # Drain remaining items so stage 1 is never blocked
                     continue
 
-                idx, total, frame = item
+                idx, total, frame, mask = item
                 try:
                     if self.stabilized_camera is not None:
-                        processed = self.stabilized_camera.generate_frame(frame, idx)
+                        processed_frame = self.stabilized_camera.generate_frame(frame, idx)
+                        processed_mask = (
+                            self.stabilized_camera.generate_mask(mask, idx)
+                            if mask is not None
+                            else None
+                        )
                     else:
-                        processed = frame
+                        processed_frame = frame
+                        processed_mask = mask
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Stage-2 frame %d preprocessing failed: %s", idx, exc)
-                    processed = np.zeros_like(frame)
+                    processed_frame = np.zeros_like(frame)
+                    processed_mask = None
 
-                tensor_queue.put((idx, total, processed))
+                tensor_queue.put((idx, total, processed_frame, processed_mask))
 
             tensor_queue.put(_SENTINEL)
         except Exception as exc:  # noqa: BLE001
@@ -182,6 +231,7 @@ class ParallelExtractor:
         # Stage 3: GPU inference in the main thread (batched)
         latent_list: list = []
         batch_frames: list = []
+        batch_masks: list = []
         batch_indices: list = []
         total_frames = 0
 
@@ -191,27 +241,29 @@ class ParallelExtractor:
                 if item is _SENTINEL:
                     break
 
-                idx, total_frames, processed = item
+                idx, total_frames, processed_frame, processed_mask = item
 
                 if progress_callback is not None:
                     progress_callback(idx, total_frames, "preprocessing")
 
-                batch_frames.append(processed)
+                batch_frames.append(processed_frame)
+                batch_masks.append(processed_mask)
                 batch_indices.append(idx)
 
                 if len(batch_frames) >= self.batch_size:
                     latent_list.append(
-                        self._run_inference(batch_frames, batch_indices)
+                        self._run_inference(batch_frames, batch_masks, batch_indices)
                     )
                     if progress_callback is not None:
                         progress_callback(batch_indices[-1], total_frames, "inference")
                     batch_frames = []
+                    batch_masks = []
                     batch_indices = []
 
             # Flush the last partial batch
             if batch_frames:
                 latent_list.append(
-                    self._run_inference(batch_frames, batch_indices)
+                    self._run_inference(batch_frames, batch_masks, batch_indices)
                 )
                 if progress_callback is not None and total_frames > 0:
                     progress_callback(total_frames, total_frames, "inference")
@@ -237,20 +289,26 @@ class ParallelExtractor:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _run_inference(self, frames: list, indices: list) -> np.ndarray:
+    def _run_inference(
+        self,
+        frames: list,
+        masks: list,
+        indices: list,
+    ) -> np.ndarray:
         """Run model inference on a batch of preprocessed frames.
 
-        Parameters
-        ----------
-        frames : list of np.ndarray
-            Preprocessed frame arrays.
-        indices : list of int
-            Corresponding frame indices (for logging).
+        When KIT-transformed masks are available (not ``None``), they are used
+        directly for ROI-weighted pooling.  Otherwise a dummy all-ROI mask is
+        constructed to maintain backward compatibility.
 
-        Returns
-        -------
-        np.ndarray, shape (B, D) or (B, H, W, C)
-            Latent vectors, or raw stacked frames when *model* is *None*.
+        Args:
+            frames: List of preprocessed frame arrays, each ``(H, W, 3)``.
+            masks: List of transformed mask arrays ``(H, W)`` or ``None`` entries.
+            indices: Corresponding frame indices (for logging).
+
+        Returns:
+            Latent array, shape ``(B, D)``; or stacked frames ``(B, H, W, C)``
+            when ``self.model`` is ``None``.
         """
         batch = np.stack(frames, axis=0)  # (B, H, W, C)
 
@@ -258,28 +316,28 @@ class ParallelExtractor:
             # No model: return raw frames (shape stays (B, H, W, C))
             return batch.astype(np.float32)
 
-        # Create dummy masks (all-ones) matching the batch spatial dims
+        # Use real transformed masks when available; fall back to dummy all-ROI masks.
         h, w = batch.shape[1], batch.shape[2]
-        masks = np.ones((len(frames), h, w), dtype=np.uint8) * self.roi_id
+        if any(m is not None for m in masks):
+            masks_arr = np.stack(
+                [m if m is not None else np.full((h, w), self.roi_id, dtype=np.uint8)
+                 for m in masks],
+                axis=0,
+            )
+        else:
+            masks_arr = np.full((len(frames), h, w), self.roi_id, dtype=np.uint8)
 
         try:
             if hasattr(self.model, "extract_tensor_batch"):
-                result = self.model.extract_tensor_batch(
-                    batch, masks, self.roi_id
-                )
+                result = self.model.extract_tensor_batch(batch, masks_arr, self.roi_id)
             elif hasattr(self.model, "extract_batch_latent"):
-                result = self.model.extract_batch_latent(batch, masks, self.roi_id)
+                result = self.model.extract_batch_latent(batch, masks_arr, self.roi_id)
             else:
                 raise AttributeError(
                     "Model must implement extract_tensor_batch or extract_batch_latent"
                 )
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "Stage-3 inference failed for frames %s: %s",
-                indices,
-                exc,
-            )
-            # Return zero-filled placeholder so we don't lose shape info
+            logger.error("Stage-3 inference failed for frames %s: %s", indices, exc)
             embed_dim = getattr(self.model, "n_feature", 768)
             result = np.zeros((len(frames), embed_dim), dtype=np.float32)
 

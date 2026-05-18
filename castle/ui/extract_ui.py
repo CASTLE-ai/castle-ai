@@ -440,12 +440,85 @@ def ui_setting_preprocess(storage_path, project_name, select_video, center_roi_s
 
 
 # ---------------------------
+# KIT helper functions for extract UI
+# ---------------------------
+
+def _kit_load_params_for_display(storage_path_val: str, project_name_val: str) -> tuple:
+    """Load KIT params and format them for display in the extract UI."""
+    import json
+    from castle.core.project import load_kit_params
+
+    if not storage_path_val or not project_name_val:
+        return gr.update(), "⚠️ No project open."
+
+    params = load_kit_params(storage_path_val, project_name_val)
+    if params is None:
+        return (
+            gr.update(),
+            "⚠️ 尚未存有 KIT 參數，請先在 Tracking → Kinematics info transfusion 探索並 Save。",
+        )
+    return gr.update(value=json.dumps(params, indent=2)), "✅ KIT params loaded."
+
+
+def _update_kit_conflict_warning(enable_kit: bool, center_roi: bool, rotate_tail: bool) -> gr.update:
+    """Show a warning when KIT is enabled alongside Center ROI or Rotate tail."""
+    if enable_kit and (center_roi or rotate_tail):
+        which = []
+        if center_roi:
+            which.append("Center ROI")
+        if rotate_tail:
+            which.append("Rotate based on Tail")
+        return gr.update(
+            visible=True,
+            value=(
+                f"⚠️ **KIT 與 {' / '.join(which)} 語意重疊**，同時開啟可能產生衝突 "
+                "（KIT 已對影像做穩定旋轉，Rotate Tail 會再旋轉一次）。"
+                "確認繼續請直接點 Extract。"
+            ),
+        )
+    return gr.update(visible=False, value="")
+
+
+# ---------------------------
 # UI Construction
 # ---------------------------
 def create_extract_ui(storage_path, project_name, extract_tab):
     ui = {}
     preprocess_state = gr.State(None)
-    
+
+    # ------------------------------------------------------------------
+    # KIT accordion (above main settings)
+    # ------------------------------------------------------------------
+    with gr.Accordion("🎥 Kinematics info transfusion", open=False):
+        gr.Markdown(
+            "Enable KIT to transform both frame **and** mask with StabilizedCamera "
+            "on-the-fly during extraction (no intermediate video written to disk). "
+            "Parameters are loaded from the project config saved in "
+            "**Tracking → Kinematics info transfusion**."
+        )
+        ui["enable_kit"] = gr.Checkbox(
+            label="Enable KIT",
+            value=False,
+            info="When enabled, extraction uses the saved KIT parameters.",
+        )
+        with gr.Row():
+            ui["load_kit_params_btn"] = gr.Button(
+                "📂 Load saved params from project", variant="secondary"
+            )
+        ui["kit_params_display"] = gr.Textbox(
+            label="Saved KIT params (read-only)",
+            value="",
+            interactive=False,
+            lines=5,
+        )
+        ui["kit_param_status"] = gr.Textbox(
+            label="",
+            value="",
+            interactive=False,
+            lines=1,
+        )
+        ui["kit_conflict_warning"] = gr.Markdown(value="", visible=False)
+
     with gr.Row(visible=True):
         with gr.Column(scale=2):
             ui['select_model'] = gr.Dropdown(
@@ -608,12 +681,92 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         outputs=[preprocess_state, ui['display'], ui['rotate_roi_tail_switch']]
     )
 
+    # KIT: load saved params into display
+    ui["load_kit_params_btn"].click(
+        fn=_kit_load_params_for_display,
+        inputs=[storage_path, project_name],
+        outputs=[ui["kit_params_display"], ui["kit_param_status"]],
+    )
+
+    # KIT conflict warning: update when relevant checkboxes change
+    for _trigger in (ui["enable_kit"], ui["center_roi_switch"]):
+        _trigger.change(
+            fn=_update_kit_conflict_warning,
+            inputs=[ui["enable_kit"], ui["center_roi_switch"], ui["rotate_roi_tail_switch"]],
+            outputs=[ui["kit_conflict_warning"]],
+        )
+
+    def _extract_with_kit_routing(
+        storage_path_val, project_name_val, select_model, select_roi_id,
+        select_video, batch_size, preprocess_args, skip_existing,
+        rotate_roi_tail_switch, pooling_method, pooling_scales_list, feature_layers_str,
+        enable_kit, progress=gr.Progress(),
+    ) -> str:
+        """Route to KIT extraction or standard extraction depending on enable_kit."""
+        if not enable_kit:
+            return ui_extract_roi_latent(
+                storage_path_val, project_name_val, select_model, select_roi_id,
+                select_video, batch_size, preprocess_args, skip_existing,
+                rotate_roi_tail_switch, pooling_method, pooling_scales_list, feature_layers_str,
+                progress,
+            )
+
+        # KIT path
+        from castle.core.project import load_kit_params, get_project_config
+        from castle.service.extraction_service import extract_latent_with_kit
+
+        msgs = []
+        if enable_kit and (bool(preprocess_args.center_roi_switch if preprocess_args else False)
+                           or bool(rotate_roi_tail_switch)):
+            gr.Warning(
+                "KIT 與 Center ROI / Rotate Tail 同時開啟。KIT 已完成空間穩定，"
+                "再進行 Center ROI / Rotate Tail 可能產生衝突，請確認設定。"
+            )
+
+        kit_params = load_kit_params(storage_path_val, project_name_val)
+        if kit_params is None:
+            return (
+                "❌ KIT enabled but no saved params found. "
+                "Run KIT in Tracking → Kinematics info transfusion first, then Save."
+            )
+
+        _, config = get_project_config(storage_path_val, project_name_val)
+        video_list = sorted(config.get("source", [])) if select_video == "All" else [select_video]
+
+        def _cb(current: int, total: int, message: str) -> None:
+            progress(current / total if total else 0, desc=message)
+
+        success = 0
+        for vname in video_list:
+            try:
+                msgs.append(f"KIT extracting {vname}…")
+                path = extract_latent_with_kit(
+                    storage_path=storage_path_val,
+                    project_name=project_name_val,
+                    video_name=vname,
+                    roi_id=int(select_roi_id),
+                    model_name=select_model,
+                    batch_size=int(batch_size),
+                    kit_params=kit_params,
+                    skip_existing=bool(skip_existing),
+                    progress_callback=_cb,
+                )
+                msgs.append(f"  ✅ {os.path.basename(path)}")
+                success += 1
+            except Exception as exc:
+                msgs.append(f"  ❌ {vname}: {exc}")
+                logger.exception("KIT extraction failed for %s", vname)
+
+        msgs.append(f"\n🎉 KIT Extraction complete: {success}/{len(video_list)} succeeded.")
+        return "\n".join(msgs)
+
     ui['extract_btn'].click(
-        ui_extract_roi_latent,
+        _extract_with_kit_routing,
         inputs=[storage_path, project_name, ui['select_model'], ui['select_roi_id'],
                 ui['select_video'], ui['batch_size'], preprocess_state, ui['skip_existing'],
                 ui['rotate_roi_tail_switch'],
-                ui['pooling_method'], ui['pooling_scales'], ui['feature_layers']],
+                ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],
+                ui['enable_kit']],
         outputs=ui['latent_file_list']
     )
     

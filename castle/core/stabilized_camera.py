@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 import cv2
 import numpy as np
@@ -112,6 +112,88 @@ class StabilizedCamera:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _center_crop(img: np.ndarray, crop_size: int) -> np.ndarray:
+        """Crop a square region of ``crop_size`` from the centre of ``img``.
+
+        Zero-pads (BORDER_CONSTANT behaviour) if ``crop_size`` exceeds the
+        image dimension in either axis — matches cv2.BORDER_CONSTANT filling
+        used when the tracked centroid is near the frame edge.
+
+        Args:
+            img: Input array, shape ``(H, W)`` or ``(H, W, C)``.
+            crop_size: Side length of the square crop.
+
+        Returns:
+            Array of shape ``(crop_size, crop_size)`` or
+            ``(crop_size, crop_size, C)``, dtype preserved.
+        """
+        h, w = img.shape[:2]
+        cy_c, cx_c = h // 2, w // 2
+        half = crop_size // 2
+
+        y0 = cy_c - half
+        y1 = y0 + crop_size
+        x0 = cx_c - half
+        x1 = x0 + crop_size
+
+        # Valid source bounds
+        y0s, y1s = max(0, y0), min(h, y1)
+        x0s, x1s = max(0, x0), min(w, x1)
+
+        if img.ndim == 3:
+            out = np.zeros((crop_size, crop_size, img.shape[2]), dtype=img.dtype)
+        else:
+            out = np.zeros((crop_size, crop_size), dtype=img.dtype)
+
+        out[y0s - y0:y0s - y0 + (y1s - y0s),
+            x0s - x0:x0s - x0 + (x1s - x0s)] = img[y0s:y1s, x0s:x1s]
+        return out
+
+    def _get_warp_params(
+        self,
+        frame_idx: int,
+        frame_shape: Tuple[int, int],
+    ) -> Tuple[np.ndarray, int]:
+        """Compute the shared warpAffine matrix and crop size for one frame.
+
+        The returned matrix ``M`` maps the filtered centroid to the geometric
+        centre of a canvas of size ``frame_shape``.  Applying
+        ``cv2.warpAffine(img, M, (frame_shape[1], frame_shape[0]))`` followed
+        by :meth:`_center_crop` with the returned ``crop_size`` reproduces the
+        same visible region as the original pipeline — but both frames and masks
+        can share the same ``M``, guaranteeing pixel-perfect alignment.
+
+        Args:
+            frame_idx: Zero-based frame index.
+            frame_shape: ``(H, W)`` of the image to be warped — passed
+                explicitly so this method remains stateless and callers can
+                assert alignment independently.
+
+        Returns:
+            ``(M, crop_size)`` where ``M`` is a ``(2, 3)`` float64 affine
+            matrix and ``crop_size`` is the integer side length of the square
+            crop to apply after warping.
+        """
+        h, w = frame_shape
+        cx = float(self.pos_filtered[frame_idx, 0])
+        cy = float(self.pos_filtered[frame_idx, 1])
+        angle_deg = float(self.angle_filtered[frame_idx]) - 90.0
+        crop_size = int(self.crop_sizes[frame_idx])
+
+        # Rotation matrix: rotates around (cx, cy)
+        M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+
+        # Translate so that the filtered centroid lands at the canvas centre.
+        # _center_crop then extracts the crop_size × crop_size region around
+        # that centre — equivalent to the original (crop_size, crop_size)
+        # warpAffine destination but avoids a separate crop pipeline per
+        # image type (frame vs mask).
+        M[0, 2] += w / 2.0 - cx
+        M[1, 2] += h / 2.0 - cy
+
+        return M, crop_size
 
     @staticmethod
     def _interpolate_nans(data: np.ndarray) -> np.ndarray:
@@ -245,53 +327,72 @@ class StabilizedCamera:
     def generate_frame(self, frame: np.ndarray, frame_idx: int) -> np.ndarray:
         """Extract a stabilised, rotated, and resized crop for one video frame.
 
-        Steps
-        -----
-        1. Retrieve filtered (cx, cy) and angle; apply -90° offset.
-        2. Build rotation matrix centred on (cx, cy).
-        3. Translate so that (cx, cy) maps to the crop centre.
-        4. ``cv2.warpAffine`` into a square crop of side ``crop_size``.
-        5. ``cv2.resize`` to ``(output_size, output_size)``.
+        Uses :meth:`_get_warp_params` to compute the shared affine matrix so
+        that the identical ``M`` can also be used by :meth:`generate_mask` —
+        guaranteeing frame/mask pixel alignment after KIT transformation.
 
-        Parameters
-        ----------
-        frame : np.ndarray
-            BGR image array, shape (H, W, 3).
-        frame_idx : int
-            Zero-based frame index (used to look up trajectory data).
+        Args:
+            frame: BGR image array, shape ``(H, W, 3)``.
+            frame_idx: Zero-based frame index.
 
-        Returns
-        -------
-        np.ndarray
-            Processed frame, shape (output_size, output_size, 3), dtype uint8.
+        Returns:
+            Processed frame, shape ``(output_size, output_size, 3)``, uint8.
         """
-        offset_deg = -90.0
+        h, w = frame.shape[:2]
+        M, crop_size = self._get_warp_params(frame_idx, (h, w))
 
-        cx, cy = float(self.pos_filtered[frame_idx, 0]), float(self.pos_filtered[frame_idx, 1])
-        angle_deg = float(self.angle_filtered[frame_idx]) + offset_deg
-
-        crop_size = int(self.crop_sizes[frame_idx])
-
-        # Rotation matrix centred at the filtered centroid
-        M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
-
-        # Translate so that (cx, cy) → (crop_size/2, crop_size/2)
-        M[0, 2] += crop_size / 2.0 - cx
-        M[1, 2] += crop_size / 2.0 - cy
-
-        cropped = cv2.warpAffine(
+        warped = cv2.warpAffine(
             frame,
             M,
-            (crop_size, crop_size),
+            (w, h),
             flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=(0, 0, 0),
         )
-
+        cropped = self._center_crop(warped, crop_size)
         return cv2.resize(
             cropped,
             (self.output_size, self.output_size),
             interpolation=cv2.INTER_LINEAR,
+        )
+
+    def generate_mask(self, mask: np.ndarray, frame_idx: int) -> np.ndarray:
+        """Apply the same warpAffine as :meth:`generate_frame` to a mask.
+
+        Uses INTER_NEAREST interpolation to preserve integer label integrity.
+        Because both methods share :meth:`_get_warp_params`, the resulting mask
+        is in the same ``output_size × output_size`` coordinate space as the
+        corresponding processed frame — they are always pixel-aligned.
+
+        This is the correct approach when KIT is combined with ROI-weighted
+        pooling: after stabilisation the coordinate space changes, so the mask
+        must be transformed by the same affine ``M`` before pooling.
+
+        Args:
+            mask: Integer mask in original video coordinates, shape ``(H, W)``.
+                Pixel values encode ROI labels (0 = background).
+            frame_idx: Zero-based frame index for trajectory lookup.
+
+        Returns:
+            Transformed mask, shape ``(output_size, output_size)``, same dtype
+            as input.
+        """
+        h, w = mask.shape[:2]
+        M, crop_size = self._get_warp_params(frame_idx, (h, w))
+
+        warped = cv2.warpAffine(
+            mask,
+            M,
+            (w, h),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+        cropped = self._center_crop(warped, crop_size)
+        return cv2.resize(
+            cropped,
+            (self.output_size, self.output_size),
+            interpolation=cv2.INTER_NEAREST,
         )
 
     def get_diagnostics(self) -> Dict[str, object]:

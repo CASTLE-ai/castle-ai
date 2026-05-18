@@ -157,11 +157,126 @@ def create_edit_ui(storage_path, project_name, edit_tab):
         with gr.Tab(label='Analysis'):
             post_track_ui = create_post_track_ui(storage_path, project_name, source_video)
 
-        with gr.Tab(label='Preprocessing') as preprocess_sub_tab:
+        with gr.Tab(label='Kinematics info transfusion') as preprocess_sub_tab:
             preprocess_ui = create_preprocess_ui(storage_path, project_name, preprocess_sub_tab)
 
     with gr.Tab(label='Batch Videos Tracking') as batch_tracking_tab:
         batch_tracking_ui, batch_tracking_states = create_batch_track_ui(storage_path, project_name, batch_tracking_tab)
+
+        # ------------------------------------------------------------------
+        # Batch Kinematics info transfusion accordion
+        # ------------------------------------------------------------------
+        with gr.Accordion("🎥 Kinematics info transfusion (Batch)", open=False):
+            gr.Markdown(
+                "Run KIT preprocessing on all videos in the project using parameters "
+                "saved via **Tracking → Kinematics info transfusion → 💾 Save params**."
+            )
+            with gr.Row():
+                _kit_batch_load_btn = gr.Button("📂 Load saved params", variant="secondary")
+                _kit_batch_skip = gr.Checkbox(label="Skip existing", value=True)
+            _kit_batch_params_display = gr.Textbox(
+                label="Loaded KIT params",
+                value="",
+                interactive=False,
+                lines=4,
+            )
+            with gr.Row():
+                _kit_batch_nworkers = gr.Number(
+                    label="Workers",
+                    value=0,
+                    precision=0,
+                    minimum=0,
+                    info="0 = auto (cpu_count − 2)",
+                )
+                _kit_batch_run_btn = gr.Button("▶ Run Batch KIT", variant="primary")
+            _kit_batch_progress = gr.Textbox(
+                label="Batch KIT progress",
+                value="",
+                interactive=False,
+                lines=15,
+            )
+
+        def _kit_batch_load(storage_path_val: str, project_name_val: str) -> str:
+            from castle.core.project import load_kit_params
+            if not storage_path_val or not project_name_val:
+                return "⚠️ No project open."
+            params = load_kit_params(storage_path_val, project_name_val)
+            if params is None:
+                return (
+                    "⚠️ 尚未存有 KIT 參數，請先在 Tracking → Kinematics info transfusion "
+                    "探索並 Save。"
+                )
+            import json
+            return json.dumps(params, indent=2)
+
+        _kit_batch_load_btn.click(
+            fn=_kit_batch_load,
+            inputs=[storage_path, project_name],
+            outputs=[_kit_batch_params_display],
+        )
+
+        def _kit_batch_run(
+            storage_path_val: str,
+            project_name_val: str,
+            skip_existing: bool,
+            n_workers_val: int,
+            progress: gr.Progress = gr.Progress(track_tqdm=True),
+        ) -> str:
+            import json
+            from castle.core.project import load_kit_params, get_project_config
+            from castle.service.preprocessing_service import batch_preprocess_stabilized_camera
+
+            if not storage_path_val or not project_name_val:
+                return "⚠️ No project open."
+
+            params = load_kit_params(storage_path_val, project_name_val)
+            if params is None:
+                return (
+                    "⚠️ 尚未存有 KIT 參數，請先在 Tracking → Kinematics info transfusion "
+                    "探索並 Save。"
+                )
+
+            _, config = get_project_config(storage_path_val, project_name_val)
+            video_list = sorted(config.get("source", []))
+            if not video_list:
+                return "⚠️ No videos found in project."
+
+            nw = int(n_workers_val) if int(n_workers_val) > 0 else None
+            log_lines: list[str] = [
+                f"Starting Batch KIT for {len(video_list)} video(s)…",
+                f"Workers: {nw or 'auto'}  |  Skip existing: {skip_existing}",
+                "",
+            ]
+
+            def _cb(current: int, total: int, message: str) -> None:
+                progress(current / total, desc=message)
+
+            try:
+                results = batch_preprocess_stabilized_camera(
+                    storage_path=storage_path_val,
+                    project_name=project_name_val,
+                    video_list=video_list,
+                    kit_params=params,
+                    skip_existing=skip_existing,
+                    n_workers=nw,
+                    progress_callback=_cb,
+                )
+                for vname, status in results:
+                    icon = "✅" if status in ("success", "skipped") else "❌"
+                    log_lines.append(f"{icon} {vname}: {status}")
+                log_lines.append("")
+                n_ok = sum(1 for _, s in results if s in ("success", "skipped"))
+                log_lines.append(f"Done: {n_ok}/{len(video_list)} succeeded.")
+            except Exception as exc:
+                log_lines.append(f"❌ Batch KIT failed: {exc}")
+
+            return "\n".join(log_lines)
+
+        _kit_batch_run_btn.click(
+            fn=_kit_batch_run,
+            inputs=[storage_path, project_name, _kit_batch_skip, _kit_batch_nworkers],
+            outputs=[_kit_batch_progress],
+        )
 
     view_ui_object_count = gr.State(len(view_ui))
     label_ui_object_count = gr.State(len(label_ui))

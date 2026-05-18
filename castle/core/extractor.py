@@ -187,6 +187,9 @@ def extract_roi_latent_from_video(
     pooling_scales: Optional[list] = None,
     feature_layers: Optional[list] = None,
     *,
+    source_video_path: Optional[str] = None,
+    mask_path_override: Optional[str] = None,
+    session_id: Optional[str] = None,
     on_frame_error: OnFrameError = "skip",
     max_batch_failure_rate: float = 0.05,
 ) -> str:
@@ -249,8 +252,9 @@ def extract_roi_latent_from_video(
         tags.append(f"L{layers_str}")
     
     suffix = "_".join([model_name] + tags)
-    latent_filename = f'{base_name}_ROI_{roi_id}_{suffix}.npz'
-    
+    pre_tag = f"_pre-{session_id}" if session_id else ""
+    latent_filename = f'{base_name}_ROI_{roi_id}_{suffix}{pre_tag}.npz'
+
     latent_path = os.path.join(latent_dir_path, latent_filename)
 
     if skip_existing and os.path.exists(latent_path):
@@ -258,10 +262,10 @@ def extract_roi_latent_from_video(
         return latent_path
 
     # 2. Load Resources
-    source_path = os.path.join(storage_path, project_name, 'sources', video_name)
+    source_path = source_video_path or os.path.join(storage_path, project_name, 'sources', video_name)
     track_dir_path = os.path.join(project_path, 'track', video_name)
-    mask_list_path = os.path.join(track_dir_path, 'mask_list.h5')
-    
+    mask_list_path = mask_path_override or os.path.join(track_dir_path, 'mask_list.h5')
+
     if not os.path.exists(mask_list_path):
         raise MaskNotFoundError(
             f"Mask file not found for video {video_name!r}. "
@@ -444,7 +448,8 @@ def extract_roi_latent_from_video(
 
     # Update Config
     _, config = get_project_config(storage_path, project_name)
-    config.setdefault('latent', {})[latent_filename] = video_name
+    latent_key = f"{session_id}/{latent_filename}" if session_id else latent_filename
+    config.setdefault('latent', {})[latent_key] = video_name
     save_project_config(storage_path, project_name, config)
 
     return latent_path
@@ -604,6 +609,9 @@ def extract_roi_rotation_latent_from_video(
     skip_existing: bool,
     progress_callback: Optional[ProgressCallback] = None,
     *,
+    source_video_path: Optional[str] = None,
+    mask_path_override: Optional[str] = None,
+    session_id: Optional[str] = None,
     on_frame_error: OnFrameError = "skip",
     max_batch_failure_rate: float = 0.05,
 ) -> str:
@@ -629,7 +637,8 @@ def extract_roi_rotation_latent_from_video(
 
     base_name = os.path.splitext(video_name)[0]
 
-    latent_filename = f'{base_name}_ROI_{roi_id}_rotation_latent.npz'
+    pre_tag = f"_pre-{session_id}" if session_id else ""
+    latent_filename = f'{base_name}_ROI_{roi_id}_rotation_latent{pre_tag}.npz'
 
     latent_path = os.path.join(latent_dir_path, latent_filename)
 
@@ -638,9 +647,9 @@ def extract_roi_rotation_latent_from_video(
         return latent_path
 
     # 2. Load Resources
-    source_path = os.path.join(storage_path, project_name, 'sources', video_name)
+    source_path = source_video_path or os.path.join(storage_path, project_name, 'sources', video_name)
     track_dir_path = os.path.join(project_path, 'track', video_name)
-    mask_list_path = os.path.join(track_dir_path, 'mask_list.h5')
+    mask_list_path = mask_path_override or os.path.join(track_dir_path, 'mask_list.h5')
 
     if not os.path.exists(mask_list_path):
         raise MaskNotFoundError(

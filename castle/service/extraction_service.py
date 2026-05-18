@@ -6,7 +6,6 @@ All functions take simple types and return strings/dicts.
 No gradio imports.
 """
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -66,10 +65,11 @@ def extract_latent(
     pooling_method: str = 'weighted_average',
     pooling_scales: Optional[list] = None,
     feature_layers: Optional[list] = None,
+    session_id: Optional[str] = None,
 ) -> str:
     """
     Extract latent features from a tracked video ROI.
-    
+
     Args:
         storage_path: Root storage directory
         project_name: Project name
@@ -83,20 +83,39 @@ def extract_latent(
         pooling_method: 'weighted_average' (default) or 'multiscale'
         pooling_scales: Grid scales for multiscale pooling, e.g. [1, 2, 4]
         feature_layers: Layer indices for multi-layer extraction. None = last only.
-    
+        session_id: Pre-process session ID. If provided, uses preprocessed video and
+            mask from that session. Raises CastleIOError if the video is not in the session.
+
     Returns:
         Path to saved latent file, or empty string on failure.
         If video_name is 'All', returns semicolon-separated paths.
     """
+    from castle.core.types import CastleIOError
+    from castle.core.preprocess_session import get_preprocessed_paths
+
     if preprocess_config is None:
         preprocess_config = Preprocess()
-    
+
     # Handle "All" videos
     _, config = get_project_config(storage_path, project_name)
     video_list = sorted(config.get('source', [])) if video_name == 'All' else [video_name]
-    
+
     paths = []
     for vname in video_list:
+        # Resolve source video and mask paths from session or defaults
+        source_video_path: Optional[str] = None
+        mask_path_override: Optional[str] = None
+        if session_id:
+            try:
+                vpath, mpath = get_preprocessed_paths(storage_path, project_name, session_id, vname)
+                source_video_path = str(vpath)
+                mask_path_override = str(mpath)
+            except FileNotFoundError as exc:
+                raise CastleIOError(
+                    f"'{vname}' not preprocessed in session '{session_id}'. "
+                    f"Run Pre-process first. ({exc})"
+                ) from exc
+
         try:
             path = extract_roi_latent_from_video(
                 storage_path=storage_path,
@@ -111,168 +130,39 @@ def extract_latent(
                 pooling_method=pooling_method,
                 pooling_scales=pooling_scales,
                 feature_layers=feature_layers,
+                source_video_path=source_video_path,
+                mask_path_override=mask_path_override,
+                session_id=session_id,
             )
             if path:
                 paths.append(path)
         except Exception as e:
             logger.error(f"Extraction failed for {vname}: {e}", exc_info=True)
-    
+
     return ';'.join(paths)
 
 
-# ---------------------------------------------------------------------------
-# KIT on-the-fly latent extraction
-# ---------------------------------------------------------------------------
-
-
-def extract_latent_with_kit(
-    storage_path: str,
-    project_name: str,
-    video_name: str,
-    roi_id: int,
-    model_name: str,
-    batch_size: int = EXTRACTION_BATCH_SIZE,
-    kit_params: Optional[dict] = None,
-    skip_existing: bool = True,
-    progress_callback: Optional[Callable[[int, int, str], None]] = None,
-) -> str:
-    """On-the-fly KIT extraction: frame AND mask transformed by StabilizedCamera.
-
-    Runs the 3-stage ``ParallelExtractor`` pipeline with both ``mask_path`` and
-    ``stabilized_camera`` set, so the same affine matrix is applied to every
-    frame/mask pair (Stage 2) before ROI-weighted pooling (Stage 3).  No
-    intermediate stabilised video is written to disk.
-
-    A metadata sidecar JSON is saved alongside the ``.npz`` file to record
-    that KIT was applied and which parameters were used (without embedding them
-    in the filename).
+def delete_session_with_latent_cleanup(
+    storage_path: str, project_name: str, session_id: str
+) -> None:
+    """Delete a pre-process session directory and remove its latent entries from config.
 
     Args:
         storage_path: Root storage directory.
         project_name: Project name.
-        video_name: Source video filename.
-        roi_id: ROI id for pooling.
-        model_name: Visual encoder name (e.g. ``'dinov2_vitb14'``).
-        batch_size: GPU inference batch size.
-        kit_params: KIT parameter dict.  Required keys: ``body_roi_id``,
-            ``head_roi_id``.  Optional: ``fc``, ``order``, ``margin``,
-            ``min_crop``, ``output_size``.  If ``None`` the function raises
-            ``ValueError`` — callers should load params via
-            :func:`castle.core.project.load_kit_params` first.
-        skip_existing: Skip if the ``.npz`` already exists.
-        progress_callback: Called as ``callback(current, total, message)``.
-
-    Returns:
-        Absolute path to the saved ``.npz`` latent file.
-
-    Raises:
-        ValueError: If ``kit_params`` is ``None`` or missing required keys.
-        FileNotFoundError: If the mask HDF5 file does not exist.
+        session_id: Session ID (8-char hash) to delete.
     """
-    import numpy as np
+    from castle.core.preprocess_session import delete_session
 
-    from castle.core.stabilized_camera import (
-        StabilizedCamera,
-        extract_centroids_from_masks,
-        extract_orientations_from_masks,
-    )
-    from castle.core.pipeline_parallel import ParallelExtractor
+    delete_session(storage_path, project_name, session_id)
 
-    if kit_params is None:
-        raise ValueError(
-            "kit_params is required for extract_latent_with_kit. "
-            "Call load_kit_params() first and pass the result."
-        )
-    for key in ("body_roi_id", "head_roi_id"):
-        if key not in kit_params:
-            raise ValueError(f"kit_params is missing required key: '{key}'")
-
-    project_path, _ = get_project_config(storage_path, project_name)
-    project_dir = Path(project_path)
-    latent_dir = project_dir / "latent" / model_name
-    latent_dir.mkdir(parents=True, exist_ok=True)
-
-    base_name = os.path.splitext(video_name)[0]
-    latent_path = latent_dir / f"{base_name}_ROI_{roi_id}_{model_name}.npz"
-    sidecar_path = Path(str(latent_path) + ".json")
-
-    if skip_existing and latent_path.exists():
-        logger.info("extract_latent_with_kit: skipping %s (already exists)", latent_path)
-        return str(latent_path)
-
-    source_path = str(project_dir / "sources" / video_name)
-    mask_path = str(project_dir / "track" / video_name / "mask_list.h5")
-    if not Path(mask_path).exists():
-        raise FileNotFoundError(
-            f"Mask file not found: {mask_path}. "
-            f"Run tracking for '{video_name}' first."
-        )
-
-    from castle.utils.video_io import ReadArray
-    with ReadArray(source_path) as vr:
-        n_frames: int = len(vr)
-        fps: float = vr.fps
-
-    if progress_callback:
-        progress_callback(0, n_frames, "Extracting centroids…")
-
-    positions = extract_centroids_from_masks(
-        mask_path, kit_params["body_roi_id"], n_frames
-    )
-    angles = extract_orientations_from_masks(
-        mask_path, kit_params["body_roi_id"], kit_params["head_roi_id"], n_frames
-    )
-
-    cam = StabilizedCamera(
-        positions=positions,
-        angles=angles,
-        fps=fps,
-        fc=kit_params.get("fc", 0.25),
-        order=kit_params.get("order", 2),
-        margin=kit_params.get("margin", 75),
-        min_crop=kit_params.get("min_crop", 300),
-        output_size=kit_params.get("output_size", 518),
-    )
-
-    from castle.core.models import get_visual_encoder  # type: ignore
-    model_obj = get_visual_encoder(model_name)
-
-    extractor = ParallelExtractor(
-        video_path=source_path,
-        stabilized_camera=cam,
-        mask_path=mask_path,
-        model=model_obj,
-        batch_size=batch_size,
-        roi_id=roi_id,
-    )
-
-    if progress_callback:
-        progress_callback(0, n_frames, "Running KIT extraction…")
-
-    latents = extractor.run(progress_callback=progress_callback)
-
-    np.savez_compressed(str(latent_path), latent=latents)
-    logger.info(
-        "extract_latent_with_kit: saved %s  shape=%s", latent_path, latents.shape
-    )
-
-    # Register latent in project config so LatentAggregator can discover it
     _, config = get_project_config(storage_path, project_name)
-    config.setdefault("latent", {})[latent_path.name] = video_name
-    save_project_config(storage_path, project_name, config)
-
-    sidecar = {
-        "video_name": video_name,
-        "roi_id": roi_id,
-        "model_name": model_name,
-        "n_frames": int(latents.shape[0]),
-        "feature_dim": int(latents.shape[1]) if latents.ndim == 2 else None,
-        "kit_applied": True,
-        "kit_params": kit_params,
+    prefix = f"{session_id}/"
+    config["latent"] = {
+        k: v for k, v in config.get("latent", {}).items()
+        if not k.startswith(prefix)
     }
-    sidecar_path.write_text(json.dumps(sidecar, indent=2))
-
-    return str(latent_path)
+    save_project_config(storage_path, project_name, config)
 
 
 # NOTE: Not yet exposed via CLI or UI

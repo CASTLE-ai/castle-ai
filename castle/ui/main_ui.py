@@ -5,6 +5,7 @@ import gradio as gr
 from .project_ui import create_project_ui
 from .source_ui import create_source_ui
 from .edit_ui import create_edit_ui
+from .preprocess_ui import create_preprocess_ui
 from .extract_ui import create_extract_ui
 from .cluster_page_ui import create_cluster_page_ui
 from .annotator_ui import create_annotator_ui
@@ -78,16 +79,18 @@ def create_ui(OS_SYS, root=''):
 
         # Tracking ROIs tab
         with gr.Tab(label='2. Tracking ROIs') as edit_tab:
-            # The UI update logic is now handled within create_edit_ui
             _edit_ui = create_edit_ui(storage_path, project_name, edit_tab)
 
+        # Pre-process tab (optional stabilization / cropping step)
+        with gr.Tab(label='3. Pre-process') as preprocess_tab:
+            create_preprocess_ui(storage_path, project_name, preprocess_tab)
+
         # Extract latent features tab
-        with gr.Tab(label='3. Extract Latent') as extract_tab:
-            # The UI update logic is handled within create_extract_ui
+        with gr.Tab(label='4. Extract Latent') as extract_tab:
             _extract_ui = create_extract_ui(storage_path, project_name, extract_tab)
 
-        # Behavior analysis tab (Stage 4)
-        with gr.Tab(label='4. Behavior Microscope') as cluster_page_tab:
+        # Behavior analysis tab
+        with gr.Tab(label='5. Behavior Microscope') as cluster_page_tab:
             with gr.Tabs():
                 # Sub-tab: Clustering workspace
                 with gr.Tab(label='Clustering'):
@@ -108,14 +111,14 @@ def create_ui(OS_SYS, root=''):
                 outputs=[v for k, v in cluster_ui.items()]
             )
 
-        # Analysis tab (Stage 5)
-        with gr.Tab(label='5. Analysis') as analysis_tab:
+        # Analysis tab (Stage 6)
+        with gr.Tab(label='6. Analysis') as analysis_tab:
             _analysis_ui = create_analysis_ui(
                 storage_path, project_name, analysis_tab,
             )
 
-        # Export tab (Stage 6)
-        with gr.Tab(label='6. Export'):
+        # Export tab (Stage 7)
+        with gr.Tab(label='7. Export'):
             create_export_ui(storage_path, project_name)
 
     return app

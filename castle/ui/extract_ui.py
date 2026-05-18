@@ -460,6 +460,44 @@ def _kit_load_params_for_display(storage_path_val: str, project_name_val: str) -
     return gr.update(value=json.dumps(params, indent=2)), "✅ KIT params loaded."
 
 
+def _update_kit_interactivity(enable_kit: bool) -> tuple:
+    """Grey out / restore Center ROI + Rotate Tail controls based on KIT toggle."""
+    if enable_kit:
+        return (
+            gr.update(value=False, interactive=False),  # center_roi_switch
+            gr.update(interactive=False),               # center_roi_id
+            gr.update(interactive=False),               # center_roi_crop_width
+            gr.update(interactive=False),               # center_roi_crop_height
+            gr.update(value=False, interactive=False),  # rotate_roi_tail_switch
+        )
+    return (
+        gr.update(interactive=True),  # center_roi_switch
+        gr.update(interactive=True),  # center_roi_id
+        gr.update(interactive=True),  # center_roi_crop_width
+        gr.update(interactive=True),  # center_roi_crop_height
+        gr.update(interactive=True),  # rotate_roi_tail_switch
+    )
+
+
+def _kit_show_stabilized_preview(
+    storage_path: str, project_name: str, video_name: str
+) -> tuple:
+    """Return path to existing stabilized video for the selected video, if available."""
+    from pathlib import Path
+    from castle.core.project import get_project_config
+
+    if not storage_path or not project_name or not video_name or video_name == "All":
+        return None, "⚠️ Select a specific video first."
+    try:
+        project_path, _ = get_project_config(storage_path, project_name)
+        stabilized = Path(project_path) / "preprocessed" / video_name / "stabilized.mp4"
+        if stabilized.exists():
+            return str(stabilized), f"✅ Showing stabilized video for {video_name}."
+        return None, f"⚠️ No stabilized video found for {video_name}. Run KIT in Tracking first."
+    except Exception as exc:
+        return None, f"❌ {exc}"
+
+
 def _update_kit_conflict_warning(enable_kit: bool, center_roi: bool, rotate_tail: bool) -> gr.update:
     """Show a warning when KIT is enabled alongside Center ROI or Rotate tail."""
     if enable_kit and (center_roi or rotate_tail):
@@ -518,13 +556,24 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             lines=1,
         )
         ui["kit_conflict_warning"] = gr.Markdown(value="", visible=False)
+        with gr.Row():
+            ui["kit_preview_btn"] = gr.Button(
+                "🎬 Preview stabilized video", variant="secondary"
+            )
+        ui["kit_preview_video"] = gr.Video(
+            label="Stabilized Video Preview",
+            visible=False,
+        )
+        ui["kit_preview_status"] = gr.Textbox(
+            label="", value="", interactive=False, lines=1, visible=False
+        )
 
     with gr.Row(visible=True):
         with gr.Column(scale=2):
             ui['select_model'] = gr.Dropdown(
                 label="Visual Model",
                 choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
-                value="dinov2_vitb14_reg4_pretrain",
+                value="dinov3_vitb16",
                 visible=False,
                 info="DINOv2/v3 backbone used for feature extraction.",
             )
@@ -686,6 +735,33 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         fn=_kit_load_params_for_display,
         inputs=[storage_path, project_name],
         outputs=[ui["kit_params_display"], ui["kit_param_status"]],
+    )
+
+    # KIT: grey out conflicting controls + show/hide preview section
+    def _kit_toggle(enable_kit: bool):
+        interactivity = _update_kit_interactivity(enable_kit)
+        preview_vis = gr.update(visible=enable_kit)
+        return interactivity + (preview_vis, preview_vis)
+
+    ui["enable_kit"].change(
+        fn=_kit_toggle,
+        inputs=[ui["enable_kit"]],
+        outputs=[
+            ui["center_roi_switch"],
+            ui["center_roi_id"],
+            ui["center_roi_crop_width"],
+            ui["center_roi_crop_height"],
+            ui["rotate_roi_tail_switch"],
+            ui["kit_preview_video"],
+            ui["kit_preview_status"],
+        ],
+    )
+
+    # KIT preview button
+    ui["kit_preview_btn"].click(
+        fn=_kit_show_stabilized_preview,
+        inputs=[storage_path, project_name, ui["select_video"]],
+        outputs=[ui["kit_preview_video"], ui["kit_preview_status"]],
     )
 
     # KIT conflict warning: update when relevant checkboxes change

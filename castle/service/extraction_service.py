@@ -18,7 +18,7 @@ from castle.core.extractor import (
     extract_roi_crop_video,
     extract_roi_rotation_latent_from_video,
 )
-from castle.core.project import get_project_config
+from castle.core.project import get_project_config, save_project_config
 from castle.defaults import EXTRACTION_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
@@ -177,7 +177,6 @@ def extract_latent_with_kit(
         extract_orientations_from_masks,
     )
     from castle.core.pipeline_parallel import ParallelExtractor
-    from castle.core.project import get_project_config
 
     if kit_params is None:
         raise ValueError(
@@ -256,6 +255,11 @@ def extract_latent_with_kit(
     logger.info(
         "extract_latent_with_kit: saved %s  shape=%s", latent_path, latents.shape
     )
+
+    # Register latent in project config so LatentAggregator can discover it
+    _, config = get_project_config(storage_path, project_name)
+    config.setdefault("latent", {})[latent_path.name] = video_name
+    save_project_config(storage_path, project_name, config)
 
     sidecar = {
         "video_name": video_name,

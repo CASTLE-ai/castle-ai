@@ -105,6 +105,7 @@ def generate_embedding(
     umap_seed_str: str = "",
     storage_path: str | None = None,
     project_name: str | None = None,
+    umap_device: str = "GPU",
     progress=gr.Progress(),
 ):
     """Thin Gradio wrapper around
@@ -171,10 +172,17 @@ def generate_embedding(
     def umap_progress(stage, total):
         progress(stage / total, desc=f"UMAP Stage {stage + 1}/{total}...")
 
+    # deterministic = user chose CPU backend (umap-learn, multi-core k-NN,
+    # single-threaded SGD → bit-identical given same seed).
+    # GPU backend (cuML) is faster but non-deterministic across runs even with
+    # a fixed seed. The seed applies to both backends regardless.
+    deterministic = (umap_device == "CPU")
+
     try:
         result = run_umap_on_cluster(
             latents, cluster_name, cfg,
             base_seed=base_seed,
+            deterministic=deterministic,
             progress_callback=umap_progress,
             log_path=log_path,
         )

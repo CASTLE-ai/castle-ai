@@ -281,6 +281,13 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                     "Paste a seed from the status line below to reproduce a layout."
                 ),
             )
+            ui['umap_device'] = gr.Radio(
+                choices=["GPU", "CPU"],
+                value="GPU",
+                label="UMAP backend",
+                info="GPU (cuML): fast, layout may vary slightly run-to-run. "
+                     "CPU (umap-learn): slower but layout is reproducible with the same seed.",
+            )
             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
             ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
             ui['eps'] = gr.Number(
@@ -461,6 +468,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['umap_seed'],
             storage_path,
             project_name,
+            ui['umap_device'],
         ],
         outputs=[
             local_latents, local_embedding_plot,

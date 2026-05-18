@@ -953,6 +953,7 @@ def run_umap_on_cluster(
     cfg: Any,
     *,
     base_seed: Optional[int] = None,
+    deterministic: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     log_path: Optional[str] = None,
 ) -> UMAPRunArtifacts:
@@ -965,7 +966,12 @@ def run_umap_on_cluster(
             Passed through to :meth:`LocalLatent.build_embedding`.
         base_seed: If provided, stage ``i`` uses ``base_seed + i`` for
             ``random_state``; otherwise a fresh ``secrets.randbits(32)``
-            draw per stage (Re-roll path).
+            is drawn (re-roll path).
+        deterministic: When True, forces CPU umap-learn regardless of the
+            device detected by the environment. cuML UMAP is non-deterministic
+            even with a fixed ``random_state`` (GPU parallelism); CPU
+            umap-learn with the same seed produces bit-identical embeddings.
+            Set this when the caller supplied an explicit ``base_seed``.
         progress_callback: Optional ``(stage_index, total_stages) -> None``
             callable invoked before each UMAP stage. Gradio uses this to
             drive its progress bar.
@@ -992,16 +998,14 @@ def run_umap_on_cluster(
         cfg,
         progress_callback=progress_callback,
         base_seed=base_seed,
+        deterministic=deterministic,
         log_path=log_path,
     )
 
-    if len(resolved_seeds) == 1:
-        seed_repr = f"seed={resolved_seeds[0]}"
-    else:
-        seed_repr = f"seeds={resolved_seeds}"
+    mode_note = " (CPU, reproducible)" if deterministic else ""
     status_text = (
-        f"UMAP done. {seed_repr}. "
-        f"Paste `{resolved_seeds[0]}` into the seed box to lock this layout."
+        f"✅ UMAP done{mode_note}. seed={resolved_seeds[0]}. "
+        f"Paste `{resolved_seeds[0]}` into the seed box to reproduce."
     )
     return UMAPRunArtifacts(
         local_latents=local_latents,

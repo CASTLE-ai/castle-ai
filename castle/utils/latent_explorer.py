@@ -320,6 +320,7 @@ class LocalLatent:
         base_seed: Optional[int] = None,
         log_path: Optional[Union[str, Path]] = None,
         reducer_factory: Optional[Callable[[dict], "DimensionReducer"]] = None,
+        deterministic: bool = False,
     ) -> List[int]:
         """Run multi-stage UMAP dimensionality reduction.
 
@@ -353,6 +354,11 @@ class LocalLatent:
                 Pass a custom factory to plug in HDBSCAN, GMM, or any other
                 Protocol-conforming reducer without modifying ``LocalLatent``
                 (ARCH-02).
+            deterministic: When ``True``, forces CPU umap-learn even on CUDA
+                machines.  cuML GPU UMAP is non-deterministic (GPU parallelism
+                reorders floating-point ops); CPU umap-learn with the same
+                ``random_state`` produces bit-identical embeddings. Ignored
+                when ``reducer_factory`` is provided.
 
         Returns:
             List of integers — the seed actually used at each stage (length
@@ -372,8 +378,12 @@ class LocalLatent:
         """
         if reducer_factory is None:
             # Default: device-aware UMAP via the Protocol adapter (ARCH-02).
+            # When `deterministic=True` (user supplied an explicit seed to
+            # reproduce a layout), force CPU umap-learn.  cuML UMAP is
+            # non-deterministic even with a fixed random_state because GPU
+            # parallelism produces non-reproducible floating-point orderings.
             from castle.core.clustering_backends import UMAPReducer
-            device = self.device
+            device = 'cpu' if deterministic else self.device
             reducer_factory = lambda cfg: UMAPReducer(cfg, device=device)
 
         Z = self.data
@@ -412,6 +422,12 @@ class LocalLatent:
                     f"UMAP stage {i}: n_neighbors={nn} must be < n_samples="
                     f"{n_samples}. Reduce n_neighbors or supply more frames."
                 )
+
+        # Draw ONE master seed when none supplied — all stages use master+i,
+        # so the user only needs to remember a single value to reproduce any run.
+        if base_seed is None:
+            base_seed = secrets.randbits(32)
+            _logger.info("UMAP master seed drawn: %d", base_seed)
 
         resolved_seeds: List[int] = []
         resolved_configs: List[dict] = []

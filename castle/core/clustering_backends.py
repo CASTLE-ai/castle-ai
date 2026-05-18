@@ -142,6 +142,16 @@ class UMAPReducer:
             device: Compute device. Resolves which UMAP class to use.
         """
         self.cfg = {k: v for k, v in cfg.items() if k != 'random_state'}
+        # CPU path: auto-inject n_jobs so pynndescent (the k-NN builder) can
+        # use multiple cores. umap-learn's SGD stays single-threaded (numba
+        # loop), so the seed still controls the optimisation deterministically.
+        # Reserve 2 cores for the OS / GUI so the machine stays responsive.
+        # On a 2-core machine this yields 1 (floor at 1); on 4-core → 2;
+        # on 16-core → 14. Users can override by setting 'n_jobs' in cfg.
+        if device == 'cpu' and 'n_jobs' not in self.cfg:
+            import os
+            _cpu = os.cpu_count() or 1
+            self.cfg['n_jobs'] = max(1, _cpu - 2)
         self.device = device
         self._umap_cls = resolve_umap_class(device)
 

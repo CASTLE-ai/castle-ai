@@ -50,24 +50,23 @@ def track_video(storage_path: str, project_name: str, video_name: str,
         return f'Error: Video not found: {video_path}'
     
     try:
-        source_video = ReadArray(str(video_path))
-        total_frames = len(source_video)
-        
-        if stop < 0:
-            stop = total_frames - 1
-        
-        tracker = ROITracker(
-            storage_path=storage_path,
-            project_name=project_name,
-            video_source=source_video,
-            start_frame=start,
-            stop_frame=stop,
-            model_type=model,
-        )
-        
-        result = tracker.track(progress=None)
-        return result
-        
+        with ReadArray(str(video_path)) as source_video:
+            total_frames = len(source_video)
+
+            if stop < 0:
+                stop = total_frames - 1
+
+            tracker = ROITracker(
+                storage_path=storage_path,
+                project_name=project_name,
+                video_source=source_video,
+                start_frame=start,
+                stop_frame=stop,
+                model_type=model,
+            )
+
+            return tracker.track(progress=None)
+
     except Exception as e:
         logger.error(f"Tracking failed for {video_name}: {e}", exc_info=True)
         return f'Error: {e}'
@@ -108,10 +107,12 @@ def get_tracking_status(storage_path: str, project_name: str, video_name: str) -
         return result
     
     try:
-        h5 = H5IO(str(mask_path))
-        result['n_rois'] = h5.get_n_rois()
-        result['n_frames'] = len(h5)
-        del h5
+        h5 = H5IO(str(mask_path), read_only=True)
+        try:
+            result['n_rois'] = h5.get_n_rois()
+            result['n_frames'] = len(h5)
+        finally:
+            h5.close()
     except Exception as e:
         logger.warning(f"Could not read mask file {mask_path}: {e}")
     

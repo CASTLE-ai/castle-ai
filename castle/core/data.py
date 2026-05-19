@@ -198,8 +198,9 @@ class VideoDataset(Dataset):
             self.reader = VideoReader(self.video_path)
 
         if self.tracker is None:
-            # 重新開啟 H5 檔案讀取 Mask
-            self.tracker = H5IO(self.mask_path)
+            # 重新開啟 H5 檔案讀取 Mask — DataLoader workers must NOT hold a
+            # write lock on this file or h5py corrupts it on the writer side.
+            self.tracker = H5IO(self.mask_path, read_only=True)
 
         frame = self.reader[idx]
         mask = self.tracker.read_mask(idx)

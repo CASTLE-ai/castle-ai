@@ -3,6 +3,8 @@ castle/core/models.py
 Unified Visual Encoder Interface.
 """
 
+import threading
+
 import torch
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
@@ -464,13 +466,21 @@ class DINOv3Encoder(VisualEncoder):
 
 
 
-# A-07: Model singleton cache — avoid reloading the same model
+# A-07: Model singleton cache — avoid reloading the same model.
+# Two concurrent threads (e.g. two Gradio sessions) calling get_visual_encoder
+# can both miss the membership check, both evict, both create — burning GPU
+# memory and crashing with CUDA illegal memory access.  The lock makes the
+# check → evict → create → insert sequence atomic.
 _model_cache: dict = {}
 _MODEL_CACHE_MAX = 1  # Keep at most 1 model cached (the current one)
+_model_cache_lock = threading.Lock()
 
 
 def _evict_model_cache():
-    """Evict all models from cache and free GPU memory."""
+    """Evict all models from cache and free GPU memory.
+
+    Caller MUST hold ``_model_cache_lock`` (this function does not re-acquire it).
+    """
     for old_key in list(_model_cache.keys()):
         logger.info(f"Evicting cached model: {old_key}")
         old_model = _model_cache.pop(old_key)
@@ -485,31 +495,31 @@ def _evict_model_cache():
 
 def get_visual_encoder(model_name: str) -> VisualEncoder:
     """Get or create a visual encoder, with singleton caching.
-    
-    Keeps at most _MODEL_CACHE_MAX models cached. When the cache is full
+
+    Keeps at most ``_MODEL_CACHE_MAX`` models cached. When the cache is full
     and a new model is requested, old models are evicted and GPU memory
-    is freed via torch.cuda.empty_cache().
+    is freed via ``torch.cuda.empty_cache()``.  Thread-safe.
     """
-    if model_name in _model_cache:
-        logger.debug(f"Model cache hit: {model_name}")
+    with _model_cache_lock:
+        if model_name in _model_cache:
+            logger.debug(f"Model cache hit: {model_name}")
+            return _model_cache[model_name]
+
+        if len(_model_cache) >= _MODEL_CACHE_MAX:
+            _evict_model_cache()
+
+        if 'dinov3' in model_name:
+            encoder = DINOv3Encoder(model_name)
+        else:
+            encoder = DINOv2Encoder(model_name)
+
+        _model_cache[model_name] = encoder
+        logger.info(f"Created and cached encoder: {model_name}")
         return _model_cache[model_name]
-    
-    # Evict old models if cache is full
-    if len(_model_cache) >= _MODEL_CACHE_MAX:
-        _evict_model_cache()
-    
-    # Create new encoder
-    if 'dinov3' in model_name:
-        encoder = DINOv3Encoder(model_name)
-    else:
-        encoder = DINOv2Encoder(model_name)
-    
-    _model_cache[model_name] = encoder
-    logger.info(f"Created and cached encoder: {model_name}")
-    return _model_cache[model_name]
 
 
 def clear_model_cache():
-    """Clear the model cache and free GPU memory."""
-    _evict_model_cache()
+    """Clear the model cache and free GPU memory.  Thread-safe."""
+    with _model_cache_lock:
+        _evict_model_cache()
     logger.info("Model cache cleared")

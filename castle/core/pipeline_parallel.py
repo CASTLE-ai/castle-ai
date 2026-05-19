@@ -24,7 +24,8 @@ from castle.utils.video_io import VideoReader
 logger = logging.getLogger(__name__)
 
 # Sentinel object used to signal stage completion through queues.
-_SENTINEL = None
+# Use a unique object() rather than None so legitimate None payloads cannot collide.
+_SENTINEL = object()
 
 
 class ParallelExtractor:
@@ -102,7 +103,7 @@ class ParallelExtractor:
             h5_ctx = None
             if self.mask_path is not None:
                 from castle.utils.h5_io import H5IO
-                h5_ctx = H5IO(self.mask_path)
+                h5_ctx = H5IO(self.mask_path, read_only=True)
 
             try:
                 with VideoReader(self.video_path) as reader:
@@ -327,19 +328,17 @@ class ParallelExtractor:
         else:
             masks_arr = np.full((len(frames), h, w), self.roi_id, dtype=np.uint8)
 
-        try:
-            if hasattr(self.model, "extract_tensor_batch"):
-                result = self.model.extract_tensor_batch(batch, masks_arr, self.roi_id)
-            elif hasattr(self.model, "extract_batch_latent"):
-                result = self.model.extract_batch_latent(batch, masks_arr, self.roi_id)
-            else:
-                raise AttributeError(
-                    "Model must implement extract_tensor_batch or extract_batch_latent"
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Stage-3 inference failed for frames %s: %s", indices, exc)
-            embed_dim = getattr(self.model, "n_feature", 768)
-            result = np.zeros((len(frames), embed_dim), dtype=np.float32)
+        # Let inference exceptions propagate — substituting zeros would create a
+        # spurious cluster of all-zero latents that downstream UMAP/DBSCAN would
+        # treat as a real (and very tight) behavioral group.
+        if hasattr(self.model, "extract_tensor_batch"):
+            result = self.model.extract_tensor_batch(batch, masks_arr, self.roi_id)
+        elif hasattr(self.model, "extract_batch_latent"):
+            result = self.model.extract_batch_latent(batch, masks_arr, self.roi_id)
+        else:
+            raise AttributeError(
+                "Model must implement extract_tensor_batch or extract_batch_latent"
+            )
 
         if isinstance(result, list):
             result = np.array(result)

@@ -11,20 +11,33 @@ logger = logging.getLogger(__name__)
 
 class H5IO:
     """HDF5 I/O handler for mask storage.
-    
+
     Thread-safe implementation with periodic flush instead of close/reopen.
-    
+
     Supports context manager protocol for safe resource management:
         with H5IO('masks.h5') as h5:
             mask = h5.read_mask(0)
+
+    Set ``read_only=True`` for read-only access (extraction pipeline, DataLoader
+    workers, video-mix readers).  Read-only handles open ``mode='r'`` so they
+    cannot acquire HDF5's exclusive write lock and cannot corrupt the file if
+    a sibling writer is active (HDF5 SWMR-style protection).
     """
-    
-    def __init__(self, file_path):
+
+    def __init__(self, file_path, read_only: bool = False):
         self.file_path = file_path
         self.config = dict()
         self._lock = threading.Lock()
         self.count = 0
-        mode = 'a' if os.path.isfile(self.file_path) else 'w'
+        self.read_only = read_only
+        if read_only:
+            if not os.path.isfile(self.file_path):
+                raise FileNotFoundError(
+                    f"H5IO(read_only=True) requires existing file: {self.file_path}"
+                )
+            mode = 'r'
+        else:
+            mode = 'a' if os.path.isfile(self.file_path) else 'w'
         self.f = h5py.File(self.file_path, mode)
 
     def __enter__(self):
@@ -40,6 +53,10 @@ class H5IO:
         self.write_mask(index, mask)
 
     def write_mask(self, index, mask):
+        if self.read_only:
+            raise PermissionError(
+                f"H5IO opened read-only: cannot write_mask({index}) to {self.file_path}"
+            )
         with self._lock:
             self.check()
             key = str(index)
@@ -93,6 +110,10 @@ class H5IO:
             return value
 
     def write_config(self, key, value):
+        if self.read_only:
+            raise PermissionError(
+                f"H5IO opened read-only: cannot write_config({key}) to {self.file_path}"
+            )
         with self._lock:
             logger.debug('write_config %s = %s', key, value)
             try:
@@ -104,7 +125,13 @@ class H5IO:
                 self.f.create_dataset(key, data=value)
 
     def check(self):
-        """Flush periodically instead of close/reopen."""
+        """Flush periodically instead of close/reopen.
+
+        MUST be called by a writer that already holds ``self._lock``; the
+        flush mutates HDF5 internal state and would race against concurrent
+        ``write_mask`` / ``write_config`` if invoked outside the lock.  The
+        only call site today is :meth:`write_mask`, which holds the lock.
+        """
         self.count += 1
         if self.count % 5000 == 0:
             self.f.flush()
@@ -122,13 +149,14 @@ class H5IO:
                     if mask is not None and mask.size > 0:
                         n_rois = max(n_rois, int(np.max(mask)))
 
-            # Fix the h5 file — inline write while still holding the lock to
-            # prevent a concurrent writer from persisting a stale n_rois value.
-            logger.debug('write_config n_rois = %s', n_rois)
-            try:
-                self.f['n_rois'][...] = n_rois
-            except KeyError:
-                self.f.create_dataset('n_rois', data=n_rois)
+            # Only persist the computed n_rois when we hold a writable handle.
+            # Read-only handles return the computed value without mutating the file.
+            if not self.read_only:
+                logger.debug('write_config n_rois = %s', n_rois)
+                try:
+                    self.f['n_rois'][...] = n_rois
+                except KeyError:
+                    self.f.create_dataset('n_rois', data=n_rois)
 
         return n_rois
     

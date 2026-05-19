@@ -43,7 +43,7 @@ def get_frame_display(storage_path, project_name, source_video, frame_index, dis
         return source_video[0]
     
     try:
-        with H5IO(mask_list_path) as tracker:
+        with H5IO(mask_list_path, read_only=True) as tracker:
             mask = tracker.read_mask(frame_index)
         
         if display_mode == 'Image & Mask':
@@ -92,7 +92,7 @@ def save_frame_to_knowledge(storage_path, project_name, source_video, frame_inde
         
         # Load frame and mask
         frame = source_video[frame_index]
-        with H5IO(mask_list_path) as tracker:
+        with H5IO(mask_list_path, read_only=True) as tracker:
             mask = tracker.read_mask(frame_index)
         
         # Save to knowledge base

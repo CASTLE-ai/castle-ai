@@ -149,37 +149,50 @@ def preprocess_stabilized_camera(
     if progress_callback:
         progress_callback(0.12, "Encoding stabilised video…")
 
-    _encode_stabilized_video(
-        video_path=source_path,
-        cam=cam,
-        out_path=str(out_video_path),
-        fps=fps,
-        n_frames=n_frames,
-        output_size=output_size,
-        progress_callback=progress_callback,
-        progress_start=0.12,
-        progress_end=0.80,
-    )
-
-    if progress_callback:
-        progress_callback(0.80, "Saving transformed masks…")
-
     import h5py
     from castle.utils.h5_io import H5IO
 
-    with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
-        keys = sorted(f_in.keys(), key=lambda x: int(x) if x.isdigit() else 0)
-        for i, key in enumerate(keys):
-            if not key.isdigit():
-                continue
-            frame_idx = int(key)
-            orig_mask = f_in[key][:]
-            transformed = cam.generate_mask(orig_mask, frame_idx)
-            h5_out.write_mask(frame_idx, transformed)
+    try:
+        _encode_stabilized_video(
+            video_path=source_path,
+            cam=cam,
+            out_path=str(out_video_path),
+            fps=fps,
+            n_frames=n_frames,
+            output_size=output_size,
+            progress_callback=progress_callback,
+            progress_start=0.12,
+            progress_end=0.80,
+        )
 
-            if progress_callback and i % 500 == 0:
-                frac = 0.80 + 0.18 * i / max(len(keys), 1)
-                progress_callback(frac, f"Mask {i}/{len(keys)}")
+        if progress_callback:
+            progress_callback(0.80, "Saving transformed masks…")
+
+        with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
+            keys = sorted(f_in.keys(), key=lambda x: int(x) if x.isdigit() else 0)
+            for i, key in enumerate(keys):
+                if not key.isdigit():
+                    continue
+                frame_idx = int(key)
+                orig_mask = f_in[key][:]
+                transformed = cam.generate_mask(orig_mask, frame_idx)
+                h5_out.write_mask(frame_idx, transformed)
+
+                if progress_callback and i % 500 == 0:
+                    frac = 0.80 + 0.18 * i / max(len(keys), 1)
+                    progress_callback(frac, f"Mask {i}/{len(keys)}")
+    except BaseException:
+        # Remove partial artifacts so skip_existing won't silently reuse corrupt output.
+        for p in (out_video_path, out_mask_path):
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError as cleanup_exc:
+                logger.warning(
+                    "preprocess_stabilized_camera: failed to clean up %s: %s",
+                    p, cleanup_exc,
+                )
+        raise
 
     add_video_to_session(storage_path, project_name, session_id, video_name)
 
@@ -315,46 +328,62 @@ def preprocess_center_crop(
     out_stream.pix_fmt = "yuv420p"
     out_stream.options = {"crf": "18", "preset": "fast"}
 
-    with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
-        try:
-            for frame_idx, pkt_frame in enumerate(in_container.decode(in_stream)):
-                if frame_idx >= n_frames:
-                    break
+    encode_failed = False
+    try:
+        with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
+            try:
+                for frame_idx, pkt_frame in enumerate(in_container.decode(in_stream)):
+                    if frame_idx >= n_frames:
+                        break
 
-                img_bgr = pkt_frame.to_ndarray(format="bgr24")
-                key = str(frame_idx)
-                orig_mask = f_in[key][:] if key in f_in else None
+                    img_bgr = pkt_frame.to_ndarray(format="bgr24")
+                    key = str(frame_idx)
+                    orig_mask = f_in[key][:] if key in f_in else None
 
-                if orig_mask is None:
-                    logger.warning(
-                        "preprocess_center_crop: mask missing at frame %d — skipping",
-                        frame_idx,
-                    )
-                    continue
+                    if orig_mask is None:
+                        logger.warning(
+                            "preprocess_center_crop: mask missing at frame %d — skipping",
+                            frame_idx,
+                        )
+                        continue
 
-                try:
-                    cropped_frame, cropped_mask = preprocess.transform(img_bgr, orig_mask)
-                except Exception:
-                    logger.debug(
-                        "preprocess_center_crop: transform failed at frame %d — skipping",
-                        frame_idx, exc_info=True,
-                    )
-                    continue
+                    try:
+                        cropped_frame, cropped_mask = preprocess.transform(img_bgr, orig_mask)
+                    except Exception:
+                        logger.debug(
+                            "preprocess_center_crop: transform failed at frame %d — skipping",
+                            frame_idx, exc_info=True,
+                        )
+                        continue
 
-                out_frame = av.VideoFrame.from_ndarray(cropped_frame, format="bgr24")
-                for packet in out_stream.encode(out_frame):
+                    out_frame = av.VideoFrame.from_ndarray(cropped_frame, format="bgr24")
+                    for packet in out_stream.encode(out_frame):
+                        out_container.mux(packet)
+
+                    h5_out.write_mask(frame_idx, cropped_mask)
+
+                    if progress_callback and frame_idx % 30 == 0:
+                        progress_callback(frame_idx / n_frames, f"Frame {frame_idx}/{n_frames}")
+
+                for packet in out_stream.encode():
                     out_container.mux(packet)
-
-                h5_out.write_mask(frame_idx, cropped_mask)
-
-                if progress_callback and frame_idx % 30 == 0:
-                    progress_callback(frame_idx / n_frames, f"Frame {frame_idx}/{n_frames}")
-
-            for packet in out_stream.encode():
-                out_container.mux(packet)
-        finally:
-            out_container.close()
-            in_container.close()
+            finally:
+                out_container.close()
+                in_container.close()
+    except BaseException:
+        encode_failed = True
+        raise
+    finally:
+        if encode_failed:
+            for p in (out_video_path, out_mask_path):
+                try:
+                    if p.exists():
+                        p.unlink()
+                except OSError as cleanup_exc:
+                    logger.warning(
+                        "preprocess_center_crop: failed to clean up %s: %s",
+                        p, cleanup_exc,
+                    )
 
     add_video_to_session(storage_path, project_name, session_id, video_name)
 

@@ -756,11 +756,11 @@ def save_project_cluster_model(
     id_df = pd.read_csv(id_csv_path)
     cluster_names = {int(row["Id"]): row["Name"] for _, row in id_df.iterrows()}
 
-    # --- Load embedding .npz ---
+    # --- Load embedding .npz (most recently modified, not arbitrary glob order) ---
     emb_files = glob.glob(os.path.join(cluster_dir, "cluster_*.npz"))
     if not emb_files:
         raise FileNotFoundError(f"No embedding .npz found in {cluster_dir}")
-    emb_path = emb_files[0]  # take the first/latest
+    emb_path = max(emb_files, key=os.path.getmtime)
     emb_data = np.load(emb_path, allow_pickle=True)
     emb_full = emb_data["emb"]        # (N, 2) with NaN for masked-out points
     cls_full = emb_data["cls"]        # (N,) with -1 for masked-out points
@@ -770,14 +770,14 @@ def save_project_cluster_model(
     if not os.path.isdir(latent_dir):
         raise FileNotFoundError(f"No latent directory found: {latent_dir}")
 
-    # Find the model sub-directory (take the first one if multiple)
+    # Pick most-recently-modified model sub-directory (matches user's latest extraction).
     model_dirs = [
-        d for d in os.listdir(latent_dir)
+        os.path.join(latent_dir, d) for d in os.listdir(latent_dir)
         if os.path.isdir(os.path.join(latent_dir, d))
     ]
     if not model_dirs:
         raise FileNotFoundError(f"No model sub-directories in {latent_dir}")
-    model_subdir = os.path.join(latent_dir, model_dirs[0])
+    model_subdir = max(model_dirs, key=os.path.getmtime)
 
     # Concatenate latent files in the same order as the project config
     latent_files = sorted(glob.glob(os.path.join(model_subdir, "*.npz")))
@@ -857,13 +857,14 @@ def apply_cluster_model_to_project(
     if not os.path.isdir(latent_dir):
         raise FileNotFoundError(f"No latent directory found: {latent_dir}")
 
+    # Pick most-recently-modified model sub-directory (matches user's latest extraction).
     model_dirs = [
-        d for d in os.listdir(latent_dir)
+        os.path.join(latent_dir, d) for d in os.listdir(latent_dir)
         if os.path.isdir(os.path.join(latent_dir, d))
     ]
     if not model_dirs:
         raise FileNotFoundError(f"No model sub-directories in {latent_dir}")
-    model_subdir = os.path.join(latent_dir, model_dirs[0])
+    model_subdir = max(model_dirs, key=os.path.getmtime)
 
     latent_files = sorted(glob.glob(os.path.join(model_subdir, "*.npz")))
     if not latent_files:
@@ -1304,27 +1305,33 @@ def restore_session_from_disk(
     cluster_path = os.path.join(storage_path, project_name, 'cluster')
 
     id_csv_path = os.path.join(cluster_path, 'id.csv')
-    id_df = pd.read_csv(id_csv_path)
-    for _, row in id_df.iterrows():
-        cluster_id = int(row['Id'])
-        color = row.get('Color', 'grey')
-        latents.cluster_meta[cluster_id] = {'name': row['Name'], 'color': color}
-        latents.behavior_name2cluster_id[row['Name']] = cluster_id
-        if color != 'grey':
-            latents.used_palette.add(color)
-    latents.num_cluster = len(id_df)
-
-    cum = 0
     df2_paths: List[str] = []
-    for vn, v in aggregator.videos_meta:
-        video_basename = os.path.basename(v).split('.')[0]
-        ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
-        if os.path.exists(ts_path):
-            ts_df = pd.read_csv(ts_path)
-            bin_clusters = ts_df['behavior'].values[::latents.time_window][:vn]
-            latents.cluster[cum:cum + len(bin_clusters)] = bin_clusters
-            df2_paths.append(ts_path)
-        cum += vn
+    if os.path.exists(id_csv_path):
+        id_df = pd.read_csv(id_csv_path)
+        for _, row in id_df.iterrows():
+            cluster_id = int(row['Id'])
+            color = row.get('Color', 'grey')
+            latents.cluster_meta[cluster_id] = {'name': row['Name'], 'color': color}
+            latents.behavior_name2cluster_id[row['Name']] = cluster_id
+            if color != 'grey':
+                latents.used_palette.add(color)
+        latents.num_cluster = len(id_df)
+
+        cum = 0
+        for vn, v in aggregator.videos_meta:
+            video_basename = os.path.basename(v).split('.')[0]
+            ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+            if os.path.exists(ts_path):
+                ts_df = pd.read_csv(ts_path)
+                bin_clusters = ts_df['behavior'].values[::latents.time_window][:vn]
+                latents.cluster[cum:cum + len(bin_clusters)] = bin_clusters
+                df2_paths.append(ts_path)
+            cum += vn
+    else:
+        logger.info(
+            "No id.csv at %s — restoring aggregator only; cluster_meta is empty.",
+            id_csv_path,
+        )
 
     restored_local_latents: Optional[Any] = None
     embedding_array: Optional[np.ndarray] = None

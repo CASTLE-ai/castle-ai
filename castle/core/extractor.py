@@ -315,7 +315,7 @@ def extract_roi_latent_from_video(
             logger.info(f"Pre-scanning {video_name} for tail ROI interpolation...")
             valid_points = {}
             failure_reasons: Counter = Counter()
-            tracker_scan = H5IO(mask_list_path)
+            tracker_scan = H5IO(mask_list_path, read_only=True)
             BATCH = 256
             try:
                 for start in range(0, video_len, BATCH):
@@ -502,7 +502,7 @@ def extract_roi_crop_video(
     tracker = None
 
     try:
-        tracker = H5IO(mask_list_path)
+        tracker = H5IO(mask_list_path, read_only=True)
         with VideoReader(source_path) as source_video:
             fps = source_video.fps
             writer = VideoWriter(out_video_path, fps, crf=15)
@@ -568,7 +568,7 @@ class RotationDataset(VideoDataset):
             self.reader = VideoReader(self.video_path)
 
         if self.tracker is None:
-            self.tracker = H5IO(self.mask_path)
+            self.tracker = H5IO(self.mask_path, read_only=True)
 
         frame = self.reader[idx]
         mask = self.tracker.read_mask(idx)

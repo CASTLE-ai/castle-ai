@@ -472,7 +472,7 @@ def extract_centroids_from_masks(
 
     positions = np.full((n_frames, 2), np.nan, dtype=np.float64)
 
-    with H5IO(mask_h5_path) as h5:
+    with H5IO(mask_h5_path, read_only=True) as h5:
         for i in range(n_frames):
             if not h5.has_mask(i):
                 logger.debug("extract_centroids: frame %d missing mask, will interpolate", i)

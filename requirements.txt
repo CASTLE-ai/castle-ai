@@ -35,6 +35,9 @@ tqdm>=4.60,<5.0
 natsort>=8.0,<9.0
 termcolor>=2.0,<4.0
 
+# Cross-platform file locking (concurrency safety for project config & preprocess sessions)
+filelock>=3.12,<4.0
+
 # Download
 gdown>=4.6,<6.0
 

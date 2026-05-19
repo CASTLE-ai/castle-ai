@@ -50,8 +50,12 @@ def get_project_config(storage_path: str, project_name: str) -> Tuple[str, Dict]
 
 
 def save_project_config(storage_path: str, project_name: str, config: Dict) -> None:
-    """Save project configuration file.
-    
+    """Save project configuration file atomically.
+
+    Writes to ``config.json.tmp`` first, then ``os.replace`` swaps it into
+    place.  Prevents a crash mid-write from leaving the project with a
+    truncated/empty ``config.json``.
+
     Args:
         storage_path: Path to the storage directory
         project_name: Name of the project
@@ -59,9 +63,11 @@ def save_project_config(storage_path: str, project_name: str, config: Dict) -> N
     """
     project_path = os.path.join(storage_path, project_name)
     config_path = os.path.join(project_path, 'config.json')
-    
-    with open(config_path, 'w') as f:
+    tmp_path = config_path + '.tmp'
+
+    with open(tmp_path, 'w') as f:
         json.dump(config, f, indent=2)
+    os.replace(tmp_path, config_path)
 
 
 # ---------------------------------------------------------------------------

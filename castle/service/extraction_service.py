@@ -90,19 +90,22 @@ def extract_latent(
         Path to saved latent file, or empty string on failure.
         If video_name is 'All', returns semicolon-separated paths.
     """
-    from castle.core.types import CastleIOError
+    from castle.core.types import CastleIOError, ExtractionError
     from castle.core.preprocess_session import get_preprocessed_paths
 
     if preprocess_config is None:
         preprocess_config = Preprocess()
 
-    # Handle "All" videos
-    _, config = get_project_config(storage_path, project_name)
-    video_list = sorted(config.get('source', [])) if video_name == 'All' else [video_name]
+    is_batch = (video_name == 'All')
 
-    paths = []
+    _, config = get_project_config(storage_path, project_name)
+    video_list = sorted(config.get('source', [])) if is_batch else [video_name]
+
+    paths: list[str] = []
+    successes: list[str] = []
+    failures: list[tuple[str, str]] = []
+
     for vname in video_list:
-        # Resolve source video and mask paths from session or defaults
         source_video_path: Optional[str] = None
         mask_path_override: Optional[str] = None
         if session_id:
@@ -111,10 +114,15 @@ def extract_latent(
                 source_video_path = str(vpath)
                 mask_path_override = str(mpath)
             except FileNotFoundError as exc:
-                raise CastleIOError(
-                    f"'{vname}' not preprocessed in session '{session_id}'. "
+                msg = (
+                    f"not preprocessed in session '{session_id}'. "
                     f"Run Pre-process first. ({exc})"
-                ) from exc
+                )
+                if is_batch:
+                    failures.append((vname, msg))
+                    logger.error("Extraction failed for %s: %s", vname, msg)
+                    continue
+                raise CastleIOError(f"'{vname}' {msg}") from exc
 
         try:
             path = extract_roi_latent_from_video(
@@ -136,8 +144,37 @@ def extract_latent(
             )
             if path:
                 paths.append(path)
+                successes.append(vname)
+            else:
+                # extract_roi_latent_from_video returned empty: treat as failure in batch mode.
+                if is_batch:
+                    failures.append((vname, "extractor returned empty path (see logs)"))
+                else:
+                    raise ExtractionError(
+                        f"Extraction for '{vname}' returned no latent. See logs."
+                    )
         except Exception as e:
-            logger.error(f"Extraction failed for {vname}: {e}", exc_info=True)
+            logger.error("Extraction failed for %s: %s", vname, e, exc_info=True)
+            if is_batch:
+                failures.append((vname, str(e)))
+                continue
+            # Single-video mode: re-raise immediately so the caller sees the real error.
+            raise
+
+    if is_batch and failures:
+        # Build per-video ✅/❌ summary in original video_list order.
+        succ_set = set(successes)
+        fail_map = dict(failures)
+        lines = [
+            f"Extraction complete. {len(successes)} succeeded, {len(failures)} failed."
+        ]
+        for v in video_list:
+            if v in succ_set:
+                lines.append(f"✅ {v}")
+            elif v in fail_map:
+                lines.append(f"❌ {v} — {fail_map[v]}")
+        lines.append("Fix the above errors and re-run.")
+        raise ExtractionError("\n".join(lines))
 
     return ';'.join(paths)
 

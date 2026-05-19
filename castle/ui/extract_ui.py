@@ -335,7 +335,7 @@ def ui_extract_roi_latent(
         _mask_path_check = os.path.join(storage_path, project_name, 'track', _first_video, 'mask_list.h5')
         _tail_roi_ok = True
         try:
-            with H5IO(_mask_path_check) as _h5:
+            with H5IO(_mask_path_check, read_only=True) as _h5:
                 _guard_mask = _h5.read_mask(0)
             if _guard_mask is not None:
                 _roi_ids = set(_np.unique(_guard_mask[_guard_mask > 0]).tolist())

@@ -144,7 +144,7 @@ def generate_csv_analysis(storage_path: str, project_name: str, video_name: str,
         return ""
     
     try:
-        rois_results = H5IO(str(rois_results_path))
+        rois_results = H5IO(str(rois_results_path), read_only=True)
         try:
             n_rois = rois_results.get_n_rois()
             total_frames = len(rois_results)
@@ -174,7 +174,7 @@ def generate_mix_video_for_video(storage_path: str, project_name: str, video_nam
         output_path = track_dir_path / f'{video_name_wo_extension}-mix.mp4'
 
         output = WriteArray(str(output_path), fps=source_video.fps, crf=15)
-        rois_results = H5IO(str(rois_results_path))
+        rois_results = H5IO(str(rois_results_path), read_only=True)
         try:
             n_frames = len(rois_results)
 

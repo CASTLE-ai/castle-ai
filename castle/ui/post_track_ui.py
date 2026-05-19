@@ -23,7 +23,7 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
     if not os.path.exists(rois_results_path):
         gr.Warning(f"Mask file not found: {rois_results_path}")
         return None, None, None, None, None
-    rois_results = H5IO(rois_results_path)
+    rois_results = H5IO(rois_results_path, read_only=True)
     try:
         n_rois = rois_results.get_n_rois()
         total_frames = len(rois_results)
@@ -50,7 +50,7 @@ def generate_mask_video(storage_path, project_name, source_video):
         gr.Warning(f"Mask file not found: {rois_results_path}")
         return None
     output = WriteArray(output_path, fps=source_video.fps, crf=15)
-    rois_results = H5IO(rois_results_path)
+    rois_results = H5IO(rois_results_path, read_only=True)
     try:
         n_frames = len(rois_results)
 
@@ -78,7 +78,7 @@ def generate_mix_video(storage_path, project_name, source_video):
         gr.Warning(f"Mask file not found: {rois_results_path}")
         return None
     output = WriteArray(output_path, fps=source_video.fps, crf=15)
-    rois_results = H5IO(rois_results_path)
+    rois_results = H5IO(rois_results_path, read_only=True)
     try:
         n_frames = len(rois_results)
 

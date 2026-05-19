@@ -36,7 +36,7 @@ def plot_basic_mask_info(storage_path, project_name, source_video, progress=gr.P
     return Plotter.plot_position(roi_info_list), Plotter.plot_speed(roi_info_list), Plotter.plot_area(roi_info_list), roi_info_list, mask_kinematic_csv_path
 
 
-def generate_mask_video(storage_path, project_name, source_video):
+def generate_mask_video(storage_path, project_name, source_video, progress=gr.Progress()):
     if source_video is None:
         gr.Warning("Please select a video first.")
         return None
@@ -53,18 +53,21 @@ def generate_mask_video(storage_path, project_name, source_video):
     rois_results = H5IO(rois_results_path, read_only=True)
     try:
         n_frames = len(rois_results)
+        progress(0.0, desc=f"Rendering ROI video (0/{n_frames})")
 
         for i in range(n_frames):
             rois = rois_results[i]
             out_frame = generate_mask_image(rois)
             output.append(out_frame)
+            if i % 30 == 0 or i == n_frames - 1:
+                progress((i + 1) / n_frames, desc=f"Rendering ROI video ({i + 1}/{n_frames})")
     finally:
         rois_results.close()
         output.close()
     return output_path
 
 
-def generate_mix_video(storage_path, project_name, source_video):
+def generate_mix_video(storage_path, project_name, source_video, progress=gr.Progress()):
     if source_video is None:
         gr.Warning("Please select a video first.")
         return None
@@ -81,12 +84,15 @@ def generate_mix_video(storage_path, project_name, source_video):
     rois_results = H5IO(rois_results_path, read_only=True)
     try:
         n_frames = len(rois_results)
+        progress(0.0, desc=f"Rendering mix video (0/{n_frames})")
 
         for i in range(n_frames):
             rois = rois_results[i]
             frame = source_video[i]
             out_frame = generate_mix_image(frame, rois)
             output.append(out_frame)
+            if i % 30 == 0 or i == n_frames - 1:
+                progress((i + 1) / n_frames, desc=f"Rendering mix video ({i + 1}/{n_frames})")
     finally:
         rois_results.close()
         output.close()
@@ -135,13 +141,15 @@ def create_post_track_ui(storage_path, project_name, source_video):
     ui['generate_mask_video_btn'].click(
         fn=generate_mask_video,
         inputs=[storage_path, project_name, source_video],
-        outputs=ui['mask_video']
+        outputs=ui['mask_video'],
+        show_progress=True,
     )
 
     ui['generate_mix_video_btn'].click(
         fn=generate_mix_video,
         inputs=[storage_path, project_name, source_video],
-        outputs=ui['mix_video']
+        outputs=ui['mix_video'],
+        show_progress=True,
     )
       
     return ui

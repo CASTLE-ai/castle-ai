@@ -19,9 +19,13 @@ args = parser.parse_args()
 # Create application
 app = create_ui(OS_SYS, args.root)
 
+# Enable the Gradio queue at module scope.  Generators, gr.Progress(), and
+# `.then()` chains all require the queue; keeping it inside the __main__
+# guard disabled all streaming whenever app.py was imported by a production
+# server (uvicorn/gunicorn) instead of run directly.
+app.queue(max_size=20)
+
 if __name__ == '__main__':
-    app.queue(max_size=20)
-    
     # Set allowed_paths to resolve Colab path permission issues
     allowed_paths = []
     if COLAB_GPU:

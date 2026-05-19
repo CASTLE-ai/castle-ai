@@ -3,7 +3,7 @@
 import os
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
 from tqdm import tqdm
@@ -243,48 +243,65 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
     # --- Second Pass: Execution (Process identified videos) ---
     success_count = 0
     failed_videos = []
-    
-    for i, video_name in enumerate(tqdm(videos_to_process, desc="Processing videos", unit="video")): # Use tqdm for console progress
-        progress((i + 1) / total_videos_to_process, desc=f"Overall Progress: {i+1}/{total_videos_to_process}") # Gradio progress bar
+    last_processed_video: Optional[str] = None
+
+    for i, video_name in enumerate(tqdm(videos_to_process, desc="Processing videos", unit="video")):
+        # Outer progress bar slice for this video: [i / N, (i + 1) / N)
+        video_slice_start = i / total_videos_to_process
+        video_slice_width = 1.0 / total_videos_to_process
+        progress(
+            video_slice_start,
+            desc=f"Video {i + 1}/{total_videos_to_process}: {video_name}",
+        )
+
+        def _frame_progress(frame_frac: float, frame_desc: str, _idx=i, _name=video_name):
+            """Map frame-level progress into this video's slice of the outer bar."""
+            outer_frac = video_slice_start + frame_frac * video_slice_width
+            progress(
+                outer_frac,
+                desc=f"Video {_idx + 1}/{total_videos_to_process} ({_name}): {frame_desc}",
+            )
+
         try:
             # Load video file
             project_path = Path(storage_path) / project_name
             video_path = project_path / "sources" / video_name
-            
+
             if not video_path.exists():
                 failed_videos.append(video_name)
                 msg = f"Warning: Video file not found {video_name}"
                 messages.append(msg)
                 logger.warning(msg)
                 continue
-            
+
             # Create video reader
             source_video = ReadArray(str(video_path))
             total_frames = len(source_video)
-            
+
             msg = f"Video {video_name}: {total_frames} frames total"
             messages.append(msg)
             logger.info(msg)
-            
+
             # Create tracker (track entire video)
             start_frame = 0
             stop_frame = total_frames - 1
-            
+
             tracker = ROITracker(
                 storage_path=storage_path,
-                project_name=project_name, 
+                project_name=project_name,
                 video_source=source_video,
                 start_frame=start_frame,
                 stop_frame=stop_frame,
                 model_type=model_aot
             )
-            
+
             msg = f"Starting tracking for video {video_name} (frames {start_frame}-{stop_frame})"
             messages.append(msg)
             logger.info(msg)
-            
-            # Execute tracking without progress bar (to avoid sub-progress complexity)
-            result = tracker.track(progress=None)
+
+            last_processed_video = video_name
+            # Frame-level callback maps into this video's outer-bar slice.
+            result = tracker.track(progress=None, frame_callback=_frame_progress)
             
             if result == "Done":
                 success_count += 1
@@ -315,7 +332,12 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
                     logger.warning(msg)
                     
             elif result == "Cancel":
-                msg = f"❌ Tracking for video {video_name} was cancelled"
+                remaining = total_videos_to_process - (i + 1)
+                msg = (
+                    f"❌ Batch tracking cancelled during '{video_name}' "
+                    f"(video {i + 1}/{total_videos_to_process}). "
+                    f"{remaining} video(s) not processed."
+                )
                 messages.append(msg)
                 logger.warning(msg)
                 break

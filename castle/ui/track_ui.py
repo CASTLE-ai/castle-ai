@@ -188,7 +188,7 @@ def create_track_ui(
                 )
                 cancel_btn = gr.Button(
                     "Cancel",
-                    interactive=True,
+                    interactive=False,  # enabled only while tracking is running
                     visible=False
                 )
             
@@ -233,12 +233,44 @@ def create_track_ui(
     )
     
     # Event handlers - Run tracking
-    tracking_btn.click(
-        fn=run_tracking,
-        inputs=[tracker_state, skip_existing_checkbox],
-        outputs=progress_text
+    # Wrap run_tracking with .then() chains that disable Start/Init and enable
+    # Cancel for the duration of the run, then reverse on completion.  Prevents
+    # the user from double-clicking Start mid-track or accidentally re-applying
+    # parameters while the tracker is busy.
+    def _before_tracking():
+        return (
+            gr.update(interactive=False),  # tracking_btn
+            gr.update(interactive=False),  # init_tracker_btn
+            gr.update(interactive=True),   # cancel_btn
+        )
+
+    def _after_tracking():
+        return (
+            gr.update(interactive=True),   # tracking_btn
+            gr.update(interactive=True),   # init_tracker_btn
+            gr.update(interactive=False),  # cancel_btn
+        )
+
+    (
+        tracking_btn.click(
+            fn=_before_tracking,
+            inputs=None,
+            outputs=[tracking_btn, init_tracker_btn, cancel_btn],
+            queue=False,
+        )
+        .then(
+            fn=run_tracking,
+            inputs=[tracker_state, skip_existing_checkbox],
+            outputs=progress_text,
+        )
+        .then(
+            fn=_after_tracking,
+            inputs=None,
+            outputs=[tracking_btn, init_tracker_btn, cancel_btn],
+            queue=False,
+        )
     )
-    
+
     # Event handlers - Toggle intermediate results display
     display_middle_result_btn.click(
         fn=toggle_intermediate_display,
@@ -246,11 +278,11 @@ def create_track_ui(
         outputs=[display, display_mode_text],
         show_progress=False,
     )
-    
+
     # Event handlers - Cancel tracking
     cancel_btn.click(
         fn=cancel_tracking,
         inputs=tracker_state
     )
-    
+
     return ui

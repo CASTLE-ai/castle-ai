@@ -111,10 +111,14 @@ def on_export(
         session_id: Session ID for annotations.
 
     Yields:
-        (status_markdown, file_path_or_None) tuples for streaming updates.
+        (status_markdown, gr.update for download component) tuples for streaming.
+        The download component stays hidden until the final yield with the
+        completed zip path.
     """
+    _hide_download = gr.update(value=None, visible=False)
+
     if not storage_path or not project_name:
-        yield "**❌ Error:** No project selected.", None
+        yield "**❌ Error:** No project selected.", _hide_download
         return
 
     pp = _project_path(storage_path, project_name)
@@ -144,14 +148,14 @@ def on_export(
             unique_files.append((src, arc))
 
     if not unique_files:
-        yield "**⚠️ Nothing to export.** Select at least one category.", None
+        yield "**⚠️ Nothing to export.** Select at least one category.", _hide_download
         return
 
     total = len(unique_files)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_name = f"{project_name}_export_{timestamp}.zip"
 
-    yield f"**📦 Preparing export…** {total} file(s) to package.", None
+    yield f"**📦 Preparing export…** {total} file(s) to package.", _hide_download
 
     tmp_dir = tempfile.mkdtemp(prefix="castle_export_")
     zip_path = os.path.join(tmp_dir, zip_name)
@@ -167,7 +171,7 @@ def on_export(
                 size_str = _human_size(src)
                 yield (
                     f"**📦 Packaging…** ({i}/{total}) `{arc_name}` ({size_str})",
-                    None,
+                    _hide_download,
                 )
 
                 # Copy via shutil.copyfile to a temp staging file, then add to zip
@@ -179,17 +183,20 @@ def on_export(
                     packaged_count += 1
                 except Exception as exc:
                     logger.error("Export: failed to copy %s: %s", src, exc)
-                    yield f"**⚠️ Warning:** Could not copy `{arc_name}`: {exc}", None
+                    yield (
+                        f"**⚠️ Warning:** Could not copy `{arc_name}`: {exc}",
+                        _hide_download,
+                    )
 
         zip_size = _human_size(zip_path)
         yield (
             f"**✅ Export complete!** `{zip_name}` ({zip_size}) — {packaged_count} file(s)",
-            zip_path,
+            gr.update(value=zip_path, visible=True),
         )
 
     except Exception as exc:
         logger.exception("Export failed")
-        yield f"**❌ Export failed:** {exc}", None
+        yield f"**❌ Export failed:** {exc}", _hide_download
 
 
 def on_export_nwb(
@@ -368,18 +375,10 @@ def create_export_ui(storage_path, project_name):
         ui["session_dropdown"],
     ]
 
-    def _run_export(*args):
-        """Wrapper to consume the generator and return final status + file."""
-        last_status = "**Status:** Ready"
-        last_file = None
-        for status, fpath in on_export(*args):
-            last_status = status
-            if fpath is not None:
-                last_file = fpath
-        return last_status, gr.update(value=last_file, visible=last_file is not None)
-
+    # Stream on_export's yields directly so users see per-file progress.
+    # Requires app.queue() to be enabled at module scope (see app.py).
     ui["export_btn"].click(
-        fn=_run_export,
+        fn=on_export,
         inputs=_export_inputs,
         outputs=[ui["status"], ui["download"]],
     )

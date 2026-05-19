@@ -3,7 +3,7 @@
 import time
 import logging
 from pathlib import Path
-from typing import Any, List, Dict, Tuple, Optional
+from typing import Any, Callable, List, Dict, Tuple, Optional
 import os
 
 import numpy as np
@@ -215,8 +215,24 @@ class ROITracker:
             ratio=self.smart_filter_ratio,
         )
     
-    def track(self, progress=None, skip_existing: bool = False) -> str:
-        """Execute ROI tracking over specified frames using a parallelized DataLoader and batch inference."""
+    def track(
+        self,
+        progress=None,
+        skip_existing: bool = False,
+        frame_callback: Optional[Callable[[float, str], None]] = None,
+    ) -> str:
+        """Execute ROI tracking over specified frames using a parallelized DataLoader and batch inference.
+
+        Args:
+            progress: Optional Gradio ``gr.Progress`` instance used to drive
+                ``progress.tqdm`` over the DataLoader (single-video mode).
+            skip_existing: If True and ``mask_list.h5`` already exists, return
+                "Skip" without retracking.
+            frame_callback: Optional ``(fraction, description)`` callable invoked
+                after each batch finishes writing.  Batch-tracking UI uses this
+                to drive an outer progress bar across multiple videos.  Mutually
+                useful with ``progress=None``.
+        """
         time.sleep(0.5)
 
         # Initialize tracker model and HDF5 writer
@@ -274,6 +290,9 @@ class ROITracker:
         else:
             iterator = tqdm(loader, desc="Tracking frames")
 
+        total_frames_to_track = len(frame_range)
+        frames_done = 0
+
         for frame_tensors, frame_indices, original_frames in iterator:
             # Check for cancellation flag
             if self.cancel:
@@ -281,7 +300,7 @@ class ROITracker:
                 self.cancel = False
                 del mask_seq
                 return "Cancel"
-            
+
             # Prepare batch of original sizes
             original_sizes = [frame.shape[:2] for frame in original_frames.numpy()]
 
@@ -290,20 +309,30 @@ class ROITracker:
 
             # Process and save the batch of masks
             processed_masks = mask_batch.squeeze(1).detach().cpu().numpy().astype(np.uint8)
-            
+
             for i in range(len(processed_masks)):
                 frame_idx = frame_indices[i].item()
                 mask_to_save = processed_masks[i]
-                
+
                 # Apply Smart Filtering (Keep Largest Component per class)
                 mask_to_save = self._smart_filter(mask_to_save)
-                
+
                 # Update current state for display (with the last frame of the batch)
                 self.current_frame = original_frames[i].numpy()
                 self.current_mask = mask_to_save
-                
+
                 # Write mask to HDF5 file
                 mask_seq.write_mask(frame_idx, mask_to_save)
+
+            frames_done += len(processed_masks)
+            if frame_callback is not None:
+                try:
+                    frame_callback(
+                        frames_done / max(total_frames_to_track, 1),
+                        f"Tracking frame {frames_done}/{total_frames_to_track}",
+                    )
+                except Exception as cb_exc:  # noqa: BLE001 — never let a UI callback abort tracking
+                    logger.debug("frame_callback raised; ignoring: %s", cb_exc)
 
         # Cleanup
         self.show_middle_result = False

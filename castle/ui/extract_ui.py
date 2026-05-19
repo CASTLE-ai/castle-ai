@@ -127,6 +127,10 @@ def _list_sessions_for_extract(storage_path: str, project_name: str) -> gr.updat
 def init_select_video_list(storage_path, project_name):
     """Populate the extract tab from current project state."""
     # Default: hide everything
+    # Slot ordering MUST match all_ui_elements_to_control below.
+    # NOTE: extract_crop_video_btn was removed from this list (2-D); it has no
+    # handler wired and stayed visible=False permanently.  See comment near
+    # its declaration.
     updates = []
     updates.extend([
         gr.update(visible=False),  # 0  session_selector
@@ -140,10 +144,9 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False),  # 8  remove_background_switch
         gr.update(visible=False),  # 9  adv_accordion
         gr.update(visible=False),  # 10 extract_btn
-        gr.update(visible=False),  # 11 extract_crop_video_btn
-        gr.update(visible=False),  # 12 latent_file_list
-        gr.update(visible=False),  # 13 auto_batch_btn
-        gr.update(value="", visible=False),  # 14 mem_warning
+        gr.update(visible=False),  # 11 latent_file_list
+        gr.update(visible=False),  # 12 auto_batch_btn
+        gr.update(value="", visible=False),  # 13 mem_warning
     ])
 
     if not storage_path or not project_name:
@@ -183,10 +186,9 @@ def init_select_video_list(storage_path, project_name):
             updates[8] = gr.update(visible=True)   # remove_background_switch
             updates[9] = gr.update(visible=True)   # adv_accordion
             updates[10] = gr.update(visible=True)  # extract_btn
-            updates[11] = gr.update(visible=True)  # extract_crop_video_btn
-            updates[12] = gr.update(visible=True)  # latent_file_list
-            updates[13] = gr.update(visible=True)  # auto_batch_btn
-            # mem_warning (14) stays hidden until reactive check triggers
+            updates[11] = gr.update(visible=True)  # latent_file_list
+            updates[12] = gr.update(visible=True)  # auto_batch_btn
+            # mem_warning (13) stays hidden until reactive check triggers
         else:
             gr.Warning(
                 "No videos found in this project. Please add videos in the "
@@ -420,56 +422,63 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         visible=False,
     )
 
-    with gr.Row(visible=True):
-        with gr.Column(scale=2):
-            ui['select_model'] = gr.Dropdown(
-                label="Visual Model",
-                choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
-                value="dinov3_vitb16",
-                visible=False,
-                info="DINOv2/v3 backbone used for feature extraction.",
-            )
-            ui['select_roi_id'] = gr.Textbox(
-                label="ROI ID",
-                value="1",
-                visible=False,
-                info="Region of Interest ID to extract features from.",
-            )
-            ui['batch_size'] = gr.Textbox(
-                label="Batch Size",
-                value="32",
-                visible=False,
-                info="Frames processed per GPU batch. Use 'Auto Batch Size' to pick a safe value.",
-            )
-            ui['auto_batch_btn'] = gr.Button("Auto Batch Size", size="sm", visible=False)
-            ui['select_video'] = gr.Dropdown(
-                label="Target Video",
-                value=None,
-                visible=False,
-                info="Select a specific video or 'All' to process the entire project.",
-            )
-            ui['video_count'] = gr.Number(
-                label="Project Video Count",
-                value=0,
-                interactive=False,
-                visible=False,
-            )
-            ui['skip_existing'] = gr.Checkbox(
-                label="Skip existing files",
-                value=True,
-                visible=False,
-                info="Skip videos that already have a latent file saved to disk.",
-            )
+    with gr.Row():
+        with gr.Column(scale=3):
+            with gr.Row():
+                ui['select_model'] = gr.Dropdown(
+                    label="Visual Model",
+                    choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
+                    value="dinov3_vitb16",
+                    visible=False,
+                    info="DINOv2/v3 backbone used for feature extraction.",
+                    scale=2,
+                )
+                ui['select_roi_id'] = gr.Textbox(
+                    label="ROI ID",
+                    value="1",
+                    visible=False,
+                    info="Region of Interest ID to extract features from.",
+                    scale=1,
+                )
+            with gr.Row():
+                ui['batch_size'] = gr.Textbox(
+                    label="Batch Size",
+                    value="32",
+                    visible=False,
+                    info="Frames processed per GPU batch. Use 'Auto Batch Size' to find a safe value.",
+                    scale=2,
+                )
+                ui['auto_batch_btn'] = gr.Button("Auto Batch Size", size="sm", visible=False, scale=1)
+            with gr.Row():
+                ui['select_video'] = gr.Dropdown(
+                    label="Target Video",
+                    value=None,
+                    visible=False,
+                    info="Select a specific video or 'All' to process the entire project.",
+                    scale=2,
+                )
+                ui['video_count'] = gr.Number(
+                    label="Project Video Count",
+                    value=0,
+                    interactive=False,
+                    visible=False,
+                    scale=1,
+                )
+            with gr.Row():
+                ui['skip_existing'] = gr.Checkbox(
+                    label="Skip existing files",
+                    value=True,
+                    visible=False,
+                    info="Skip videos that already have a latent file saved to disk.",
+                )
+                ui['remove_background_switch'] = gr.Checkbox(
+                    label="Remove Background",
+                    value=False,
+                    visible=False,
+                    info="Zero out pixels outside the ROI mask before extracting features (on-the-fly).",
+                )
 
         with gr.Column(scale=2):
-            ui['remove_background_switch'] = gr.Checkbox(
-                label="Remove Background",
-                value=False,
-                visible=False,
-                info="Zero out pixels outside the ROI mask before extracting features (on-the-fly).",
-            )
-
-        with gr.Column(scale=4):
             with gr.Accordion("Advanced Extraction Options", open=False, visible=False) as adv_accordion:
                 ui['eliminate_rotation_asymmetry'] = gr.Checkbox(
                     label="Eliminate Rotation Asymmetry",
@@ -505,17 +514,27 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                 )
             ui['adv_accordion'] = adv_accordion
 
-            ui['mem_warning'] = gr.HTML(value="", visible=False)
-            ui['extract_btn'] = gr.Button("Extract", visible=False)
-            ui['extract_crop_video_btn'] = gr.Button("Extract Crop Video", visible=False)
-            ui['latent_file_list'] = gr.Textbox(
-                label="Log Output",
-                visible=False,
-                lines=10,
-                max_lines=20,
-            )
+    ui['mem_warning'] = gr.HTML(value="", visible=False)
+    with gr.Row():
+        ui['extract_btn'] = gr.Button("Extract", visible=False, variant="primary")
+        # TODO(2-D): implement extract_crop_video handler before re-enabling this
+        # button.  Kept declared and permanently invisible so any external
+        # reference (CLI, MCP) does not break.  Removed from
+        # all_ui_elements_to_control update list below.
+        ui['extract_crop_video_btn'] = gr.Button(
+            "Extract Crop Video", visible=False, interactive=False
+        )
+    ui['latent_file_list'] = gr.Textbox(
+        label="Log Output",
+        visible=False,
+        lines=10,
+        max_lines=20,
+    )
 
-    # Elements to control visibility on tab select
+    # Elements to control visibility on tab select.
+    # NOTE: extract_crop_video_btn intentionally NOT in this list (2-D); it has
+    # no handler and stays permanently hidden.  Indices below match the updates
+    # produced by init_select_video_list.
     all_ui_elements_to_control = [
         ui['session_selector'],          # 0
         ui['session_status'],            # 1
@@ -528,10 +547,9 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['remove_background_switch'],  # 8
         ui['adv_accordion'],             # 9
         ui['extract_btn'],               # 10
-        ui['extract_crop_video_btn'],    # 11
-        ui['latent_file_list'],          # 12
-        ui['auto_batch_btn'],            # 13
-        ui['mem_warning'],               # 14
+        ui['latent_file_list'],          # 11
+        ui['auto_batch_btn'],            # 12
+        ui['mem_warning'],               # 13
     ]
 
     # ------------------------------------------------------------------

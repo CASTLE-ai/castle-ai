@@ -369,36 +369,77 @@ def get_select_index(evt: gr.SelectData):
     return evt.index
 
 
-def delete_selected_label(storage_path: str, project_name: str, label_list: List[Dict], selected_index: int) -> Tuple[List[Dict], List[Tuple]]:
-    """
-    Delete the selected label.
-    
+_DELETE_LABEL_IDLE = "Delete Selected Label"
+
+
+def _armed_label_text(filename: str) -> str:
+    return f"⚠️ Delete '{filename}'? Click again to confirm"
+
+
+def delete_selected_label(
+    storage_path: str,
+    project_name: str,
+    label_list: List[Dict],
+    selected_index: int,
+    armed_index: Any,
+) -> Tuple[List[Dict], List[Tuple], Any, Any]:
+    """Two-click delete: first click arms (label shows filename), second click confirms.
+
     Args:
         storage_path: Storage path
         project_name: Project name
         label_list: Label list
-        selected_index: Selected index
-        
+        selected_index: Index of currently selected gallery item
+        armed_index: Previously armed index (None if idle)
+
     Returns:
-        Updated label list and gallery list
+        (updated_label_list, gallery_list, delete_btn_update, new_armed_index)
     """
+    # Nothing selected — reset to idle.
     if selected_index is None or not label_list or selected_index >= len(label_list):
-        return read_all_labels_to_gallery(storage_path, project_name)
-    
+        new_label_list, new_gallery = read_all_labels_to_gallery(storage_path, project_name)
+        return (
+            new_label_list,
+            new_gallery,
+            gr.update(value=_DELETE_LABEL_IDLE),
+            None,
+        )
+
+    selected_label = label_list[selected_index]
+    file_path = selected_label["file_path"]
+    filename = os.path.basename(file_path)
+
+    # Selection changed between arming and confirmation — re-arm on new target.
+    if armed_index != selected_index:
+        return (
+            label_list,
+            gr.update(),
+            gr.update(value=_armed_label_text(filename)),
+            selected_index,
+        )
+
+    # Same selection clicked twice — execute delete.
     try:
-        selected_label = label_list[selected_index]
-        file_path = selected_label["file_path"]
-        
         if os.path.exists(file_path):
             os.remove(file_path)
             gr.Info(f"Deleted label file: {selected_label['index']}")
         else:
             gr.Info(f"File does not exist: {file_path}")
-            
     except Exception as e:
         gr.Warning(f"Error occurred while deleting file: {str(e)}")
-    
-    return read_all_labels_to_gallery(storage_path, project_name)
+
+    new_label_list, new_gallery = read_all_labels_to_gallery(storage_path, project_name)
+    return (
+        new_label_list,
+        new_gallery,
+        gr.update(value=_DELETE_LABEL_IDLE),
+        None,
+    )
+
+
+def _reset_delete_label_armed_state(*args):
+    """Reset the armed state when the user changes selection."""
+    return gr.update(value=_DELETE_LABEL_IDLE), None
 
 
 def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_tab: gr.Tab) -> Tuple[Dict[str, Any], Dict[str, Any]]: # 修改簽名，新增 batch_tracking_tab 參數
@@ -408,6 +449,8 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
     # State variables
     states["label_list_state"] = gr.State(None)
     states["selected_index_state"] = gr.State(None)
+    # Tracks which gallery index is currently armed for delete (None = idle).
+    states["delete_armed_index_state"] = gr.State(None)
     
     with gr.Row():
         with gr.Column(scale=2):
@@ -463,17 +506,39 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
                 )
     
     # Event bindings
-    # Gallery selection event
-    ui["gallery"].select(
-        fn=get_select_index,
-        outputs=states["selected_index_state"]
+    # Gallery selection event — also disarms any pending delete since the user
+    # may have shifted focus to a different label.
+    (
+        ui["gallery"].select(
+            fn=get_select_index,
+            outputs=states["selected_index_state"],
+        )
+        .then(
+            fn=_reset_delete_label_armed_state,
+            inputs=None,
+            outputs=[ui["delete_selected_btn"], states["delete_armed_index_state"]],
+            queue=False,
+        )
     )
-    
-    # Delete button event
+
+    # Delete button event — two-click: first click arms (label shows filename),
+    # second click confirms and executes.
     ui["delete_selected_btn"].click(
         fn=delete_selected_label,
-        inputs=[storage_path, project_name, states["label_list_state"], states["selected_index_state"]],
-        outputs=[states["label_list_state"], ui["gallery"]]
+        inputs=[
+            storage_path,
+            project_name,
+            states["label_list_state"],
+            states["selected_index_state"],
+            states["delete_armed_index_state"],
+        ],
+        outputs=[
+            states["label_list_state"],
+            ui["gallery"],
+            ui["delete_selected_btn"],
+            states["delete_armed_index_state"],
+        ],
+        queue=False,
     )
     
     # Batch tracking button event

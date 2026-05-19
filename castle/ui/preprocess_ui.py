@@ -39,8 +39,11 @@ def _get_roi_ids(storage_path: str, project_name: str, video_name: str) -> List[
             return []
         roi_ids: set[int] = set()
         with h5py.File(str(mask_path), "r") as f:
-            sample_keys = sorted(f.keys(), key=lambda x: int(x) if x.isdigit() else 0)[:20]
-            for key in sample_keys:
+            # Only iterate over integer-keyed frame datasets; non-digit keys
+            # (e.g. 'n_rois', 'total_frames') are scalar and would raise
+            # ValueError on f[key][:].
+            frame_keys = sorted([k for k in f.keys() if k.isdigit()], key=int)[:20]
+            for key in frame_keys:
                 roi_ids.update(int(v) for v in np.unique(f[key][:]) if v > 0)
         return sorted(roi_ids)
     except Exception:
@@ -97,7 +100,10 @@ def _compute_session_name(
     fc: Any, order: Any, margin: Any, min_crop: Any, output_size: Any,
     center_roi_id: Any, crop_w: Any, crop_h: Any,
 ) -> str:
-    """Compute and display the session name that would be created with current params."""
+    """Compute and display the session name that would be created with current params.
+
+    ``method`` is the Radio value: ``"KIT"`` or ``"CenterROI"``.
+    """
     try:
         from castle.core.preprocess_session import session_name_from_params, session_id_from_name
         if method == "KIT":
@@ -161,6 +167,143 @@ def _delete_session_ui(
     return _list_sessions_dropdown(storage_path, project_name), status
 
 
+_DELETE_SESSION_IDLE_LABEL = "🗑 Delete session"
+_DELETE_SESSION_ARMED_LABEL = "⚠️ Confirm Delete Session?"
+
+
+def _on_delete_session_click(storage_path, project_name, session_display, confirmed):
+    """Two-step delete-session handler with Cancel-button reset.
+
+    Returns 5 outputs: sessions_dropdown, session_status, delete_btn,
+    delete_cancel_btn, delete_warning, plus the confirm state.
+    """
+    if not session_display:
+        gr.Warning("Please select a session to delete.")
+        return (
+            _list_sessions_dropdown(storage_path, project_name),
+            "⚠️ No session selected.",
+            gr.update(value=_DELETE_SESSION_IDLE_LABEL),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            False,
+        )
+
+    if not confirmed:
+        # First click — arm.
+        return (
+            gr.update(),  # dropdown unchanged
+            gr.update(value=""),  # clear stale status
+            gr.update(value=_DELETE_SESSION_ARMED_LABEL),
+            gr.update(visible=True),
+            gr.update(visible=True),
+            True,
+        )
+
+    # Second click — execute.
+    new_dd_update, status = _delete_session_ui(storage_path, project_name, session_display)
+    return (
+        new_dd_update,
+        status,
+        gr.update(value=_DELETE_SESSION_IDLE_LABEL),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        False,
+    )
+
+
+def _on_delete_session_cancel():
+    return (
+        gr.update(),  # dropdown unchanged
+        gr.update(value=""),  # clear status
+        gr.update(value=_DELETE_SESSION_IDLE_LABEL),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        False,
+    )
+
+
+def _largest_centroid(binary):
+    """Return (cx, cy) of the largest connected component in a uint8 binary mask, or None."""
+    import cv2
+    import numpy as np
+    num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    if num_labels <= 1:
+        return None
+    areas = [stats[j, cv2.CC_STAT_AREA] for j in range(1, num_labels)]
+    best = int(np.argmax(areas)) + 1
+    return float(centroids[best, 0]), float(centroids[best, 1])
+
+
+def _center_crop(img, size):
+    """Extract a square crop of ``size`` from the centre of ``img``.
+
+    Matches StabilizedCamera._center_crop: zero-pads when crop exceeds image.
+    """
+    import numpy as np
+    ih, iw = img.shape[:2]
+    cy_c, cx_c = ih // 2, iw // 2
+    half = size // 2
+    y0, x0 = cy_c - half, cx_c - half
+    y1, x1 = y0 + size, x0 + size
+    y0s, y1s = max(0, y0), min(ih, y1)
+    x0s, x1s = max(0, x0), min(iw, x1)
+    if img.ndim == 3:
+        out = np.zeros((size, size, img.shape[2]), dtype=img.dtype)
+    else:
+        out = np.zeros((size, size), dtype=img.dtype)
+    out[y0s - y0:y0s - y0 + (y1s - y0s),
+        x0s - x0:x0s - x0 + (x1s - x0s)] = img[y0s:y1s, x0s:x1s]
+    return out
+
+
+def _kit_single_frame_transform(frame_bgr, mask, body_roi_id, head_roi_id,
+                                margin, min_crop, output_size):
+    """Fast approximate KIT crop for one frame — no Butterworth filter, instant.
+
+    Mirrors StabilizedCamera._get_warp_params (scale=1.0) + _center_crop + resize:
+      1. Rotate frame so body→head axis is vertical; translate centroid to canvas centre.
+      2. Center-crop crop_size × crop_size (= max(min_crop, 2*margin)).
+      3. Resize to output_size × output_size.
+    """
+    import cv2
+    import numpy as np
+
+    body_centroid = _largest_centroid((mask == body_roi_id).astype(np.uint8))
+    if body_centroid is None:
+        return None
+    cx, cy = body_centroid
+
+    angle_deg = 0.0
+    if head_roi_id != body_roi_id:
+        head_centroid = _largest_centroid((mask == head_roi_id).astype(np.uint8))
+        if head_centroid is not None:
+            hx, hy = head_centroid
+            angle_deg = np.degrees(np.arctan2(hy - cy, hx - cx))
+
+    crop_size = max(int(min_crop), 2 * int(margin), 1)
+    h, w = frame_bgr.shape[:2]
+
+    # Step 1: rotate (scale=1.0, matching real KIT), translate centroid → canvas centre
+    M = cv2.getRotationMatrix2D((cx, cy), angle_deg - 90, 1.0)
+    M[0, 2] += w / 2.0 - cx
+    M[1, 2] += h / 2.0 - cy
+    warped_frame = cv2.warpAffine(frame_bgr, M, (w, h),
+                                  flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+    warped_mask = cv2.warpAffine(mask.astype(np.uint8), M, (w, h),
+                                 flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+
+    # Step 2: center crop
+    cropped_frame = _center_crop(warped_frame, crop_size)
+    cropped_mask = _center_crop(warped_mask, crop_size)
+
+    # Step 3: resize to output_size
+    stab = cv2.resize(cropped_frame, (output_size, output_size),
+                      interpolation=cv2.INTER_LINEAR)
+    tmask = cv2.resize(cropped_mask, (output_size, output_size),
+                       interpolation=cv2.INTER_NEAREST)
+    return stab, tmask
+
+
 def _get_preview_frame(
     storage_path: str,
     project_name: str,
@@ -177,9 +320,11 @@ def _get_preview_frame(
     crop_w: Any,
     crop_h: Any,
 ) -> Any:
-    """Return a single representative stabilised/cropped frame for preview."""
-    import numpy as np
+    """Return a single representative stabilised/cropped frame for preview.
 
+    KIT preview uses a fast single-frame transform (no Butterworth filter).
+    The field of view and orientation are approximate but correct in principle.
+    """
     if not storage_path or not project_name or not video_name or video_name == "All":
         return None
 
@@ -194,45 +339,32 @@ def _get_preview_frame(
         source_path = str(Path(project_path) / "sources" / video_name)
 
         if method == "KIT":
-            from castle.core.stabilized_camera import (
-                StabilizedCamera,
-                extract_centroids_from_masks,
-                extract_orientations_from_masks,
-            )
-            body_roi_id = int(ant_roi or 1)
-            head_roi_id = int(post_roi or 2)
-            _fc = float(fc or 0.25)
-            _order = int(order or 2)
-            _margin = int(margin or 75)
-            _min_crop = int(min_crop or 300)
+            if not ant_roi or not post_roi:
+                gr.Warning("Please select both Anterior and Posterior ROI IDs before previewing.")
+                return None
+
+            body_roi_id = int(ant_roi)
+            head_roi_id = int(post_roi)
             _output_size = int(output_size or 592)
 
             with ReadArray(source_path) as vr:
                 n_frames = len(vr)
-                _fps = vr.fps
-                # Find first frame in the middle range
                 target = n_frames // 4
                 frame_bgr = vr[target]
-
-            positions = extract_centroids_from_masks(mask_h5_path, body_roi_id, n_frames)
-            angles = extract_orientations_from_masks(
-                mask_h5_path, body_roi_id, head_roi_id, n_frames
-            )
-            cam = StabilizedCamera(
-                positions=positions, angles=angles, fps=_fps,
-                fc=_fc, order=_order, margin=_margin,
-                min_crop=_min_crop, output_size=_output_size,
-            )
 
             with h5py.File(mask_h5_path, "r") as f:
                 orig_mask = f[str(target)][:] if str(target) in f else None
             if orig_mask is None:
                 return None
 
-            stabilised = cam.generate_frame(frame_bgr, target)
-            trans_mask = cam.generate_mask(orig_mask, target)
-
-            # Build a side-by-side (original | stabilised) BGR image
+            result = _kit_single_frame_transform(
+                frame_bgr, orig_mask, body_roi_id, head_roi_id,
+                int(margin or 75), int(min_crop or 300), _output_size,
+            )
+            if result is None:
+                gr.Warning(f"ROI {body_roi_id} not found in frame {target}.")
+                return None
+            stabilised, trans_mask = result
             combined = _make_preview_image(frame_bgr, orig_mask, stabilised, trans_mask)
             return combined[..., ::-1]  # BGR → RGB for Gradio
 
@@ -448,7 +580,7 @@ def create_preprocess_ui(
         # -- Method selector -----------------------------------------------
         ui["method_radio"] = gr.Radio(
             label="Pre-processing method",
-            choices=["KIT", "Center ROI + Crop"],
+            choices=[("KIT", "KIT"), ("Center ROI + Crop", "CenterROI")],
             value="KIT",
             interactive=True,
         )
@@ -476,22 +608,22 @@ def create_preprocess_ui(
                 with gr.Accordion("⚙ Advanced KIT Parameters", open=False):
                     ui["fc"] = gr.Number(
                         label="Low-pass cutoff (Hz)",
-                        value=0.25, minimum=0.001, interactive=True,
+                        value=0.25, interactive=True,
                         info="Butterworth LP filter cutoff. Default: 0.25 Hz.",
                     )
                     ui["order"] = gr.Number(
                         label="Filter order",
-                        value=2, precision=0, minimum=1, interactive=True,
+                        value=2, precision=0, interactive=True,
                         info="Butterworth filter order. Default: 2.",
                     )
                     ui["margin"] = gr.Number(
                         label="Crop margin (px)",
-                        value=75, precision=0, minimum=0, interactive=True,
+                        value=75, precision=0, interactive=True,
                         info="Extra padding pixels around the crop region. Default: 75 px.",
                     )
                     ui["min_crop"] = gr.Number(
                         label="Min crop size (px)",
-                        value=300, precision=0, minimum=64, interactive=True,
+                        value=300, precision=0, interactive=True,
                         info="Minimum crop size in pixels. Default: 300 px.",
                     )
                     ui["output_size"] = gr.Radio(
@@ -555,6 +687,13 @@ def create_preprocess_ui(
                 interactive=True,
             )
             ui["delete_btn"] = gr.Button("🗑 Delete session", variant="stop")
+            ui["delete_cancel_btn"] = gr.Button("Cancel", visible=False)
+        ui["delete_warning"] = gr.Markdown(
+            "⚠️ **This will permanently delete all preprocessed videos and "
+            "extracted latents for this session. This cannot be undone.**",
+            visible=False,
+        )
+        ui["delete_confirm_state"] = gr.State(False)
         ui["session_status"] = gr.Textbox(
             label="",
             value="",
@@ -585,24 +724,47 @@ def create_preprocess_ui(
         ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
     ]
 
+    # Define before tab-select so the .then() chain can reference it
+    _session_name_inputs = [
+        ui["method_radio"],
+        ui["anterior_roi_id"], ui["posterior_roi_id"],
+        ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],
+        ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
+    ]
+
     def _on_tab_select(sp, pn):
-        is_open = bool(sp and pn)
-        vupd = _list_videos(sp, pn)
+        # Compute videos once; derive video_drop update + first_video together.
+        videos = get_project_videos(sp, pn) if (sp and pn) else []
+        choices = videos + (["All"] if videos else [])
+        wrapper_upd = gr.update(visible=bool(sp and pn))
+        vupd = gr.update(choices=choices, value=videos[0] if videos else None)
         supd = _list_sessions_dropdown(sp, pn)
-        wrapper_upd = gr.update(visible=is_open)
-        return wrapper_upd, vupd, supd
+        ant_upd, post_upd = _populate_roi_dropdowns(sp, pn, videos[0] if videos else None)
+        return wrapper_upd, vupd, supd, ant_upd, post_upd
 
     preprocess_tab.select(
         fn=_on_tab_select,
         inputs=[storage_path, project_name],
-        outputs=[ui["wrapper"], ui["video_drop"], ui["sessions_dropdown"]],
+        outputs=[
+            ui["wrapper"], ui["video_drop"], ui["sessions_dropdown"],
+            ui["anterior_roi_id"], ui["posterior_roi_id"],
+        ],
+    ).then(
+        # After ROI dropdowns are filled, recompute session name display.
+        fn=_compute_session_name,
+        inputs=_session_name_inputs,
+        outputs=[ui["session_name_display"]],
     )
 
-    # Populate ROI dropdowns when video changes
+    # Populate ROI dropdowns when video changes (also refreshes session name via .then)
     ui["video_drop"].change(
         fn=_populate_roi_dropdowns,
         inputs=[storage_path, project_name, ui["video_drop"]],
         outputs=[ui["anterior_roi_id"], ui["posterior_roi_id"]],
+    ).then(
+        fn=_compute_session_name,
+        inputs=_session_name_inputs,
+        outputs=[ui["session_name_display"]],
     )
 
     # Toggle KIT / CenterROI params columns
@@ -613,12 +775,6 @@ def create_preprocess_ui(
     )
 
     # Auto-update session name display whenever any param changes
-    _session_name_inputs = [
-        ui["method_radio"],
-        ui["anterior_roi_id"], ui["posterior_roi_id"],
-        ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],
-        ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
-    ]
     for trigger in _session_name_inputs:
         trigger.change(
             fn=_compute_session_name,
@@ -633,11 +789,40 @@ def create_preprocess_ui(
         outputs=[ui["preview_image"]],
     )
 
-    # Delete session
+    # Delete session — two-step confirmation. First click arms the button
+    # (label flips to "⚠️ Confirm Delete Session?" and Cancel becomes visible);
+    # second click executes; Cancel resets to idle.
+    _delete_session_outputs = [
+        ui["sessions_dropdown"],
+        ui["session_status"],
+        ui["delete_btn"],
+        ui["delete_cancel_btn"],
+        ui["delete_warning"],
+        ui["delete_confirm_state"],
+    ]
     ui["delete_btn"].click(
-        fn=_delete_session_ui,
-        inputs=[storage_path, project_name, ui["sessions_dropdown"]],
-        outputs=[ui["sessions_dropdown"], ui["session_status"]],
+        fn=_on_delete_session_click,
+        inputs=[
+            storage_path,
+            project_name,
+            ui["sessions_dropdown"],
+            ui["delete_confirm_state"],
+        ],
+        outputs=_delete_session_outputs,
+        queue=False,
+    )
+    ui["delete_cancel_btn"].click(
+        fn=_on_delete_session_cancel,
+        inputs=None,
+        outputs=_delete_session_outputs,
+        queue=False,
+    )
+    # Changing session resets the armed state (user may have changed their mind).
+    ui["sessions_dropdown"].change(
+        fn=_on_delete_session_cancel,
+        inputs=None,
+        outputs=_delete_session_outputs,
+        queue=False,
     )
 
     # Run

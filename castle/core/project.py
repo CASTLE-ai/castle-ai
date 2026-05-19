@@ -1,16 +1,80 @@
 """
 castle/core/project.py
 Core Project Management Logic.
+
+Concurrency
+-----------
+``config.json`` is mutated by extraction (registers latent paths), session
+deletion (clears latent entries), KIT save, and others.  A read-modify-write
+on it must be atomic per project, both within one Python process (multiple
+threads, e.g. two Gradio sessions) and across processes (two ``python app.py``
+instances pointing at the same storage).
+
+- ``_get_config_lock(project_path)`` returns a per-project ``threading.Lock``
+  protecting same-process writers.
+- ``update_config(storage_path, project_name)`` is a context manager that
+  holds *both* the thread lock and a cross-platform ``filelock.FileLock`` on
+  ``config.json.lock`` for the full load → mutate → save sequence.  Use this
+  from any code path that performs read-modify-write on the config.
 """
 
+import contextlib
 import os
 import json
 import logging
-from typing import Dict, Optional, Tuple
+import threading
+from typing import Dict, Iterator, Optional, Tuple
+
+from filelock import FileLock
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG: Dict = {}
+
+# Per-project threading lock registry.  Two threads in the same process editing
+# the same project's config.json contend on the same Lock object.  Different
+# projects get independent locks so they don't serialize.
+_PROJECT_LOCKS: Dict[str, threading.Lock] = {}
+_PROJECT_LOCKS_GUARD = threading.Lock()
+_CONFIG_FILELOCK_TIMEOUT = 5.0
+
+
+def _get_config_lock(project_path: str) -> threading.Lock:
+    """Return (and lazily create) the per-project in-process threading lock."""
+    with _PROJECT_LOCKS_GUARD:
+        lock = _PROJECT_LOCKS.get(project_path)
+        if lock is None:
+            lock = threading.Lock()
+            _PROJECT_LOCKS[project_path] = lock
+        return lock
+
+
+def _config_filelock_path(project_path: str) -> str:
+    return os.path.join(project_path, 'config.json.lock')
+
+
+@contextlib.contextmanager
+def update_config(storage_path: str, project_name: str) -> Iterator[Dict]:
+    """Atomically read-modify-write ``config.json`` for a project.
+
+    Usage::
+
+        with update_config(storage_path, project_name) as config:
+            config["latent"][k] = v
+        # save happens on context exit
+
+    Holds the per-project in-process ``threading.Lock`` AND a cross-process
+    ``filelock.FileLock`` for the full load → mutate → save sequence so two
+    concurrent extractors writing different keys do not lose updates.
+    """
+    project_path = os.path.join(storage_path, project_name)
+    os.makedirs(project_path, exist_ok=True)
+    thread_lock = _get_config_lock(project_path)
+    file_lock = FileLock(_config_filelock_path(project_path), timeout=_CONFIG_FILELOCK_TIMEOUT)
+    with thread_lock, file_lock:
+        _, config = get_project_config(storage_path, project_name)
+        yield config
+        save_project_config(storage_path, project_name, config)
 
 
 def get_project_config(storage_path: str, project_name: str) -> Tuple[str, Dict]:
@@ -97,9 +161,8 @@ def save_kit_params(storage_path: str, project_name: str, params: dict) -> None:
         ...     'min_crop': 300, 'output_size': 518,
         ... })
     """
-    project_path, config = get_project_config(storage_path, project_name)
-    config[KIT_PARAMS_KEY] = params
-    save_project_config(storage_path, project_name, config)
+    with update_config(storage_path, project_name) as config:
+        config[KIT_PARAMS_KEY] = params
     logger.info(
         "Saved KIT params for project '%s': %s",
         project_name,

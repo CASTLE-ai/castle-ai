@@ -18,9 +18,6 @@ from castle.service.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
-# Tracks the last temp clip path so it can be cleaned up on the next call.
-_last_clip_path: str | None = None
-
 
 # ---------------------------
 # Event Handlers
@@ -34,27 +31,34 @@ def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
     )
 
 
-def embedding_plot_click(aggregator, Z_plt, evt: gr.SelectData):
-    """
-    Handle click on embedding plot.
-    aggregator: LatentAggregator instance
-    Z_plt: EmbeddingScatterPlot instance
-    """
-    global _last_clip_path
+def embedding_plot_click(aggregator, Z_plt, last_clip_path, evt: gr.SelectData):
+    """Handle click on embedding plot.
 
+    Args:
+        aggregator: LatentAggregator instance.
+        Z_plt: EmbeddingScatterPlot instance.
+        last_clip_path: Previous temp clip path from this Gradio session's
+            gr.State, or None.  Gradio has already served it, so it can be
+            cleaned up safely.  Per-session state (not a module global) so
+            two concurrent users do not race to delete each other's clip.
+        evt: Gradio click event.
+
+    Returns:
+        ``(emb_plot, clip_path_or_None, new_last_clip_path)`` — the third value
+        feeds back into the ``last_clip_path`` gr.State for the next click.
+    """
     # Clean up the previous temp clip now that Gradio has already served it.
-    if _last_clip_path is not None:
+    if last_clip_path is not None:
         try:
-            os.unlink(_last_clip_path)
+            os.unlink(last_clip_path)
         except OSError:
             pass
-        _last_clip_path = None
 
     if hasattr(evt, 'index'):
         emb_plot = Z_plt.click(evt.index[0], evt.index[1])
     else:
         gr.Info('Embedding click failed. Please try clicking on a data point again.')
-        return None, None
+        return None, None, None
 
     index = Z_plt.selected_index
     # Generate a short video clip around the selected bin
@@ -62,10 +66,9 @@ def embedding_plot_click(aggregator, Z_plt, evt: gr.SelectData):
 
     if clip_path is None:
         # Return fallback blank video if clip generation fails
-        return emb_plot, None
+        return emb_plot, None, None
 
-    _last_clip_path = clip_path
-    return emb_plot, clip_path
+    return emb_plot, clip_path, clip_path
 
 
 def collapse_accordion():

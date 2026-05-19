@@ -97,6 +97,7 @@ def _aggregate_latents(
     *,
     cache_dir: str,
     notify: NotificationCallback,
+    memmap_filename: str = 'aggregated_latents.dat',
 ) -> np.ndarray:
     """Concatenate latent chunks into one tall array.
 
@@ -114,6 +115,11 @@ def _aggregate_latents(
         chunks: Non-empty list of 2D arrays sharing a feature dimension.
         cache_dir: Directory to write the memmap to (created on demand).
         notify: User-facing notification callback for progress messages.
+        memmap_filename: Override for the memmap file name; defaults to
+            ``aggregated_latents.dat``.  Pass a per-aggregator unique name
+            (e.g. embedding (model, roi, bin) hash) when multiple
+            ``LatentAggregator`` instances may run concurrently and would
+            otherwise overwrite each other's memmap.
 
     Returns:
         Aggregated ``(total_T, F)`` array. For the memmap path the returned
@@ -131,7 +137,7 @@ def _aggregate_latents(
 
     if total_bytes > threshold_bytes:
         os.makedirs(cache_dir, exist_ok=True)
-        memmap_path = os.path.join(cache_dir, 'aggregated_latents.dat')
+        memmap_path = os.path.join(cache_dir, memmap_filename)
         notify(
             f"Aggregated latents {total_bytes / 1e9:.2f} GB exceed "
             f"memmap threshold {threshold_bytes / 1e9:.2f} GB; "
@@ -223,11 +229,19 @@ class LatentAggregator:
         # PERF-03: per-frame LRU cache so repeated hovers don't re-decode.
         self._frame_cache: "OrderedDict[Tuple[str, int], np.ndarray]" = OrderedDict()
         self._frame_cache_max: int = _FRAME_CACHE_MAX
-        self._cache_lock = threading.Lock()
+        # RLock so _get_cached_frame can hold the lock across the full
+        # check→fetch→insert sequence (3-E) while still calling helpers
+        # like _get_cached_reader that re-acquire the same lock.
+        self._cache_lock = threading.RLock()
         
         # Load project configuration
         project_path, project_config = get_project_config(storage_path, project_name)
         self.project_path = project_path
+        # Remember the per-aggregator key params so the memmap filename is
+        # unique per (model, roi, bin) tuple — prevents two concurrent
+        # LatentAggregators (e.g. two Gradio sessions clustering different
+        # ROIs) from overwriting each other's aggregated_latents.dat (3-D).
+        self.select_roi_id = int(select_roi_id)
 
         # Filter latents for the selected ROI
         roi_key = f'ROI_{select_roi_id}'
@@ -318,10 +332,18 @@ class LatentAggregator:
                 self.notify(f"Error loading {filename}: {e}", "error")
 
         if latents_buffer:
+            # Unique-per-aggregator memmap filename so two concurrent runs
+            # (e.g. two Gradio sessions clustering different ROIs / models)
+            # do not clobber each other's disk-backed array (3-D).
+            safe_model = "".join(c if c.isalnum() else "_" for c in self.model_name)
+            memmap_name = (
+                f"aggregated_latents_{safe_model}_roi{self.select_roi_id}_bin{self.bin_size}.dat"
+            )
             self.latents = _aggregate_latents(
                 latents_buffer,
                 cache_dir=os.path.join(self.project_path, 'cluster', '_cache'),
                 notify=self.notify,
+                memmap_filename=memmap_name,
             )
             self.notify(f'Finished loading. Total aggregated latents: {len(self.latents)}')
         else:
@@ -364,19 +386,23 @@ class LatentAggregator:
             entirely; misses fall through to ``reader.get_frame``.
         """
         key = (video_path, frame_idx)
+        # Hold the lock for the full check → fetch → insert sequence so two
+        # concurrent callers asking for the same frame don't both decode and
+        # both insert (3-E).  Decoding inside the lock is acceptable — single
+        # frame decode is fast relative to the per-click I/O budget, and the
+        # lock is uncontended in the common (single-user) case.
         with self._cache_lock:
             if key in self._frame_cache:
                 self._frame_cache.move_to_end(key)
                 return self._frame_cache[key]
 
-        reader = self._get_cached_reader(video_path)
-        frame = reader.get_frame(frame_idx)
+            reader = self._get_cached_reader(video_path)
+            frame = reader.get_frame(frame_idx)
 
-        with self._cache_lock:
             self._frame_cache[key] = frame
             if len(self._frame_cache) > self._frame_cache_max:
                 self._frame_cache.popitem(last=False)
-        return frame
+            return frame
 
     def get_frame(self, index: int) -> Optional[np.ndarray]:
         """Retrieve the representative frame for a given global bin index.

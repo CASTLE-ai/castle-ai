@@ -243,6 +243,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     mulvideo = gr.State(None)  # Holds LatentAggregator instance
     session_info = gr.State(None)
     overwrite_state = gr.State(False)  # Submit-overwrite confirmation gate
+    # Last temp clip path from this Gradio session — replaces the
+    # module-level _last_clip_path global so two concurrent users do not
+    # race to delete each other's clip (3-A).
+    last_clip_path_state = gr.State(None)
 
     with gr.Row(visible=True) as ui['cluster_row_main']:
         with gr.Column(scale=2):
@@ -478,8 +482,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
     ui['embedding_plot'].select(
         fn=embedding_plot_click,
-        inputs=[mulvideo, local_embedding_plot],
-        outputs=[ui['embedding_plot'], ui['display']]
+        inputs=[mulvideo, local_embedding_plot, last_clip_path_state],
+        outputs=[ui['embedding_plot'], ui['display'], last_clip_path_state],
     )
     ui['cluster_run'].click(
         fn=generate_local_cluster,

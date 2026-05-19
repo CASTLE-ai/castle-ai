@@ -446,11 +446,12 @@ def extract_roi_latent_from_video(
             video_name, n_batches_failed, total_batches, max_batch_failure_rate * 100,
         )
 
-    # Update Config
-    _, config = get_project_config(storage_path, project_name)
+    # Update Config — use atomic read-modify-write context manager so two
+    # concurrent extractions writing different videos don't lose updates (3-F).
+    from castle.core.project import update_config
     latent_key = f"{session_id}/{latent_filename}" if session_id else latent_filename
-    config.setdefault('latent', {})[latent_key] = video_name
-    save_project_config(storage_path, project_name, config)
+    with update_config(storage_path, project_name) as config:
+        config.setdefault('latent', {})[latent_key] = video_name
 
     return latent_path
 
@@ -758,10 +759,10 @@ def extract_roi_rotation_latent_from_video(
             tags={"rotation": True},
         )
 
-        # Update Config
-        _, config = get_project_config(storage_path, project_name)
-        config.setdefault('latent', {})[latent_filename] = video_name
-        save_project_config(storage_path, project_name, config)
+        # Update Config — atomic RMW per 3-F.
+        from castle.core.project import update_config
+        with update_config(storage_path, project_name) as config:
+            config.setdefault('latent', {})[latent_filename] = video_name
 
         if n_batches_failed:
             logger.warning(

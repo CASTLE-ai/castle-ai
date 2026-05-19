@@ -193,13 +193,15 @@ def delete_session_with_latent_cleanup(
 
     delete_session(storage_path, project_name, session_id)
 
-    _, config = get_project_config(storage_path, project_name)
+    # Atomic RMW so a concurrent extraction registering a new latent doesn't
+    # get clobbered by this delete (3-F).
+    from castle.core.project import update_config
     prefix = f"{session_id}/"
-    config["latent"] = {
-        k: v for k, v in config.get("latent", {}).items()
-        if not k.startswith(prefix)
-    }
-    save_project_config(storage_path, project_name, config)
+    with update_config(storage_path, project_name) as config:
+        config["latent"] = {
+            k: v for k, v in config.get("latent", {}).items()
+            if not k.startswith(prefix)
+        }
 
 
 # NOTE: Not yet exposed via CLI or UI

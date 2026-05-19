@@ -1,12 +1,15 @@
 """Session management for Behavior Microscope clustering workflows."""
 
 import json
+import logging
 import os
 import shutil
 import glob
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,16 +49,29 @@ class SessionManager:
         os.makedirs(self.sessions_path, exist_ok=True)
     
     def list_sessions(self) -> List[SessionInfo]:
-        """List all sessions, sorted by updated_at descending."""
+        """List all sessions, sorted by updated_at descending.
+
+        Skips manifests that fail to parse (JSON corrupted, missing keys,
+        schema mismatch) so a single bad manifest cannot prevent the
+        clustering page from loading.  Each skip is logged at WARNING.
+        """
         sessions = []
         if not os.path.exists(self.sessions_path):
             return sessions
         for d in os.listdir(self.sessions_path):
             manifest_path = os.path.join(self.sessions_path, d, 'manifest.json')
-            if os.path.isfile(manifest_path):
+            if not os.path.isfile(manifest_path):
+                continue
+            try:
                 with open(manifest_path) as f:
                     data = json.load(f)
                 sessions.append(SessionInfo(**data))
+            except (json.JSONDecodeError, TypeError, KeyError) as exc:
+                logger.warning(
+                    "Skipping unreadable session manifest %s: %s",
+                    manifest_path, exc,
+                )
+                continue
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
         return sessions
     
@@ -76,13 +92,21 @@ class SessionManager:
     def create_session(self, model: str, roi_id: int, bin_size: int, 
                        total_frames: int, name: str = "") -> SessionInfo:
         """Create a new session."""
-        # Generate ID — use max existing numeric ID + 1 to avoid collisions after deletions
+        # Generate ID — use max existing numeric ID + 1 to avoid collisions
+        # after deletions.  Skip non-numeric / malformed session_ids (e.g. a
+        # user-renamed directory) instead of crashing the whole UI.
         existing = self.list_sessions()
-        if existing:
-            existing_ids = [int(s.session_id.split('_')[1]) for s in existing]
-            next_num = max(existing_ids) + 1
-        else:
-            next_num = 1
+        existing_ids = []
+        for s in existing:
+            try:
+                existing_ids.append(int(s.session_id.split('_')[1]))
+            except (IndexError, ValueError) as exc:
+                logger.warning(
+                    "Ignoring non-numeric session_id %r while computing next id: %s",
+                    s.session_id, exc,
+                )
+                continue
+        next_num = max(existing_ids) + 1 if existing_ids else 1
         session_id = f"session_{next_num:03d}"
 
         now = datetime.now().isoformat()

@@ -5,14 +5,30 @@ Session management for Pre-process tab.
 A session represents one parameter set applied to one or more videos.
 Directory is named with 8-char SHA256 hash of the full human-readable session name.
 All writes are atomic (tmp + rename) to prevent corruption.
+
+Concurrent writers to ``session_meta.json`` — e.g. two extraction jobs racing
+to add their video to the same session — would otherwise lose updates (both
+read videos=[], both write videos=[A] / videos=[B], one survives).  A
+cross-platform ``filelock.FileLock`` on a sidecar guards the read-modify-write
+sequence in ``add_video_to_session``.  ``filelock`` works on Windows, macOS
+and Linux; do NOT switch to Linux-only ``fcntl``.
 """
 
 import hashlib
 import json
+import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from filelock import FileLock
+
+logger = logging.getLogger(__name__)
+
+# How long to wait for the session_meta lock before giving up.  Five seconds
+# is generous for an in-memory read-modify-write that takes ~milliseconds.
+_SESSION_LOCK_TIMEOUT = 5.0
 
 
 def _sessions_root(storage_path: str, project_name: str) -> Path:
@@ -80,36 +96,62 @@ def list_sessions(storage_path: str, project_name: str) -> list[dict]:
     return sorted(metas, key=lambda m: m.get("created_at", ""), reverse=True)
 
 
+def _session_lock_path(storage_path: str, project_name: str, session_id: str) -> Path:
+    """Return the sidecar lock path for a session.
+
+    The lock file lives next to session_meta.json so cross-process writers all
+    contend on the same OS-level file lock.  Created on demand by ``FileLock``.
+    """
+    return get_session_dir(storage_path, project_name, session_id) / "session_meta.lock"
+
+
 def find_or_create_session(
     storage_path: str, project_name: str, method: str, params: dict
 ) -> str:
-    """Return session_id, creating session_meta.json if it doesn't yet exist."""
+    """Return session_id, creating session_meta.json if it doesn't yet exist.
+
+    Holds the per-session FileLock for the check-then-act so two concurrent
+    callers with the same params don't both decide to create.
+    """
     import castle
 
     name = session_name_from_params(method, params)
     sid = session_id_from_name(name)
-    if load_session_meta(storage_path, project_name, sid) is None:
-        meta = {
-            "session_id": sid,
-            "session_name": name,
-            "method": method,
-            "params": params,
-            "videos": [],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "castle_version": getattr(castle, "__version__", ""),
-        }
-        save_session_meta(storage_path, project_name, sid, meta)
+    # Ensure the directory exists so we can drop the lock file alongside.
+    get_session_dir(storage_path, project_name, sid).mkdir(parents=True, exist_ok=True)
+    lock_path = _session_lock_path(storage_path, project_name, sid)
+    with FileLock(str(lock_path), timeout=_SESSION_LOCK_TIMEOUT):
+        if load_session_meta(storage_path, project_name, sid) is None:
+            meta = {
+                "session_id": sid,
+                "session_name": name,
+                "method": method,
+                "params": params,
+                "videos": [],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "castle_version": getattr(castle, "__version__", ""),
+            }
+            save_session_meta(storage_path, project_name, sid, meta)
     return sid
 
 
 def add_video_to_session(
     storage_path: str, project_name: str, session_id: str, video_name: str
 ) -> None:
-    """Append video_name to videos list if not already present. Atomic write."""
-    meta = load_session_meta(storage_path, project_name, session_id) or {}
-    if video_name not in meta.get("videos", []):
-        meta.setdefault("videos", []).append(video_name)
-        save_session_meta(storage_path, project_name, session_id, meta)
+    """Append video_name to videos list if not already present.
+
+    Cross-platform ``FileLock`` guards the load → mutate → save sequence so two
+    extraction jobs writing the same session don't lose each other's video.
+    """
+    lock_path = _session_lock_path(storage_path, project_name, session_id)
+    # Lock file path may not yet exist if the session dir hasn't been built;
+    # FileLock creates the file lazily but the parent must exist.
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(lock_path), timeout=_SESSION_LOCK_TIMEOUT):
+        meta = load_session_meta(storage_path, project_name, session_id) or {}
+        if video_name not in meta.get("videos", []):
+            meta.setdefault("videos", []).append(video_name)
+            save_session_meta(storage_path, project_name, session_id, meta)
 
 
 def video_is_preprocessed(

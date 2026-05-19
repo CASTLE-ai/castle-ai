@@ -143,7 +143,9 @@ def _aggregator_with_stub_reader(reader, video_path="/stub/v.mp4"):
     agg._cache_max_size = 8
     agg._frame_cache = OrderedDict()
     agg._frame_cache_max = 4   # Tiny for eviction test
-    agg._cache_lock = threading.Lock()
+    # RLock matches production (3-E): _get_cached_frame holds the lock across
+    # _get_cached_reader, which re-acquires the same lock from the same thread.
+    agg._cache_lock = threading.RLock()
     agg.notify = lambda *args, **kwargs: None
     return agg
 

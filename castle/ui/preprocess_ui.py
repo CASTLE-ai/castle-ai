@@ -304,6 +304,47 @@ def _kit_single_frame_transform(frame_bgr, mask, body_roi_id, head_roi_id,
     return stab, tmask
 
 
+def _get_video_wh(source_path: str) -> tuple[int, int] | None:
+    """Return (width, height) of the source video, or None on failure."""
+    try:
+        from castle.utils.video_io import ReadArray
+        with ReadArray(source_path) as vr:
+            frame = vr[0]
+            h, w = frame.shape[:2]
+            return w, h
+    except Exception:
+        return None
+
+
+def _check_crop_bounds(
+    method: str,
+    source_path: str,
+    min_crop: Any,
+    crop_w: Any,
+    crop_h: Any,
+) -> str | None:
+    """Return an error string if any crop param exceeds video resolution, else None."""
+    wh = _get_video_wh(source_path)
+    if wh is None:
+        return None  # can't read video — let the service handle it
+    vid_w, vid_h = wh
+    if method == "KIT":
+        val = int(min_crop or 300)
+        limit = min(vid_w, vid_h)
+        if val > limit:
+            return f"Min crop size ({val} px) exceeds the smaller video dimension ({limit} px)."
+    else:  # CenterROI
+        cw, ch = int(crop_w or 300), int(crop_h or 300)
+        errors = []
+        if cw > vid_w:
+            errors.append(f"Crop width {cw} px > video width {vid_w} px")
+        if ch > vid_h:
+            errors.append(f"Crop height {ch} px > video height {vid_h} px")
+        if errors:
+            return "Crop exceeds video resolution: " + "; ".join(errors) + "."
+    return None
+
+
 def _get_preview_frame(
     storage_path: str,
     project_name: str,
@@ -337,6 +378,11 @@ def _get_preview_frame(
         project_path, _ = get_project_config(storage_path, project_name)
         mask_h5_path = str(Path(project_path) / "track" / video_name / "mask_list.h5")
         source_path = str(Path(project_path) / "sources" / video_name)
+
+        err = _check_crop_bounds(method, source_path, min_crop, crop_w, crop_h)
+        if err:
+            gr.Warning(err)
+            return None
 
         if method == "KIT":
             if not ant_roi or not post_roi:
@@ -457,8 +503,9 @@ def _run_preprocess(
         gr.Warning("No video selected.")
         return "No video selected."
 
+    from pathlib import Path
     from castle.core.project import get_project_config
-    _, config = get_project_config(storage_path, project_name)
+    project_path, config = get_project_config(storage_path, project_name)
     video_list = sorted(config.get("source", [])) if video_name == "All" else [video_name]
 
     log_lines: list[str] = []
@@ -484,6 +531,11 @@ def _run_preprocess(
 
         for i, vname in enumerate(video_list):
             log_lines.append(f"[{i + 1}/{len(video_list)}] {vname}…")
+            src = str(Path(project_path) / "sources" / vname)
+            err = _check_crop_bounds(method, src, min_crop, None, None)
+            if err:
+                log_lines.append(f"  ⛔ Skipped — {err}")
+                continue
 
             def _cb(frac: float, desc: str = "") -> None:
                 progress(frac, desc=f"{vname}: {desc}" if desc else vname)
@@ -521,6 +573,11 @@ def _run_preprocess(
 
         for i, vname in enumerate(video_list):
             log_lines.append(f"[{i + 1}/{len(video_list)}] {vname}…")
+            src = str(Path(project_path) / "sources" / vname)
+            err = _check_crop_bounds(method, src, None, crop_w, crop_h)
+            if err:
+                log_lines.append(f"  ⛔ Skipped — {err}")
+                continue
 
             def _cb(frac: float, desc: str = "") -> None:
                 progress(frac, desc=f"{vname}: {desc}" if desc else vname)

@@ -365,8 +365,7 @@ def _get_preview_frame(
                 gr.Warning(f"ROI {body_roi_id} not found in frame {target}.")
                 return None
             stabilised, trans_mask = result
-            combined = _make_preview_image(frame_bgr, orig_mask, stabilised, trans_mask)
-            return combined
+            return stabilised
 
         else:  # CenterROI
             from castle.core.data import Preprocess
@@ -396,8 +395,7 @@ def _get_preview_frame(
             except Exception:
                 return None
 
-            combined = _make_preview_image(frame_bgr, orig_mask, cropped_frame, cropped_mask)
-            return combined
+            return cropped_frame
 
     except Exception as exc:
         logger.warning("Preview frame generation failed: %s", exc)
@@ -585,9 +583,8 @@ def create_preprocess_ui(
             interactive=True,
         )
 
-        with gr.Row():
-            # ---- KIT params column ----------------------------------------
-            with gr.Column(visible=True) as ui["kit_params_col"]:
+        # ---- KIT params -------------------------------------------------------
+        with gr.Column(visible=True) as ui["kit_params_col"]:
                 gr.Markdown("### KIT Parameters")
                 with gr.Row():
                     ui["anterior_roi_id"] = gr.Dropdown(
@@ -634,23 +631,23 @@ def create_preprocess_ui(
                         info="Match the model you will use for extraction.",
                     )
 
-            # ---- Center ROI + Crop params column -------------------------
-            with gr.Column(visible=False) as ui["center_roi_params_col"]:
-                gr.Markdown("### Center ROI + Crop Parameters")
-                ui["center_roi_id"] = gr.Number(
-                    label="ROI ID",
-                    value=1, precision=0, minimum=1, interactive=True,
-                    info="ROI to centre on.",
+        # ---- Center ROI + Crop params -----------------------------------------
+        with gr.Column(visible=False) as ui["center_roi_params_col"]:
+            gr.Markdown("### Center ROI + Crop Parameters")
+            ui["center_roi_id"] = gr.Number(
+                label="ROI ID",
+                value=1, precision=0, minimum=1, interactive=True,
+                info="ROI to centre on.",
+            )
+            with gr.Row():
+                ui["crop_width"] = gr.Number(
+                    label="Crop width (px)",
+                    value=300, precision=0, interactive=True,
                 )
-                with gr.Row():
-                    ui["crop_width"] = gr.Number(
-                        label="Crop width (px)",
-                        value=300, precision=0, interactive=True,
-                    )
-                    ui["crop_height"] = gr.Number(
-                        label="Crop height (px)",
-                        value=300, precision=0, interactive=True,
-                    )
+                ui["crop_height"] = gr.Number(
+                    label="Crop height (px)",
+                    value=300, precision=0, interactive=True,
+                )
 
         # -- Session name preview ------------------------------------------
         ui["session_name_display"] = gr.Textbox(
@@ -673,7 +670,7 @@ def create_preprocess_ui(
 
             with gr.Column(scale=2):
                 ui["preview_image"] = gr.Image(
-                    label="Preview: Original | Processed",
+                    label="Preview",
                     interactive=False,
                 )
 

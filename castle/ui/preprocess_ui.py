@@ -345,6 +345,16 @@ def _check_crop_bounds(
     return None
 
 
+def _apply_mask_overlay(frame, mask, color=(0, 200, 0), alpha=0.35):
+    """Return frame with a semi-transparent colour overlay where mask > 0."""
+    import cv2
+    import numpy as np
+    out = frame.copy()
+    coloured = np.zeros_like(frame)
+    coloured[mask > 0] = color
+    return cv2.addWeighted(out, 1 - alpha, coloured, alpha, 0)
+
+
 def _get_preview_frame(
     storage_path: str,
     project_name: str,
@@ -411,7 +421,7 @@ def _get_preview_frame(
                 gr.Warning(f"ROI {body_roi_id} not found in frame {target}.")
                 return None
             stabilised, trans_mask = result
-            return stabilised
+            return _apply_mask_overlay(stabilised, trans_mask)
 
         else:  # CenterROI
             from castle.core.data import Preprocess
@@ -441,7 +451,7 @@ def _get_preview_frame(
             except Exception:
                 return None
 
-            return cropped_frame
+            return _apply_mask_overlay(cropped_frame, cropped_mask)
 
     except Exception as exc:
         logger.warning("Preview frame generation failed: %s", exc)

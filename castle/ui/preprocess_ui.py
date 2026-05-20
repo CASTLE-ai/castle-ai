@@ -706,6 +706,9 @@ def create_preprocess_ui(
                     value=300, precision=0, interactive=True,
                 )
 
+        # -- Crop resolution warning (real-time) ---------------------------
+        ui["crop_warning"] = gr.Markdown("", visible=False)
+
         # -- Session name preview ------------------------------------------
         ui["session_name_display"] = gr.Textbox(
             label="Session name (auto-computed)",
@@ -831,6 +834,31 @@ def create_preprocess_ui(
         outputs=[ui["kit_params_col"], ui["center_roi_params_col"]],
         show_progress=False,
     )
+
+    # Real-time crop resolution validation
+    def _validate_crop_live(sp, pn, vname, method, min_crop, crop_w, crop_h):
+        if not sp or not pn or not vname or vname == "All":
+            return gr.update(visible=False)
+        from pathlib import Path
+        from castle.core.project import get_project_config
+        project_path, _ = get_project_config(sp, pn)
+        src = str(Path(project_path) / "sources" / vname)
+        err = _check_crop_bounds(method, src, min_crop, crop_w, crop_h)
+        if err:
+            return gr.update(value=f"⚠️ {err}", visible=True)
+        return gr.update(value="", visible=False)
+
+    _crop_validate_inputs = [
+        storage_path, project_name, ui["video_drop"], ui["method_radio"],
+        ui["min_crop"], ui["crop_width"], ui["crop_height"],
+    ]
+    for _trigger in [ui["min_crop"], ui["crop_width"], ui["crop_height"]]:
+        _trigger.change(
+            fn=_validate_crop_live,
+            inputs=_crop_validate_inputs,
+            outputs=[ui["crop_warning"]],
+            show_progress=False,
+        )
 
     # Auto-update session name display whenever any param changes
     for trigger in _session_name_inputs:

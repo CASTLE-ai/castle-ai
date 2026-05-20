@@ -592,31 +592,28 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
         queue=False,
     )
-    (
-        _extract_click
-        .then(
-            fn=ui_extract_roi_latent,
-            inputs=[
-                storage_path, project_name, ui['select_model'], ui['select_roi_id'],
-                ui['select_video'], ui['batch_size'], ui['skip_existing'],
-                ui['remove_background_switch'],
-                ui['eliminate_rotation_asymmetry'], ui['era_roi_id'],
-                ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],
-                ui['session_selector'],
-            ],
-            outputs=ui['latent_file_list'],
-        )
-        .then(
-            fn=_after_extract,
-            outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
-            queue=False,
-        )
+    _extract_gen = _extract_click.then(
+        fn=ui_extract_roi_latent,
+        inputs=[
+            storage_path, project_name, ui['select_model'], ui['select_roi_id'],
+            ui['select_video'], ui['batch_size'], ui['skip_existing'],
+            ui['remove_background_switch'],
+            ui['eliminate_rotation_asymmetry'], ui['era_roi_id'],
+            ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],
+            ui['session_selector'],
+        ],
+        outputs=ui['latent_file_list'],
+    )
+    _extract_gen.then(
+        fn=_after_extract,
+        outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
+        queue=False,
     )
 
     ui['extract_cancel_btn'].click(
         fn=_after_extract,
         outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
-        cancels=[_extract_click],
+        cancels=[_extract_gen],
         queue=False,
     )
 

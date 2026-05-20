@@ -839,20 +839,20 @@ def create_preprocess_ui(
         outputs=[ui["run_btn"], ui["run_cancel_btn"]],
         queue=False,
     )
+    _run_gen = _run_click.then(
+        fn=_run_preprocess,
+        inputs=[
+            storage_path, project_name, ui["video_drop"],
+            ui["method_radio"],
+            ui["anterior_roi_id"], ui["posterior_roi_id"],
+            ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],
+            ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
+            ui["skip_existing"],
+        ],
+        outputs=[ui["log_text"]],
+    )
     (
-        _run_click
-        .then(
-            fn=_run_preprocess,
-            inputs=[
-                storage_path, project_name, ui["video_drop"],
-                ui["method_radio"],
-                ui["anterior_roi_id"], ui["posterior_roi_id"],
-                ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],
-                ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
-                ui["skip_existing"],
-            ],
-            outputs=[ui["log_text"]],
-        )
+        _run_gen
         .then(
             fn=_list_sessions_dropdown,
             inputs=[storage_path, project_name],
@@ -868,7 +868,7 @@ def create_preprocess_ui(
     ui["run_cancel_btn"].click(
         fn=_after_preprocess,
         outputs=[ui["run_btn"], ui["run_cancel_btn"]],
-        cancels=[_run_click],
+        cancels=[_run_gen],
         queue=False,
     )
 

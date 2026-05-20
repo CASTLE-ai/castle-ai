@@ -389,24 +389,24 @@ def create_export_ui(storage_path, project_name):
         outputs=[ui["export_btn"], ui["export_cancel_btn"]],
         queue=False,
     )
-    (
-        _export_click
-        .then(
-            fn=on_export,
-            inputs=_export_inputs,
-            outputs=[ui["status"], ui["download"]],
-        )
-        .then(
-            fn=_after_export,
-            outputs=[ui["export_btn"], ui["export_cancel_btn"]],
-            queue=False,
-        )
+    # Save the generator event so the cancel button can cancel it.
+    # Gradio 6.x requires the cancelled event to have queue=True;
+    # the generator .then() has queue=True by default.
+    _export_gen = _export_click.then(
+        fn=on_export,
+        inputs=_export_inputs,
+        outputs=[ui["status"], ui["download"]],
+    )
+    _export_gen.then(
+        fn=_after_export,
+        outputs=[ui["export_btn"], ui["export_cancel_btn"]],
+        queue=False,
     )
 
     ui["export_cancel_btn"].click(
         fn=_after_export,
         outputs=[ui["export_btn"], ui["export_cancel_btn"]],
-        cancels=[_export_click],
+        cancels=[_export_gen],
         queue=False,
     )
 

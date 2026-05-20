@@ -53,7 +53,7 @@ def _on_session_selected(
     """Return (session_status_text, era_kit_warning_update) for the selected session."""
     if not session_display or "(None" in session_display:
         return (
-            "ℹ️ Using raw source video + tracking mask.",
+            gr.update(value="", visible=False),
             gr.update(visible=False, value=""),
         )
 
@@ -177,7 +177,7 @@ def init_select_video_list(storage_path, project_name):
                 pass
 
             updates[0] = gr.update(choices=session_choices, value=session_choices[0], visible=True)  # session_selector
-            updates[1] = gr.update(value="ℹ️ Using raw source video + tracking mask.", visible=True)  # session_status
+            updates[1] = gr.update(value="", visible=False)  # session_status — hidden when using raw source
             updates[2] = gr.update(visible=True)   # select_model
             updates[3] = gr.update(visible=True)   # select_roi_id
             updates[4] = gr.update(visible=True)   # batch_size
@@ -417,12 +417,8 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         choices=["(None — use raw source)"],
         value="(None — use raw source)",
         visible=False,
-        info="Select a Pre-process session to use its stabilised video and aligned masks for extraction.",
     )
-    ui["session_status"] = gr.Markdown(
-        value="ℹ️ Using raw source video + tracking mask.",
-        visible=False,
-    )
+    ui["session_status"] = gr.Markdown(value="", visible=False)
 
     with gr.Row():
         with gr.Column(scale=3):
@@ -432,14 +428,12 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                     choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
                     value="dinov3_vitb16",
                     visible=False,
-                    info="DINOv2/v3 backbone used for feature extraction.",
                     scale=2,
                 )
                 ui['select_roi_id'] = gr.Textbox(
                     label="ROI ID",
                     value="1",
                     visible=False,
-                    info="Region of Interest ID to extract features from.",
                     scale=1,
                 )
             with gr.Row():
@@ -447,7 +441,6 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                     label="Batch Size",
                     value="32",
                     visible=False,
-                    info="Frames processed per GPU batch. Use 'Auto Batch Size' to find a safe value.",
                     scale=2,
                 )
                 ui['auto_batch_btn'] = gr.Button("Auto Batch Size", size="sm", visible=False, scale=1)
@@ -456,7 +449,6 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                     label="Target Video",
                     value=None,
                     visible=False,
-                    info="Select a specific video or 'All' to process the entire project.",
                     scale=2,
                 )
                 ui['video_count'] = gr.Number(
@@ -471,13 +463,11 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                     label="Skip existing files",
                     value=True,
                     visible=False,
-                    info="Skip videos that already have a latent file saved to disk.",
                 )
                 ui['remove_background_switch'] = gr.Checkbox(
                     label="Remove Background",
                     value=False,
                     visible=False,
-                    info="Zero out pixels outside the ROI mask before extracting features (on-the-fly).",
                 )
 
         with gr.Column(scale=2):

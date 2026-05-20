@@ -704,7 +704,9 @@ def create_preprocess_ui(
         # -- Run -----------------------------------------------------------
         gr.Markdown("---")
         ui["skip_existing"] = gr.Checkbox(label="Skip existing", value=True)
-        ui["run_btn"] = gr.Button("▶ Run Pre-process", variant="primary")
+        with gr.Row():
+            ui["run_btn"] = gr.Button("▶ Run Pre-process", variant="primary")
+            ui["run_cancel_btn"] = gr.Button("Cancel", interactive=False)
         ui["log_text"] = gr.Textbox(
             label="Log",
             value="",
@@ -825,22 +827,49 @@ def create_preprocess_ui(
         queue=False,
     )
 
-    # Run
-    ui["run_btn"].click(
-        fn=_run_preprocess,
-        inputs=[
-            storage_path, project_name, ui["video_drop"],
-            ui["method_radio"],
-            ui["anterior_roi_id"], ui["posterior_roi_id"],
-            ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],
-            ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
-            ui["skip_existing"],
-        ],
-        outputs=[ui["log_text"]],
-    ).then(
-        fn=_list_sessions_dropdown,
-        inputs=[storage_path, project_name],
-        outputs=[ui["sessions_dropdown"]],
+    # Run Pre-process — disable during run, enable Cancel
+    def _before_preprocess():
+        return gr.update(interactive=False), gr.update(interactive=True)
+
+    def _after_preprocess():
+        return gr.update(interactive=True), gr.update(interactive=False)
+
+    _run_click = ui["run_btn"].click(
+        fn=_before_preprocess,
+        outputs=[ui["run_btn"], ui["run_cancel_btn"]],
+        queue=False,
+    )
+    (
+        _run_click
+        .then(
+            fn=_run_preprocess,
+            inputs=[
+                storage_path, project_name, ui["video_drop"],
+                ui["method_radio"],
+                ui["anterior_roi_id"], ui["posterior_roi_id"],
+                ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],
+                ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
+                ui["skip_existing"],
+            ],
+            outputs=[ui["log_text"]],
+        )
+        .then(
+            fn=_list_sessions_dropdown,
+            inputs=[storage_path, project_name],
+            outputs=[ui["sessions_dropdown"]],
+        )
+        .then(
+            fn=_after_preprocess,
+            outputs=[ui["run_btn"], ui["run_cancel_btn"]],
+            queue=False,
+        )
+    )
+
+    ui["run_cancel_btn"].click(
+        fn=_after_preprocess,
+        outputs=[ui["run_btn"], ui["run_cancel_btn"]],
+        cancels=[_run_click],
+        queue=False,
     )
 
     return ui

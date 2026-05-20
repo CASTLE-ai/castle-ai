@@ -326,6 +326,7 @@ def create_export_ui(storage_path, project_name):
 
         with gr.Row():
             ui["export_btn"] = gr.Button("📦 Export", variant="primary", scale=2)
+            ui["export_cancel_btn"] = gr.Button("Cancel", interactive=False, scale=1)
 
         ui["status"] = gr.Markdown("**Status:** Ready")
         ui["download"] = gr.File(label="⬇️ Download ZIP", visible=False)
@@ -377,10 +378,36 @@ def create_export_ui(storage_path, project_name):
 
     # Stream on_export's yields directly so users see per-file progress.
     # Requires app.queue() to be enabled at module scope (see app.py).
-    ui["export_btn"].click(
-        fn=on_export,
-        inputs=_export_inputs,
-        outputs=[ui["status"], ui["download"]],
+    def _before_export():
+        return gr.update(interactive=False), gr.update(interactive=True)
+
+    def _after_export():
+        return gr.update(interactive=True), gr.update(interactive=False)
+
+    _export_click = ui["export_btn"].click(
+        fn=_before_export,
+        outputs=[ui["export_btn"], ui["export_cancel_btn"]],
+        queue=False,
+    )
+    (
+        _export_click
+        .then(
+            fn=on_export,
+            inputs=_export_inputs,
+            outputs=[ui["status"], ui["download"]],
+        )
+        .then(
+            fn=_after_export,
+            outputs=[ui["export_btn"], ui["export_cancel_btn"]],
+            queue=False,
+        )
+    )
+
+    ui["export_cancel_btn"].click(
+        fn=_after_export,
+        outputs=[ui["export_btn"], ui["export_cancel_btn"]],
+        cancels=[_export_click],
+        queue=False,
     )
 
     ui["nwb_export_btn"].click(

@@ -147,6 +147,7 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False),  # 11 latent_file_list
         gr.update(visible=False),  # 12 auto_batch_btn
         gr.update(value="", visible=False),  # 13 mem_warning
+        gr.update(visible=False, interactive=False),  # 14 extract_cancel_btn
     ])
 
     if not storage_path or not project_name:
@@ -189,6 +190,7 @@ def init_select_video_list(storage_path, project_name):
             updates[11] = gr.update(visible=True)  # latent_file_list
             updates[12] = gr.update(visible=True)  # auto_batch_btn
             # mem_warning (13) stays hidden until reactive check triggers
+            updates[14] = gr.update(visible=True, interactive=False)  # extract_cancel_btn
         else:
             gr.Warning(
                 "No videos found in this project. Please add videos in the "
@@ -482,7 +484,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             with gr.Accordion("Advanced Extraction Options", open=False, visible=False) as adv_accordion:
                 ui['eliminate_rotation_asymmetry'] = gr.Checkbox(
                     label="Eliminate Rotation Asymmetry",
-                    value=True,
+                    value=False,
                     info=(
                         "Extract 7-angle rotation latent after the main extraction. "
                         "Averages rotation to reduce orientation bias in the latent space."
@@ -517,6 +519,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     ui['mem_warning'] = gr.HTML(value="", visible=False)
     with gr.Row():
         ui['extract_btn'] = gr.Button("Extract", visible=False, variant="primary")
+        ui['extract_cancel_btn'] = gr.Button("Cancel", visible=False, interactive=False)
         # TODO(2-D): implement extract_crop_video handler before re-enabling this
         # button.  Kept declared and permanently invisible so any external
         # reference (CLI, MCP) does not break.  Removed from
@@ -550,6 +553,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['latent_file_list'],          # 11
         ui['auto_batch_btn'],            # 12
         ui['mem_warning'],               # 13
+        ui['extract_cancel_btn'],        # 14
     ]
 
     # ------------------------------------------------------------------
@@ -576,18 +580,44 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         outputs=[ui["era_kit_warning"]],
     )
 
-    # Extract button
-    ui['extract_btn'].click(
-        ui_extract_roi_latent,
-        inputs=[
-            storage_path, project_name, ui['select_model'], ui['select_roi_id'],
-            ui['select_video'], ui['batch_size'], ui['skip_existing'],
-            ui['remove_background_switch'],
-            ui['eliminate_rotation_asymmetry'], ui['era_roi_id'],
-            ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],
-            ui['session_selector'],
-        ],
-        outputs=ui['latent_file_list'],
+    # Extract button — disable during run, enable Cancel
+    def _before_extract():
+        return gr.update(interactive=False), gr.update(interactive=True)
+
+    def _after_extract():
+        return gr.update(interactive=True), gr.update(interactive=False)
+
+    _extract_click = ui['extract_btn'].click(
+        fn=_before_extract,
+        outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
+        queue=False,
+    )
+    (
+        _extract_click
+        .then(
+            fn=ui_extract_roi_latent,
+            inputs=[
+                storage_path, project_name, ui['select_model'], ui['select_roi_id'],
+                ui['select_video'], ui['batch_size'], ui['skip_existing'],
+                ui['remove_background_switch'],
+                ui['eliminate_rotation_asymmetry'], ui['era_roi_id'],
+                ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],
+                ui['session_selector'],
+            ],
+            outputs=ui['latent_file_list'],
+        )
+        .then(
+            fn=_after_extract,
+            outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
+            queue=False,
+        )
+    )
+
+    ui['extract_cancel_btn'].click(
+        fn=_after_extract,
+        outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
+        cancels=[_extract_click],
+        queue=False,
     )
 
     # Memory guard

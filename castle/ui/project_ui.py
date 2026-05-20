@@ -222,22 +222,32 @@ def create_project_ui(OS_SYS, root=''):
     
     # State variables
     ui['project_name'] = gr.State(None)
-    
-    # Count UI elements for bulk updates
-    object_count = gr.State(len(ui))
+
+    # Only genuinely interactive widgets accept gr.update(interactive=...).
+    # Markdown and State raise TypeError if passed that kwarg (Gradio 6.x).
+    _lockable = [
+        ui['storage_path'],
+        ui['project_drop'],
+        ui['project_open_btn'],
+        ui['project_delete_btn'],
+        ui['project_delete_cancel_btn'],
+        ui['new_project_name'],
+        ui['new_project_create_btn'],
+    ]
+    object_count = gr.State(len(_lockable))
     project_btn_list = [ui['project_open_btn'], ui['project_delete_btn']]
     project_btn_count = gr.State(len(project_btn_list))
-    
+
     # Event handlers - Lock UI when creating/opening projects
     ui['new_project_create_btn'].click(
         fn=lock_project_page,
         inputs=object_count,
-        outputs=[v for k, v in ui.items()]
+        outputs=_lockable,
     )
     ui['project_open_btn'].click(
         fn=lock_project_page,
         inputs=object_count,
-        outputs=[v for k, v in ui.items()]
+        outputs=_lockable,
     )
     
     # Enable buttons when project is selected

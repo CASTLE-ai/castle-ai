@@ -366,7 +366,7 @@ def _get_preview_frame(
                 return None
             stabilised, trans_mask = result
             combined = _make_preview_image(frame_bgr, orig_mask, stabilised, trans_mask)
-            return combined[..., ::-1]  # BGR → RGB for Gradio
+            return combined
 
         else:  # CenterROI
             from castle.core.data import Preprocess
@@ -397,7 +397,7 @@ def _get_preview_frame(
                 return None
 
             combined = _make_preview_image(frame_bgr, orig_mask, cropped_frame, cropped_mask)
-            return combined[..., ::-1]
+            return combined
 
     except Exception as exc:
         logger.warning("Preview frame generation failed: %s", exc)
@@ -645,11 +645,11 @@ def create_preprocess_ui(
                 with gr.Row():
                     ui["crop_width"] = gr.Number(
                         label="Crop width (px)",
-                        value=300, precision=0, minimum=32, interactive=True,
+                        value=300, precision=0, interactive=True,
                     )
                     ui["crop_height"] = gr.Number(
                         label="Crop height (px)",
-                        value=300, precision=0, minimum=32, interactive=True,
+                        value=300, precision=0, interactive=True,
                     )
 
         # -- Session name preview ------------------------------------------

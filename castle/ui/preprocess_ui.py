@@ -775,6 +775,7 @@ def create_preprocess_ui(
         fn=_toggle_method_params,
         inputs=[ui["method_radio"]],
         outputs=[ui["kit_params_col"], ui["center_roi_params_col"]],
+        show_progress=False,
     )
 
     # Auto-update session name display whenever any param changes

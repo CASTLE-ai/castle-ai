@@ -751,6 +751,7 @@ def create_preprocess_ui(
             ui["wrapper"], ui["video_drop"], ui["sessions_dropdown"],
             ui["anterior_roi_id"], ui["posterior_roi_id"],
         ],
+        show_progress=False,
     ).then(
         # After ROI dropdowns are filled, recompute session name display.
         fn=_compute_session_name,

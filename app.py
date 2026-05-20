@@ -4,6 +4,7 @@ import platform
 from argparse import ArgumentParser
 import gradio as gr
 from castle.ui import create_ui
+from castle.ui.main_ui import CASTLE_JS
 
 # System configuration
 OS_SYS = platform.uname().system
@@ -43,5 +44,6 @@ if __name__ == '__main__':
         server_name='0.0.0.0',
         share=COLAB_GPU or args.share,
         allowed_paths=allowed_paths if allowed_paths else None,
-        theme=gr.themes.Soft()
+        theme=gr.themes.Soft(),
+        js=CASTLE_JS,
     )

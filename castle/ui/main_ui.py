@@ -27,7 +27,7 @@ def toggle_tab_visibility(project_name, object_count):
     return [gr.update(visible=is_visible) for _ in range(object_count)]
 
 
-_CASTLE_JS = """
+CASTLE_JS = """
 function castleTreeClick(el, name) {
     document.querySelectorAll('.cct-node').forEach(function(n) {
         n.classList.remove('cct-selected');
@@ -52,7 +52,7 @@ function castleTreeClick(el, name) {
 
 def create_ui(OS_SYS, root=''):
     """Create the main Gradio UI with multiple tabs."""
-    with gr.Blocks(js=_CASTLE_JS) as app:
+    with gr.Blocks() as app:
 
         # Project configuration tab
         with gr.Tab(label='0. Project'):

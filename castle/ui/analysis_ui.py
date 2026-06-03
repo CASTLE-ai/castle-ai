@@ -73,11 +73,23 @@ def _draw_label_at(
 
 
 def _populate_video_choices(analysis_data) -> dict:
-    """Return gr.update for the video-selector dropdown."""
+    """Return gr.update for the annotated-video selector dropdown."""
     if analysis_data is None or not getattr(analysis_data, 'videos_meta', None):
         return gr.update(choices=["All Videos"], value="All Videos")
     basenames = [os.path.basename(v) for _, v in analysis_data.videos_meta]
     return gr.update(choices=["All Videos"] + basenames, value="All Videos")
+
+
+def _populate_etho_videos(analysis_data) -> dict:
+    """Per-subject ethogram selector: list the videos (no 'All'), default first.
+
+    The ethogram/bout stats are computed one video at a time so durations use
+    each video's own fps and no bout is merged across a video boundary.
+    """
+    if analysis_data is None or not getattr(analysis_data, 'videos_meta', None):
+        return gr.update(choices=[], value=None)
+    basenames = [os.path.basename(v) for _, v in analysis_data.videos_meta]
+    return gr.update(choices=basenames, value=basenames[0] if basenames else None)
 
 
 def generate_ethogram_video(
@@ -384,8 +396,13 @@ def export_ethogram_csv_handler(storage_path: str, project_name: str, session_id
     )
 
 
-def generate_ethogram(annotator_data):
-    """Compute ethogram from AnnotatorData and return (heatmap fig, stats df, raster fig)."""
+def generate_ethogram(annotator_data, selected_video):
+    """Compute a per-video ethogram; return (heatmap fig, stats df, raster fig).
+
+    Per-subject: computes for ``selected_video`` only, from that video's
+    per-frame time_series and its own fps — no cross-video bout merging and no
+    mixed-fps duration errors.
+    """
     import os
     import matplotlib
     matplotlib.use("Agg")
@@ -394,9 +411,9 @@ def generate_ethogram(annotator_data):
 
     if annotator_data is None:
         return None, None, None
-
-    cluster_labels = annotator_data.cluster
-    fps = annotator_data.fps or 30.0
+    if not selected_video:
+        gr.Warning("Please select a video to analyse.")
+        return None, None, None
 
     # Bug 11 fix: load annotations and format cluster names as
     # "human_label — bm_name" when a human annotation exists, otherwise
@@ -424,13 +441,22 @@ def generate_ethogram(annotator_data):
         for cid, meta in annotator_data.cluster_meta.items()
     }
 
-    # Compute ethogram via service layer
-    from castle.service.ethogram_service import compute_ethogram_from_data
+    # Compute per-video ethogram via the service layer (own fps, no cross-video
+    # bouts/transitions). Reads the selected video's per-frame time_series.
+    from castle.service.ethogram_service import compute_video_ethogram
 
     try:
-        ethogram = compute_ethogram_from_data(cluster_labels, fps=fps, cluster_names=cluster_names)
+        ethogram = compute_video_ethogram(
+            annotator_data.project_path, selected_video, cluster_names=cluster_names,
+        )
+    except FileNotFoundError as exc:
+        gr.Warning(
+            f"No clustering time-series found for {selected_video}. Make sure clustering "
+            f"has been submitted for this video. Details: {exc}"
+        )
+        return None, None, None
     except Exception as exc:
-        logger.exception("compute_ethogram failed")
+        logger.exception("compute_video_ethogram failed")
         gr.Warning(
             "Ethogram computation failed. Make sure clusters are labeled before generating "
             f"the ethogram (Step 4b). Details: {exc}"
@@ -573,12 +599,19 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
         with gr.Accordion("📊 Section A: Ethogram", open=True):
             gr.Markdown(
                 "Analyse behavioral sequences: transition probabilities, "
-                "bout durations, and temporal structure."
+                "bout durations, and temporal structure. **One ethogram per video** "
+                "(per subject) — durations use each video's own fps. "
+                "_Export CSV_ writes every video (long-format with a `video` column)."
+            )
+
+            ui["etho_video_selector"] = gr.Dropdown(
+                label="Video (one ethogram per video / subject)",
+                choices=[], value=None, interactive=True,
             )
 
             with gr.Row():
                 ui["ethogram_btn"] = gr.Button("▶ Generate Ethogram", variant="primary", scale=3)
-                ui["export_csv_btn"] = gr.Button("📥 Export CSV", variant="secondary", scale=1)
+                ui["export_csv_btn"] = gr.Button("📥 Export CSV (all videos)", variant="secondary", scale=1)
 
             with gr.Row():
                 with gr.Column(scale=1):
@@ -678,12 +711,16 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
         fn=_populate_video_choices,
         inputs=[analysis_data],
         outputs=[ui["ethogram_video_selector"]],
+    ).then(
+        fn=_populate_etho_videos,
+        inputs=[analysis_data],
+        outputs=[ui["etho_video_selector"]],
     )
 
-    # Generate Ethogram
+    # Generate Ethogram (per selected video)
     ui["ethogram_btn"].click(
         fn=generate_ethogram,
-        inputs=[analysis_data],
+        inputs=[analysis_data, ui["etho_video_selector"]],
         outputs=[ui["transition_plot"], ui["bout_stats_df"], ui["raster_plot"]],
     )
 

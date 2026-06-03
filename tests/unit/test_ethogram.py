@@ -297,16 +297,19 @@ class TestExportCSV:
         result = export_ethogram_csv(str(project_dir), str(output_dir))
         assert os.path.isdir(result)
 
-        expected_files = ["bout_stats.csv", "transition_matrix.csv",
-                         "transition_counts.csv", "bouts.csv"]
+        # Per-video export: combined long-format stats/bouts + per-video matrices.
+        expected_files = ["bout_stats.csv", "bouts.csv",
+                         "transition_matrix_video1.csv", "transition_counts_video1.csv"]
         for fname in expected_files:
             assert (output_dir / fname).exists(), f"Missing {fname}"
 
-        # Verify bout_stats.csv has headers and rows
+        # bout_stats.csv is long-format with a leading `video` column.
         with open(output_dir / "bout_stats.csv") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-            assert len(rows) == 2  # walk and rest
+            assert "video" in rows[0]
+            assert all(r["video"] == "video1" for r in rows)
+            assert len(rows) == 2  # walk and rest (single video)
             names_found = {r["cluster_name"] for r in rows}
             assert "walk" in names_found
             assert "rest" in names_found
@@ -333,7 +336,7 @@ class TestExportCSV:
         from castle.service.ethogram_service import export_ethogram_csv
         export_ethogram_csv(str(project_dir), str(output_dir))
 
-        with open(output_dir / "transition_matrix.csv") as f:
+        with open(output_dir / "transition_matrix_v.csv") as f:
             reader = csv.reader(f)
             header = next(reader)
             assert header[1:] == ["A", "B"]

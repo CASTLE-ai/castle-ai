@@ -76,6 +76,117 @@ def _resolve_project_path(project_path: str) -> str:
     return os.path.abspath(project_path)
 
 
+# ------------------------------------------------------------------ #
+# Per-video helpers (mixed-fps / per-subject ethograms)
+#
+# A project may hold several videos at different frame rates (e.g. one
+# animal per video). Pooling every video's frames into a single sequence
+# and applying one fps (a) scales durations wrongly for every video that
+# isn't at that fps and (b) merges bouts across video boundaries (a run at
+# the end of video A + the start of video B becomes one spurious bout).
+# These helpers compute one ethogram per video, each from that video's own
+# per-frame ``time_series_{basename}.csv`` and its own fps.
+# ------------------------------------------------------------------ #
+
+
+def _read_behavior_csv(ts_path: str) -> np.ndarray:
+    """Read a per-frame ``behavior`` column from a time_series CSV."""
+    labels = []
+    with open(ts_path, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            labels.append(int(row["behavior"]))
+    return np.array(labels, dtype=np.int32)
+
+
+def _list_video_time_series(project_path: str):
+    """Yield ``(video_basename, ts_path)`` for each per-video time_series CSV."""
+    cluster_dir = os.path.join(project_path, "cluster")
+    if not os.path.isdir(cluster_dir):
+        return
+    for fname in sorted(os.listdir(cluster_dir)):
+        if fname.startswith("time_series_") and fname.endswith(".csv"):
+            basename = fname[len("time_series_"):-len(".csv")]
+            yield basename, os.path.join(cluster_dir, fname)
+
+
+def _video_fps(project_path: str, video_name: str, default: float = 30.0) -> float:
+    """Read a single video's fps from ``sources/``.
+
+    ``video_name`` may be a full filename or a bare basename (the time_series
+    files only carry the basename); in the latter case we glob ``sources`` for
+    a matching source file. Falls back to ``default`` if unreadable.
+    """
+    import glob
+
+    from castle.utils.video_io import VideoReader
+
+    sources = os.path.join(project_path, "sources")
+    direct = os.path.join(sources, video_name)
+    if os.path.exists(direct):
+        candidates = [direct]
+    else:
+        base = os.path.splitext(os.path.basename(video_name))[0]
+        candidates = sorted(glob.glob(os.path.join(sources, base + ".*")))
+    for path in candidates:
+        try:
+            with VideoReader(path) as vr:
+                fps = float(vr.fps)
+            if fps > 0:
+                return fps
+        except Exception as exc:  # noqa: BLE001 — fps probe must never block analysis
+            logger.warning("Could not read fps from %s: %s", path, exc)
+    return default
+
+
+def compute_video_ethogram(
+    project_path: str,
+    video_name: str,
+    cluster_names: dict = None,
+    fps: float = None,
+    smooth: bool = False,
+    smooth_window: int = 5,
+    min_bout_frames: int = 3,
+):
+    """Compute an :class:`~castle.core.ethogram.Ethogram` for ONE video.
+
+    Reads the video's per-frame ``time_series_{basename}.csv`` and uses that
+    video's own fps, so bout durations are correct in mixed-fps projects and no
+    bout is merged across a video boundary.
+
+    Args:
+        project_path: Project directory (``storage/project_name``).
+        video_name: Video filename or basename (matched against the
+            ``time_series_{basename}.csv`` files).
+        cluster_names: Optional ``{cluster_id: name}`` display mapping.
+        fps: Override fps; if None, read the video's own fps.
+        smooth / smooth_window / min_bout_frames: optional temporal smoothing.
+
+    Raises:
+        FileNotFoundError: No time_series CSV for this video.
+    """
+    from castle.core.ethogram import compute_ethogram
+
+    project_path = _resolve_project_path(project_path)
+    basename = os.path.splitext(os.path.basename(video_name))[0]
+    ts_path = os.path.join(project_path, "cluster", f"time_series_{basename}.csv")
+    if not os.path.exists(ts_path):
+        raise FileNotFoundError(
+            f"No time_series CSV for video {video_name!r} at {ts_path}. "
+            "Run clustering and submit first."
+        )
+
+    labels = _read_behavior_csv(ts_path)
+    if smooth:
+        from castle.core.temporal_smooth import smooth_labels
+        labels = smooth_labels(
+            labels, method="both", window=smooth_window, min_bout_frames=min_bout_frames,
+        )
+
+    effective_fps = fps if fps is not None else _video_fps(project_path, video_name)
+    return compute_ethogram(labels, fps=effective_fps, cluster_names=cluster_names or {})
+
+
 def _ethogram_to_dict(ethogram) -> dict:
     """Serialise an :class:`Ethogram` to a JSON-safe dict."""
     tm = ethogram.transition_matrix
@@ -249,17 +360,21 @@ def export_ethogram_csv(
     output_path: str,
     session_id: str = None,
 ) -> str:
-    """Export ethogram data to CSV files.
+    """Export per-video ethogram data to CSV files.
 
-    Creates:
-      - ``bout_stats.csv``  — per-cluster summary statistics
-      - ``transition_matrix.csv`` — transition probability matrix
-      - ``transition_counts.csv`` — raw transition counts
-      - ``bouts.csv`` — every individual bout
+    One ethogram is computed per video (each from its own per-frame
+    ``time_series_{basename}.csv`` and its own fps), so durations are correct in
+    mixed-fps projects and no bout is merged across a video boundary. Creates:
 
-    Cluster names in all output files follow the same convention as the
-    Analysis page (Bug 11): ``"human_label — bm_name"`` when a human
-    annotation exists, otherwise just the BM clustering name.
+      - ``bout_stats.csv``  — per-cluster summary stats, long-format with a
+        leading ``video`` column (one row per video × cluster; ready for
+        per-subject group analysis)
+      - ``bouts.csv`` — every individual bout, long-format with a ``video`` column
+      - ``transition_matrix_{video}.csv`` — per-video transition probabilities
+      - ``transition_counts_{video}.csv`` — per-video raw transition counts
+
+    Cluster names follow the Analysis page convention (Bug 11):
+    ``"human_label — bm_name"`` when a human annotation exists, else the BM name.
 
     Args:
         project_path: Project directory path.
@@ -269,10 +384,8 @@ def export_ethogram_csv(
     Returns:
         Path to the output directory.
     """
-    from castle.core.ethogram import compute_ethogram
-
     project_path = _resolve_project_path(project_path)
-    data = _load_cluster_data(project_path)
+    data = _load_cluster_data(project_path)  # only for cluster_names from id.csv
 
     # Apply annotation labels when available (Bug 11)
     annotations: dict = {}
@@ -295,69 +408,84 @@ def export_ethogram_csv(
         for cid, name in data["cluster_names"].items()
     }
 
-    ethogram = compute_ethogram(data["labels"], fps=30.0, cluster_names=annotated_names)
+    videos = list(_list_video_time_series(project_path))
+    if not videos:
+        raise FileNotFoundError(
+            f"No time_series_*.csv files in {os.path.join(project_path, 'cluster')}. "
+            "Run clustering and submit first."
+        )
 
     os.makedirs(output_path, exist_ok=True)
 
-    # --- bout_stats.csv ---
-    stats_path = os.path.join(output_path, "bout_stats.csv")
-    fields = [
-        "cluster_id", "cluster_name", "n_bouts", "total_frames", "frequency",
+    # One ethogram per video (own fps, no cross-video bouts/transitions). bout_stats
+    # and bouts are written long-format with a `video` column (ready for per-subject
+    # group analysis); transition matrices are written per video.
+    stats_fields = [
+        "video", "cluster_id", "cluster_name", "n_bouts", "total_frames", "frequency",
         "mean_duration_s", "median_duration_s", "std_duration_s", "cv_duration",
         "min_duration_s", "max_duration_s", "mean_inter_bout_interval_s",
     ]
-    with open(stats_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for cid in sorted(ethogram.bout_stats.keys()):
-            bs = ethogram.bout_stats[cid]
-            writer.writerow({
-                "cluster_id": bs.cluster_id,
-                "cluster_name": bs.cluster_name,
-                "n_bouts": bs.n_bouts,
-                "total_frames": bs.total_frames,
-                "frequency": round(bs.frequency, 6),
-                "mean_duration_s": round(bs.mean_duration_s, 6),
-                "median_duration_s": round(bs.median_duration_s, 6),
-                "std_duration_s": round(bs.std_duration_s, 6),
-                "cv_duration": round(bs.cv_duration, 6),
-                "min_duration_s": round(bs.min_duration_s, 6),
-                "max_duration_s": round(bs.max_duration_s, 6),
-                "mean_inter_bout_interval_s": round(bs.mean_inter_bout_interval_s, 6),
-            })
+    bouts_fields = [
+        "video", "cluster_id", "cluster_name", "start_frame", "end_frame",
+        "duration_frames", "duration_seconds",
+    ]
 
-    # --- transition_matrix.csv ---
-    tm = ethogram.transition_matrix
-    tm_path = os.path.join(output_path, "transition_matrix.csv")
-    with open(tm_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([""] + tm.cluster_names)
-        for i, name in enumerate(tm.cluster_names):
-            writer.writerow([name] + [round(float(x), 6) for x in tm.matrix[i]])
-
-    # --- transition_counts.csv ---
-    tc_path = os.path.join(output_path, "transition_counts.csv")
-    with open(tc_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([""] + tm.cluster_names)
-        for i, name in enumerate(tm.cluster_names):
-            writer.writerow([name] + [int(x) for x in tm.counts[i]])
-
-    # --- bouts.csv ---
+    stats_path = os.path.join(output_path, "bout_stats.csv")
     bouts_path = os.path.join(output_path, "bouts.csv")
-    with open(bouts_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["cluster_id", "cluster_name", "start_frame", "end_frame",
-                         "duration_frames", "duration_seconds"])
-        for b in ethogram.bouts:
-            writer.writerow([
-                b.cluster_id,
-                ethogram.cluster_names.get(b.cluster_id, f"cluster_{b.cluster_id}"),
-                b.start_frame,
-                b.end_frame,
-                b.duration_frames,
-                round(b.duration_seconds, 6),
-            ])
+    with open(stats_path, "w", newline="") as sf, open(bouts_path, "w", newline="") as bf:
+        stats_writer = csv.DictWriter(sf, fieldnames=stats_fields)
+        stats_writer.writeheader()
+        bouts_writer = csv.writer(bf)
+        bouts_writer.writerow(bouts_fields)
 
-    logger.info("Exported ethogram CSV files to %s", output_path)
+        for basename, _ts_path in videos:
+            ethogram = compute_video_ethogram(
+                project_path, basename, cluster_names=annotated_names,
+            )
+
+            for cid in sorted(ethogram.bout_stats.keys()):
+                bs = ethogram.bout_stats[cid]
+                stats_writer.writerow({
+                    "video": basename,
+                    "cluster_id": bs.cluster_id,
+                    "cluster_name": bs.cluster_name,
+                    "n_bouts": bs.n_bouts,
+                    "total_frames": bs.total_frames,
+                    "frequency": round(bs.frequency, 6),
+                    "mean_duration_s": round(bs.mean_duration_s, 6),
+                    "median_duration_s": round(bs.median_duration_s, 6),
+                    "std_duration_s": round(bs.std_duration_s, 6),
+                    "cv_duration": round(bs.cv_duration, 6),
+                    "min_duration_s": round(bs.min_duration_s, 6),
+                    "max_duration_s": round(bs.max_duration_s, 6),
+                    "mean_inter_bout_interval_s": round(bs.mean_inter_bout_interval_s, 6),
+                })
+
+            for b in ethogram.bouts:
+                bouts_writer.writerow([
+                    basename,
+                    b.cluster_id,
+                    ethogram.cluster_names.get(b.cluster_id, f"cluster_{b.cluster_id}"),
+                    b.start_frame,
+                    b.end_frame,
+                    b.duration_frames,
+                    round(b.duration_seconds, 6),
+                ])
+
+            tm = ethogram.transition_matrix
+            tm_path = os.path.join(output_path, f"transition_matrix_{basename}.csv")
+            with open(tm_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([""] + tm.cluster_names)
+                for i, name in enumerate(tm.cluster_names):
+                    writer.writerow([name] + [round(float(x), 6) for x in tm.matrix[i]])
+
+            tc_path = os.path.join(output_path, f"transition_counts_{basename}.csv")
+            with open(tc_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([""] + tm.cluster_names)
+                for i, name in enumerate(tm.cluster_names):
+                    writer.writerow([name] + [int(x) for x in tm.counts[i]])
+
+    logger.info("Exported per-video ethogram CSV files to %s", output_path)
     return output_path

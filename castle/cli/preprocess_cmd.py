@@ -27,7 +27,9 @@ def preprocess(
     margin: int = typer.Option(75, "--margin", help="Spatial margin around HP residual (px)"),
     min_crop: int = typer.Option(300, "--min-crop", help="Minimum crop side length (px)"),
     output_size: int = typer.Option(
-        518, "--output-size", help="Output frame side length (px), 518 for DINOv2 ViT-B/14"
+        592,
+        "--output-size",
+        help="Output frame side length (px). 592 (=37x16) for the default DINOv3 ViT-B/16; 518 (=37x14) for DINOv2 ViT-B/14",
     ),
     preview_duration: float = typer.Option(
         10.0, "--preview-duration", help="Preview clip duration in seconds"
@@ -49,7 +51,7 @@ def preprocess(
     -------
     castle preprocess my_project \\
         --video animal.mp4 --body-roi 1 --head-roi 2 \\
-        --fc 0.25 --margin 75 --output-size 518
+        --fc 0.25 --margin 75 --output-size 592
     """
     if mode != "stabilized-camera":
         console.print(f"[red]Unknown mode: {mode}. Only 'stabilized-camera' is supported.[/red]")

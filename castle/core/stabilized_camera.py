@@ -20,9 +20,9 @@ crop_size = max(300, 2 × (dist + 75))   [px]
         ↓
 warpAffine: translate to x_c, rotate by θ_c − 90°
         ↓
-Resize → 518 × 518
+Resize → 592 × 592
         ↓
-DINOv2
+DINOv3
 """
 
 from __future__ import annotations
@@ -63,8 +63,9 @@ class StabilizedCamera:
     min_crop : int
         Minimum crop window side length (pixels). Default 300 px.
     output_size : int
-        Side length of the square output frame (pixels). Default 518 px
-        (= 37 × 14, optimal for DINOv2 ViT-B/14).
+        Side length of the square output frame (pixels). Default 592 px
+        (= 37 × 16, for the default DINOv3 ViT-B/16; use 518 = 37 × 14 for
+        DINOv2 ViT-B/14).
     """
 
     def __init__(
@@ -76,7 +77,7 @@ class StabilizedCamera:
         order: int = 2,
         margin: int = 75,
         min_crop: int = 300,
-        output_size: int = 518,
+        output_size: int = 592,
     ) -> None:
         self.positions = np.asarray(positions, dtype=np.float64)
         self.angles = np.asarray(angles, dtype=np.float64)

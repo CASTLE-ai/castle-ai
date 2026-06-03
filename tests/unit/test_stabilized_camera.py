@@ -184,7 +184,9 @@ class TestCropSize:
 class TestFrameGeneration:
     def test_output_shape(self, static_cam, synthetic_frame):
         out = static_cam.generate_frame(synthetic_frame, 0)
-        expected = static_cam._output_size if hasattr(static_cam, "_output_size") else 518
+        # The output frame must be square at the camera's configured output_size
+        # (the attribute is `output_size`, not `_output_size`).
+        expected = static_cam.output_size
         assert out.shape == (expected, expected, 3)
 
     def test_output_dtype(self, static_cam, synthetic_frame):

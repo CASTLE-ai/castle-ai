@@ -94,15 +94,32 @@ def _toggle_method_params(method: str) -> tuple:
     )
 
 
+def _session_name_md(raw: str) -> str:
+    """Render the auto-computed session name as Markdown.
+
+    Gradio renders a read-only ``gr.Textbox`` as ``<textarea readonly>``, which
+    WebKit paints with the text-fill colour — that can come out invisible
+    (white-on-white) in dark mode. Markdown has no such quirk, so the preview
+    uses it: a real name is shown as inline code (monospace, always legible via
+    ``--body-text-color``); placeholder / invalid states are shown in italics.
+    The original Textbox label is preserved as a bold heading.
+    """
+    label = "**Session name (auto-computed)**"
+    if not raw or raw.lstrip().startswith("("):
+        return f"{label}\n\n*{raw or '(fill in parameters to preview)'}*"
+    return f"{label}\n\n`{raw}`"
+
+
 def _compute_session_name(
     method: str,
     ant_roi: Any, post_roi: Any,
     fc: Any, order: Any, margin: Any, min_crop: Any, output_size: Any,
     center_roi_id: Any, crop_w: Any, crop_h: Any,
 ) -> str:
-    """Compute and display the session name that would be created with current params.
+    """Compute the session-name preview (as Markdown) for the current params.
 
-    ``method`` is the Radio value: ``"KIT"`` or ``"CenterROI"``.
+    ``method`` is the Radio value: ``"KIT"`` or ``"CenterROI"``. The return
+    value is a Markdown string for the ``session_name_display`` component.
     """
     try:
         from castle.core.preprocess_session import session_name_from_params, session_id_from_name
@@ -110,7 +127,7 @@ def _compute_session_name(
             # Don't fabricate a name from defaulted ROIs — mirror the run-path
             # validation so the preview reflects what will actually run.
             if not ant_roi or not post_roi:
-                return "(select Anterior + Posterior ROI IDs)"
+                return _session_name_md("(select Anterior + Posterior ROI IDs)")
             params = {
                 "anterior_roi_id": int(ant_roi),
                 "posterior_roi_id": int(post_roi),
@@ -122,7 +139,7 @@ def _compute_session_name(
             }
         else:
             if not center_roi_id:
-                return "(select Center ROI ID)"
+                return _session_name_md("(select Center ROI ID)")
             params = {
                 "roi_id": int(center_roi_id),
                 "crop_width": int(crop_w or 300),
@@ -130,9 +147,9 @@ def _compute_session_name(
             }
         name = session_name_from_params(method, params)
         sid = session_id_from_name(name)
-        return f"{name} [{sid}]"
+        return _session_name_md(f"{name} [{sid}]")
     except Exception as exc:
-        return f"(invalid params: {exc})"
+        return _session_name_md(f"(invalid params: {exc})")
 
 
 def _list_sessions_dropdown(storage_path: str, project_name: str) -> gr.update:
@@ -731,12 +748,12 @@ def create_preprocess_ui(
         ui["crop_warning"] = gr.Markdown("", visible=False)
 
         # -- Session name preview ------------------------------------------
-        ui["session_name_display"] = gr.Textbox(
-            label="Session name (auto-computed)",
-            value="",
-            interactive=False,
-            lines=1,
-            max_lines=1,
+        # Markdown (not a read-only Textbox): Gradio renders interactive=False
+        # Textboxes as <textarea readonly>, which WebKit can paint invisible
+        # (white-on-white) in dark mode. Markdown always uses --body-text-color.
+        ui["session_name_display"] = gr.Markdown(
+            value=_session_name_md(""),
+            elem_classes=["castle-session-name"],
         )
 
         # -- Video + Preview -----------------------------------------------

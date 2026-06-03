@@ -33,27 +33,49 @@ def read_label_to_gallery(
     return label_list, gallery_list
 
 
-def delete_file_if_exists(file_path):
-    """如果檔案存在則刪除"""
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        gr.Info(f"檔案 {file_path} 已刪除")
-    else:
-        gr.Info(f"檔案 {file_path} 不存在")
+_DELETE_IDLE = "Delete"
 
 
-def delete_selected(storage_path, project_name, label_list, index):
-    if index is None:
+def _armed_text(target: str) -> str:
+    return f"⚠️ Delete '{target}'? Click again to confirm"
+
+
+def _reset_delete_armed_state():
+    """Disarm a pending delete (e.g. when the gallery selection changes)."""
+    return gr.update(value=_DELETE_IDLE), None
+
+
+def delete_selected(storage_path, project_name, label_list, index, armed_index):
+    """Two-click delete: first click arms (button shows the target), second confirms.
+
+    Returns ``(label_list, gallery, delete_btn_update, new_armed_index)``.
+    """
+    if index is None or not label_list or index >= len(label_list):
         gr.Warning("No item selected. Please select a gallery item before deleting.")
-        return label_list, []
-    if index >= len(label_list):
-        return label_list, []
-    target_file = label_list[index]["index"] # this index is display name, not index
+        new_list, new_gallery = read_label_to_gallery(storage_path, project_name)
+        return new_list, new_gallery, gr.update(value=_DELETE_IDLE), None
+
+    target_file = label_list[index]["index"]  # display name "frame_index, video_name"
+
+    # First click on this item (or selection changed) — arm, don't delete yet.
+    if armed_index != index:
+        return label_list, gr.update(), gr.update(value=_armed_text(target_file)), index
+
+    # Same item clicked twice — execute the delete.
     project_path = Path(storage_path) / project_name
     label_dir = os.path.join(project_path, "label")
     frame_index, video_name = target_file.split(', ')
-    delete_file_if_exists(os.path.join(label_dir, video_name, frame_index) + '.npz')
-    return read_label_to_gallery(storage_path, project_name)
+    file_path = os.path.join(label_dir, video_name, frame_index) + '.npz'
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            gr.Info(f"Deleted label: {target_file}")
+        else:
+            gr.Warning(f"File does not exist: {file_path}")
+    except OSError as exc:
+        gr.Warning(f"Error deleting file: {exc}")
+    new_list, new_gallery = read_label_to_gallery(storage_path, project_name)
+    return new_list, new_gallery, gr.update(value=_DELETE_IDLE), None
 
 
 def get_select_index(evt: gr.SelectData):
@@ -77,6 +99,9 @@ def create_knowledge_ui(
 
     selected_image = gr.State(None)
     label_list_state = gr.State(None)
+    # Local state (not in the ui dict, so it doesn't affect knowledge_ui_count):
+    # which gallery index is armed for the two-click delete confirmation.
+    delete_armed_index_state = gr.State(None)
 
     gallery = gr.Gallery(
         label="Label Frame",
@@ -105,12 +130,22 @@ def create_knowledge_ui(
     )
     
 
-    gallery.select(get_select_index, None, selected_image)
+    # Selecting a different frame disarms any pending delete confirmation.
+    gallery.select(get_select_index, None, selected_image).then(
+        fn=_reset_delete_armed_state,
+        inputs=None,
+        outputs=[delete_selected_btn, delete_armed_index_state],
+        queue=False,
+    )
 
+    # Two-click delete: first click arms (button relabels with the target),
+    # second click on the same item confirms.
     delete_selected_btn.click(
         fn=delete_selected,
-        inputs=[storage_path, project_name, label_list_state, selected_image],
-        outputs=[label_list_state, gallery],
+        inputs=[storage_path, project_name, label_list_state, selected_image,
+                delete_armed_index_state],
+        outputs=[label_list_state, gallery, delete_selected_btn, delete_armed_index_state],
+        queue=False,
     )
 
 

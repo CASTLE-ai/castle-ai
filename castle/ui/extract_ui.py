@@ -103,8 +103,8 @@ def _on_era_kit_warning(
             return gr.update(
                 visible=True,
                 value=(
-                    "ℹ️ KIT 已對齊身體軸，Eliminate Rotation Asymmetry 效益有限，"
-                    "但不影響正確性。"
+                    "ℹ️ KIT already aligns the body axis, so Eliminate Rotation "
+                    "Asymmetry adds little here — but it does not affect correctness."
                 ),
             )
     except (IndexError, AttributeError):
@@ -348,6 +348,12 @@ def ui_extract_roi_latent(
     summary_msg = f"\n\n🎉 Extraction Complete!\nSuccessfully processed {success_count}/{len(videos_to_process)} videos."
     if failed_videos:
         summary_msg += f"\n⚠️ Failed videos: {', '.join(failed_videos)}"
+        # Surface a toast too — a glanced-away user shouldn't mistake a partial
+        # run for success just because the final line still says "Complete".
+        gr.Warning(
+            f"{len(failed_videos)} video(s) failed during extraction: "
+            f"{', '.join(failed_videos)}. See the log for details."
+        )
     messages.append(summary_msg)
 
     # --- Eliminate Rotation Asymmetry (ERA) ---

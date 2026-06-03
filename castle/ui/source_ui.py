@@ -52,11 +52,21 @@ def scan_server_videos_wrapper(video_directory):
     Returns:
         tuple: (video_list, summary_text, button_interactive)
     """
-    video_list, summary = scan_video_directory(video_directory)
-    
+    try:
+        video_list, summary = scan_video_directory(video_directory)
+    except Exception as exc:  # noqa: BLE001 - surface, don't swallow
+        logger.exception("scan_video_directory failed for %r", video_directory)
+        gr.Warning(f"Could not read directory '{video_directory}': {exc}")
+        return [], "", gr.update(interactive=False)
+
+    if not video_list:
+        # Don't leave the user staring at an empty box + disabled button with no
+        # explanation (bad path / no videos / permissions).
+        gr.Info(f"No videos found in '{video_directory}'. Check the folder path.")
+
     # Enable button only if videos are found
     button_interactive = len(video_list) > 0
-    
+
     return video_list, summary, gr.update(interactive=button_interactive)
 
 

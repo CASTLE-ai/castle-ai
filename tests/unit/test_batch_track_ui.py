@@ -11,13 +11,6 @@ import threading
 import castle.ui.batch_track_ui as bt
 
 
-class _StubProgress:
-    """Callable no-op stand-in for gr.Progress() outside a Gradio event."""
-
-    def __call__(self, *args, **kwargs):
-        return None
-
-
 def _drive(gen):
     """Exhaust the generator, returning the list of yielded output tuples."""
     return list(gen)
@@ -42,7 +35,6 @@ def test_track_all_videos_multigpu_toggle_threads_device_ids(monkeypatch, tmp_pa
     out = _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=True, cancel_event=threading.Event(),
-        progress=_StubProgress(),
     ))
 
     assert cap["kwargs"]["device_ids"] == [0, 1]  # toggle ON -> both GPUs
@@ -61,7 +53,6 @@ def test_track_all_videos_multigpu_off_passes_empty_device_ids(monkeypatch, tmp_
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=None,
-        progress=_StubProgress(),
     ))
     assert not cap["kwargs"]["device_ids"]  # falsy -> sequential single-GPU
 
@@ -78,7 +69,6 @@ def test_track_all_videos_skip_existing_preflight(monkeypatch, tmp_path):
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=None,
-        progress=_StubProgress(),
     ))
     assert cap["video_names"] == ["a.mp4"]  # existing one filtered out
     # Pre-flight already applied the skip, so the service is told skip_existing=False.
@@ -96,7 +86,6 @@ def test_track_all_videos_skip_existing_off_retracks_all(monkeypatch, tmp_path):
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=False, use_multi_gpu=False, cancel_event=None,
-        progress=_StubProgress(),
     ))
     assert cap["video_names"] == ["a.mp4", "b.mp4"]  # nothing skipped
 
@@ -110,7 +99,6 @@ def test_track_all_videos_threads_cancel_event(monkeypatch, tmp_path):
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=ev,
-        progress=_StubProgress(),
     ))
     assert cap["kwargs"]["cancel_event"] is ev
 
@@ -128,7 +116,6 @@ def test_track_all_videos_crash_still_resets_buttons(monkeypatch, tmp_path):
     out = _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=None,
-        progress=_StubProgress(),
     ))
     assert out[-1][1]["interactive"] is True    # Start re-enabled after crash
     assert out[-1][2]["interactive"] is False   # Cancel disabled

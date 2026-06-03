@@ -219,34 +219,51 @@ def _request_cancel(cancel_event):
     return gr.update(value="Canceling (stopping current video)…", interactive=False)
 
 
-def _fmt_mmss(seconds: float) -> str:
-    m, s = divmod(int(max(0, seconds)), 60)
+def _fmt_dur(seconds: float) -> str:
+    """h/m/s duration, hours-aware (so a long run reads '2h05m', not '125:00')."""
+    sec = int(max(0, seconds))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m"
     return f"{m}:{s:02d}"
 
 
-def _progress_desc(frames_done: float, total_frames: int, vids_done: int,
-                   vids_total: int, t0: float, cancelling: bool) -> str:
-    """Frame-granular bar caption: ``frames done / total (%) · videos · ETA``.
+_PROGRESS_BAR_WIDTH = 24
+# ETA is meaningless when extrapolated from a tiny fraction (e.g. 0.03% → "55h"),
+# so withhold it until there's a real sample: ≥2% done OR ≥20s elapsed.
+_ETA_MIN_FRAC = 0.02
+_ETA_MIN_ELAPSED = 20.0
 
-    The bar advances per frame-batch (not per whole video), so it moves smoothly
-    instead of jumping only when a video finishes. ETA is derived from the frame
-    fraction. Falls back to a video-count caption when frame totals are unknown.
+
+def _status_md(frames_done: float, total_frames: int, vids_done: int,
+               vids_total: int, t0: float, cancelling: bool) -> str:
+    """Markdown for the dedicated status component: a unicode progress bar +
+    ``frames / videos / elapsed / ETA``. Rendered in its own box (not the log
+    textbox) so it never overlaps the log. The bar advances per frame-batch.
+
+    ETA is withheld until enough progress accrues (see ``_ETA_MIN_*``) — early
+    extrapolation from ~0% produces absurd numbers — and is hours-aware.
     """
     elapsed = time.time() - t0
-    prefix = "🛑 Cancelling… " if cancelling else ""
     if total_frames > 0:
         frac = min(1.0, frames_done / total_frames)
-        fd = int(frames_done)
-        if frac > 0:
-            eta = elapsed * (1 - frac) / frac
-            return (f"{prefix}{fd:,}/{total_frames:,} frames ({frac*100:.0f}%) · "
-                    f"{vids_done}/{vids_total} videos · ETA ~{_fmt_mmss(eta)}")
-        return f"{prefix}0/{total_frames:,} frames · {vids_done}/{vids_total} videos · estimating…"
-    # Fallback (frame counts unavailable): video-granular.
-    if vids_done > 0:
-        eta = elapsed / vids_done * (vids_total - vids_done)
-        return f"{prefix}{vids_done}/{vids_total} videos · ETA ~{_fmt_mmss(eta)}"
-    return f"{prefix}{vids_done}/{vids_total} videos · estimating…"
+        lead = f"**{int(frames_done):,} / {total_frames:,}** frames · "
+    else:  # frame counts unavailable → video-granular fallback
+        frac = min(1.0, vids_done / vids_total) if vids_total else 0.0
+        lead = ""
+
+    if frac > 0 and (frac >= _ETA_MIN_FRAC or elapsed >= _ETA_MIN_ELAPSED):
+        eta_str = "~" + _fmt_dur(elapsed * (1 - frac) / frac)
+    else:
+        eta_str = "estimating…"
+
+    filled = int(round(frac * _PROGRESS_BAR_WIDTH))
+    bar = "█" * filled + "░" * (_PROGRESS_BAR_WIDTH - filled)
+    prefix = "🛑 Cancelling… " if cancelling else ""
+    return (f"{prefix}{lead}**{vids_done}/{vids_total}** videos · "
+            f"elapsed {_fmt_dur(elapsed)} · ETA {eta_str}\n\n"
+            f"`{bar}` {frac * 100:.1f}%")
 
 
 def track_all_videos(
@@ -256,18 +273,19 @@ def track_all_videos(
     skip_existing: bool = True,
     use_multi_gpu: bool = True,
     cancel_event=None,
-    progress=gr.Progress(),
 ):
     """Execute tracking on all videos in the project (generator → live UI).
 
     Runs ``track_videos`` in a background thread and **polls** every ~0.5 s,
-    driving the ``gr.Progress`` bar with a *frame-granular* caption (frames done
-    across all videos / total frames, with ETA) so the bar advances per
-    frame-batch rather than jumping per whole video. During the run the bar is
-    the live display and the textbox is left untouched (so the two don't overlap);
-    the **final** yield writes the full per-video log to the textbox. The button
-    states are owned by this function: the first yield flips to the running state
-    and the final yield always resets them — on success, error, or cancel.
+    yielding ``(progress_text, start_btn, cancel_btn, status_md)``. The live
+    frame-granular progress bar is rendered into its own ``status_md`` Markdown
+    component (Gradio's overlay bar is disabled via ``show_progress="hidden"``),
+    so it never overlaps or flickers against the log textbox. The bar advances
+    per frame-batch (frames done across all videos / total frames) rather than
+    jumping per whole video. The log textbox is refreshed only when a new log
+    line appears (no per-poll churn); the final yield writes the full log. The
+    button states are owned by this function: the first yield flips to the running
+    state and the final yield always resets them — on success, error, or cancel.
 
     Args:
         skip_existing: when True (default) only videos missing ``mask_list.h5`` are
@@ -278,12 +296,13 @@ def track_all_videos(
         cancel_event: ``threading.Event``; once set, new videos stop launching and
             the in-flight video aborts mid-track (partial output discarded).
     """
-    # First yield: running state. Start disabled, Cancel enabled. The bar (not
-    # this textbox) is the live display during the run, so keep the text minimal.
+    # First yield: running state. Start disabled, Cancel enabled. The status bar
+    # (its own component) is the live display; clear the log textbox for now.
     yield (
-        "🚀 Batch tracking running — live progress on the bar above.",
+        "",
         gr.update(interactive=False),
         gr.update(value=_CANCEL_BTN_IDLE, interactive=True),
+        "🚀 Batch tracking starting…",
     )
 
     messages: List[str] = []
@@ -406,27 +425,24 @@ def track_all_videos(
         t0 = time.time()
         worker.start()
 
-        # Poll loop: drive the frame-granular bar. Leave the textbox and buttons
-        # untouched (gr.update()) so the bar doesn't overlap streamed text and the
-        # Cancel relabel isn't clobbered.
+        # Poll loop: update the status bar (its own component) every ~0.5 s, and
+        # refresh the log textbox only when a new log line appears (so it doesn't
+        # churn/flicker). Buttons stay untouched so the Cancel relabel survives.
+        last_msg_count = 0
         try:
             while not done.wait(timeout=0.5):
                 cancelling = cancel_event is not None and cancel_event.is_set()
                 with frac_lock:
                     frames_done = sum(video_frac.get(v, 0.0) * video_total_frames.get(v, 0)
                                       for v in video_total_frames)
-                if total_frames > 0:
-                    overall = min(1.0, frames_done / total_frames)
+                status = _status_md(frames_done, total_frames, stats["completed"],
+                                    total, t0, cancelling)
+                if len(messages) != last_msg_count:
+                    last_msg_count = len(messages)
+                    log_update = "\n".join(messages[-14:])
                 else:
-                    with frac_lock:
-                        overall = min(1.0, sum(video_frac.values()) / total) if total else 1.0
-                desc = _progress_desc(frames_done, total_frames, stats["completed"],
-                                      total, t0, cancelling)
-                try:
-                    progress(overall, desc=desc)
-                except Exception:  # noqa: BLE001 - bar is best-effort
-                    pass
-                yield (gr.update(), gr.update(), gr.update())
+                    log_update = gr.update()
+                yield (log_update, gr.update(), gr.update(), status)
         except GeneratorExit:
             # Client disconnected / event cancelled — stop the worker too.
             if cancel_event is not None:
@@ -444,14 +460,20 @@ def track_all_videos(
         if failed_videos:
             result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"
         messages.append(result_msg)
+        final_status = ("🛑 Cancelled." if cancelled
+                        else f"✅ Done — {success_count['n']}/{total} videos tracked.")
     elif project_name and not messages[-1].startswith("Error"):
         messages.append("All videos already tracked. Nothing to track.")
+        final_status = "✅ Nothing to track."
+    else:
+        final_status = ""
 
     # Final yield: always reset the buttons (success / error / cancel) + full log.
     yield (
         "\n".join(messages),
         gr.update(value=_TRACK_BTN_IDLE, interactive=True),
         gr.update(value=_CANCEL_BTN_IDLE, interactive=False),
+        final_status,
     )
 
 
@@ -621,6 +643,14 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
                     visible=False # 設置為預設不可見
                 )
 
+                # Live frame-granular progress bar (own component → never overlaps
+                # the log textbox; we render the bar ourselves so Gradio's overlay
+                # is disabled via show_progress="hidden" on the click).
+                ui["batch_status"] = gr.Markdown(
+                    value="",
+                    visible=False # 設置為預設不可見
+                )
+
                 ui["progress_text"] = gr.Textbox(
                     label="Progress & Results",
                     interactive=False,
@@ -681,8 +711,9 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
             ui["multi_gpu_toggle"],
             states["cancel_event"],
         ],
-        outputs=[ui["progress_text"], ui["track_all_btn"], ui["cancel_tracking_btn"]],
-        show_progress=True,
+        outputs=[ui["progress_text"], ui["track_all_btn"], ui["cancel_tracking_btn"],
+                 ui["batch_status"]],
+        show_progress="hidden",  # we render our own bar in batch_status
     )
 
     # Cancel: set the flag + immediate relabel (the generator's final yield
@@ -706,6 +737,7 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
         ui["skip_existing_checkbox"],
         ui["track_all_btn"],
         ui["cancel_tracking_btn"],
+        ui["batch_status"],
         ui["progress_text"]
     ]
 

@@ -210,13 +210,29 @@ def _init_cancel_event() -> threading.Event:
 def _request_cancel(cancel_event):
     """Cancel handler: set the flag and immediately relabel the button.
 
-    Immediate feedback (the generator keeps running its in-flight video, so the
-    user would otherwise see no reaction). The work generator's final yield
-    restores the button's idle label/state.
+    Immediate feedback. ``track_videos`` stops launching new videos and the
+    in-flight video aborts within ~one frame-batch. The work generator's final
+    yield restores the button's idle label/state.
     """
     if cancel_event is not None:
         cancel_event.set()
-    return gr.update(value="Canceling (finishing current video)…", interactive=False)
+    return gr.update(value="Canceling (stopping current video)…", interactive=False)
+
+
+def _fmt_mmss(seconds: float) -> str:
+    m, s = divmod(int(max(0, seconds)), 60)
+    return f"{m}:{s:02d}"
+
+
+def _eta_header(completed: int, total: int, t0: float, cancelling: bool) -> str:
+    """One-line live status: N/total · elapsed · ETA. Always shown at the top of
+    the Progress textbox so the remaining-time estimate is visible during the run."""
+    elapsed = time.time() - t0
+    prefix = "🛑 Cancelling (current video stopping)…  " if cancelling else "⏱️ "
+    if completed > 0:
+        eta = elapsed / completed * (total - completed)
+        return f"{prefix}{completed}/{total} done · elapsed {_fmt_mmss(elapsed)} · ETA ~{_fmt_mmss(eta)}"
+    return f"{prefix}{completed}/{total} done · elapsed {_fmt_mmss(elapsed)} · estimating…"
 
 
 def track_all_videos(
@@ -228,145 +244,156 @@ def track_all_videos(
     cancel_event=None,
     progress=gr.Progress(),
 ):
-    """Execute tracking on all videos in the project (generator → crash-safe UI).
+    """Execute tracking on all videos in the project (generator → live UI).
 
-    Yields ``(progress_text, start_btn_update, cancel_btn_update)`` so the button
-    states are owned by this function: the **first** yield flips to the running
-    state (Start disabled, Cancel enabled) and the **final** yield always resets
-    them — on success, error, *or* cancel. A `.then()` chain that set the buttons
-    in a separate step would leave the UI stuck forever if the body raised; a
-    generator with a catch-all + guaranteed final yield does not.
+    Runs ``track_videos`` in a background thread and **polls** every ~0.5 s,
+    yielding ``(progress_text, start_btn_update, cancel_btn_update)`` so the
+    Progress textbox streams a live ``N/total · elapsed · ETA`` header plus the
+    recent per-video log — visible throughout the run (a manual ``gr.Progress``
+    bar inside a blocking call would not surface here). The button states are
+    owned by this function: the first yield flips to the running state and the
+    **final** yield always resets them — on success, error, or cancel.
 
     Args:
         skip_existing: when True (default) only videos missing ``mask_list.h5`` are
             tracked; when False every video is (re-)tracked / overwritten.
         use_multi_gpu: when True and ≥2 GPUs are visible, spread whole videos
-            across GPUs (passes explicit ``device_ids`` — independent of the
+            across GPUs (explicit ``device_ids`` — independent of the
             ``CASTLE_MULTI_GPU`` env gate). Falls back to single-GPU otherwise.
-        cancel_event: ``threading.Event``; once set, ``track_videos`` stops
-            launching new videos (in-flight ones finish).
+        cancel_event: ``threading.Event``; once set, new videos stop launching and
+            the in-flight video aborts mid-track (partial output discarded).
     """
     # First yield: running state. Start disabled, Cancel enabled.
     yield (
-        "🚀 Batch tracking started… (live progress on the bar above; the full "
-        "per-video log appears here when the run finishes).",
+        "🚀 Batch tracking starting…",
         gr.update(interactive=False),
         gr.update(value=_CANCEL_BTN_IDLE, interactive=True),
     )
 
     messages: List[str] = []
-    try:
-        if not project_name:
-            messages.append("Error: No project selected")
+    success_count = {"n": 0}
+    failed_videos: List[str] = []
+    stats = {"completed": 0}
+
+    # --- Validation + pre-flight (fast; runs in the generator thread) ---
+    videos_to_process: List[str] = []
+    if not project_name:
+        messages.append("Error: No project selected")
+    else:
+        all_videos = get_project_videos(storage_path, project_name)
+        if not all_videos:
+            messages.append("Error: No videos found in project")
         else:
-            all_videos = get_project_videos(storage_path, project_name)
-            if not all_videos:
-                messages.append("Error: No videos found in project")
-            else:
-                # --- Pre-flight: decide which videos to process ---
-                videos_to_process: List[str] = []
-                messages.append(f"Starting pre-flight check for {len(all_videos)} videos...")
-                for video_name in all_videos:
-                    rois_results_path = Path(storage_path) / project_name / "track" / video_name / "mask_list.h5"
-                    if skip_existing and rois_results_path.exists():
-                        messages.append(f"  ⏩ Skipping existing video: {video_name}")
-                    else:
-                        videos_to_process.append(video_name)
-
-                if not videos_to_process:
-                    messages.append("All videos already tracked. Nothing to track.")
-                    progress(1.0, desc="Batch tracking completed (no new videos)")
+            messages.append(f"Starting pre-flight check for {len(all_videos)} videos...")
+            for video_name in all_videos:
+                rois_results_path = Path(storage_path) / project_name / "track" / video_name / "mask_list.h5"
+                if skip_existing and rois_results_path.exists():
+                    messages.append(f"  ⏩ Skipping existing video: {video_name}")
                 else:
-                    total_videos_to_process = len(videos_to_process)
-                    messages.append(f"Found {total_videos_to_process} videos to process")
+                    videos_to_process.append(video_name)
 
-                    # Resolve the GPU set from the UI toggle (independent of the
-                    # CASTLE_MULTI_GPU env gate). [] → sequential single-GPU path.
-                    if use_multi_gpu:
-                        device_ids = available_cuda_devices()
-                        if not device_ids:
-                            messages.append("ℹ️  Multi-GPU requested but <2 GPUs available; running single-GPU.")
-                        else:
-                            messages.append(f"🖥️  Multi-GPU: spreading videos across {len(device_ids)} GPUs.")
-                    else:
-                        device_ids = []
+    if videos_to_process:
+        total = len(videos_to_process)
+        messages.append(f"Found {total} videos to process")
 
-                    # --- Execution ---
-                    # DeAOT is sequential within a video, so parallelism is
-                    # video-level (one whole video per GPU). Per-video CSV +
-                    # mix-video analysis runs in on_video_done; progress is
-                    # reported per completed video (concurrent videos make a
-                    # single frame-level bar meaningless).
-                    success_count = {"n": 0}
-                    failed_videos: List[str] = []
+        # Resolve the GPU set from the UI toggle (independent of the
+        # CASTLE_MULTI_GPU env gate). [] → sequential single-GPU path.
+        if use_multi_gpu:
+            device_ids = available_cuda_devices()
+            if not device_ids:
+                messages.append("ℹ️  Multi-GPU requested but <2 GPUs available; running single-GPU.")
+            else:
+                messages.append(f"🖥️  Multi-GPU: spreading videos across {len(device_ids)} GPUs.")
+        else:
+            device_ids = []
 
-                    def _on_video_done(video_name: str, status: str) -> None:
-                        if status == "Done":
-                            success_count["n"] += 1
-                            messages.append(f"✅ Completed tracking for video {video_name}")
-                            logger.info("Completed tracking for %s", video_name)
-                            try:
-                                messages.append(f"Generating analysis files for {video_name}...")
-                                csv_path, mix_video_path = generate_video_analysis(storage_path, project_name, video_name)
-                                if csv_path:
-                                    messages.append(f"  ✅ Generated CSV: {os.path.basename(csv_path)}")
-                                if mix_video_path:
-                                    messages.append(f"  ✅ Generated mix video: {os.path.basename(mix_video_path)}")
-                            except Exception as e:  # noqa: BLE001
-                                messages.append(f"  ⚠️  Warning: Failed to generate analysis files for {video_name}: {str(e)}")
-                                logger.warning("Analysis generation failed for %s: %s", video_name, e)
-                        elif status in ("Skipped", "Skip"):
-                            messages.append(f"  Skipping existing video: {video_name}")
-                        elif status == "Cancel":
-                            messages.append(f"  🛑 Cancelled mid-track (partial output discarded): {video_name}")
-                        else:
-                            failed_videos.append(video_name)
-                            messages.append(f"❌ Tracking failed for video {video_name}: {status}")
-                            logger.error("Tracking failed for %s: %s", video_name, status)
+        # DeAOT is sequential within a video, so parallelism is video-level (one
+        # whole video per GPU). Per-video CSV + mix-video analysis runs in
+        # on_video_done as each video finishes.
+        def _on_video_done(video_name: str, status: str) -> None:
+            stats["completed"] += 1  # every finished video (done/skip/fail/cancel)
+            if status == "Done":
+                success_count["n"] += 1
+                messages.append(f"✅ Completed tracking for video {video_name}")
+                logger.info("Completed tracking for %s", video_name)
+                try:
+                    messages.append(f"Generating analysis files for {video_name}...")
+                    csv_path, mix_video_path = generate_video_analysis(storage_path, project_name, video_name)
+                    if csv_path:
+                        messages.append(f"  ✅ Generated CSV: {os.path.basename(csv_path)}")
+                    if mix_video_path:
+                        messages.append(f"  ✅ Generated mix video: {os.path.basename(mix_video_path)}")
+                except Exception as e:  # noqa: BLE001
+                    messages.append(f"  ⚠️  Warning: Failed to generate analysis files for {video_name}: {str(e)}")
+                    logger.warning("Analysis generation failed for %s: %s", video_name, e)
+            elif status in ("Skipped", "Skip"):
+                messages.append(f"  Skipping existing video: {video_name}")
+            elif status == "Cancel":
+                messages.append(f"  🛑 Cancelled mid-track (partial output discarded): {video_name}")
+            else:
+                failed_videos.append(video_name)
+                messages.append(f"❌ Tracking failed for video {video_name}: {status}")
+                logger.error("Tracking failed for %s: %s", video_name, status)
 
-                    # ETA: stamp t0 *after* pre-flight (skipped videos never enter
-                    # the timing window), total = tracked-only count.
-                    t0 = time.time()
+        # Run tracking in a background thread so this generator can poll + stream
+        # live progress into the textbox (the blocking call would otherwise show
+        # nothing until it returned).
+        worker_error: Dict[str, Any] = {}
+        done = threading.Event()
 
-                    def _progress_cb(frac: float, desc: str) -> None:
-                        completed = round(frac * total_videos_to_process)
-                        if completed == 0:  # guard div-by-zero on the first callback
-                            progress(frac, desc=desc)
-                            return
-                        elapsed = time.time() - t0
-                        eta = elapsed / completed * (total_videos_to_process - completed)
-                        em, es = divmod(int(elapsed), 60)
-                        rm, rs = divmod(int(eta), 60)
-                        progress(
-                            frac,
-                            desc=(f"{completed}/{total_videos_to_process} · "
-                                  f"elapsed {em}:{es:02d} · ETA ~{rm}:{rs:02d}"),
-                        )
+        def _run():
+            try:
+                track_videos(
+                    storage_path, project_name, videos_to_process,
+                    model=model_aot, skip_existing=False,  # pre-flight already applied
+                    device_ids=device_ids,
+                    on_video_done=_on_video_done,
+                    cancel_event=cancel_event,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.exception("Batch tracking crashed")
+                worker_error["e"] = e
+            finally:
+                done.set()
 
-                    # Pre-flight already applied skip_existing, so skip_existing=False here.
-                    track_videos(
-                        storage_path, project_name, videos_to_process,
-                        model=model_aot, skip_existing=False,
-                        device_ids=device_ids,
-                        progress_callback=_progress_cb,
-                        on_video_done=_on_video_done,
-                        cancel_event=cancel_event,
-                    )
+        worker = threading.Thread(target=_run, daemon=True, name="batch-track")
+        t0 = time.time()
+        worker.start()
 
-                    cancelled = cancel_event is not None and cancel_event.is_set()
-                    progress(1.0, desc="Batch tracking cancelled" if cancelled else "Batch tracking completed")
+        # Poll loop: stream header + recent log into the textbox. Leave the
+        # buttons untouched (gr.update()) so the Cancel relabel isn't clobbered.
+        try:
+            while not done.wait(timeout=0.5):
+                completed = stats["completed"]
+                cancelling = cancel_event is not None and cancel_event.is_set()
+                header = _eta_header(completed, total, t0, cancelling)
+                try:
+                    progress(completed / total if total else 1.0, desc=header)
+                except Exception:  # noqa: BLE001 - bar is best-effort
+                    pass
+                body = "\n".join(messages[-12:])
+                yield (f"{header}\n{'─' * 32}\n{body}", gr.update(), gr.update())
+        except GeneratorExit:
+            # Client disconnected / event cancelled — stop the worker too.
+            if cancel_event is not None:
+                cancel_event.set()
+            raise
 
-                    head = "🛑 Batch tracking cancelled" if cancelled else "🎉 Batch tracking completed!"
-                    result_msg = f"\n{head} Successfully processed {success_count['n']}/{total_videos_to_process} videos"
-                    result_msg += "\n📊 CSV analysis files and 🎬 mix videos generated for successful tracks"
-                    if failed_videos:
-                        result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"
-                    messages.append(result_msg)
-    except Exception as e:  # noqa: BLE001 - never re-raise; reset the UI below
-        logger.exception("Batch tracking crashed")
-        messages.append(f"\n❌ Batch tracking crashed: {e}")
+        worker.join()
+        if "e" in worker_error:
+            messages.append(f"\n❌ Batch tracking crashed: {worker_error['e']}")
 
-    # Final yield: always reset the buttons (success / error / cancel).
+        cancelled = cancel_event is not None and cancel_event.is_set()
+        head = "🛑 Batch tracking cancelled" if cancelled else "🎉 Batch tracking completed!"
+        result_msg = f"\n{head} Successfully processed {success_count['n']}/{total} videos"
+        result_msg += "\n📊 CSV analysis files and 🎬 mix videos generated for successful tracks"
+        if failed_videos:
+            result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"
+        messages.append(result_msg)
+    elif project_name and not messages[-1].startswith("Error"):
+        messages.append("All videos already tracked. Nothing to track.")
+
+    # Final yield: always reset the buttons (success / error / cancel) + full log.
     yield (
         "\n".join(messages),
         gr.update(value=_TRACK_BTN_IDLE, interactive=True),

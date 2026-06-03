@@ -60,6 +60,28 @@ def frame_to_timestamp(frame_number: int, fps: float) -> str:
     millis = micro // 1000
     return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
 
+
+def _resolve_latent_path(latent_dir_path: str, config_key: str) -> str:
+    """Resolve a ``config['latent']`` key to a physical ``.npz`` path.
+
+    Pre-process (KIT) session latents are registered under a *logical*
+    ``"{session_id}/{filename}"`` key — the prefix lets
+    ``delete_session_with_latent_cleanup`` find a session's latents — but the
+    file itself is written *flat* in ``latent/{model}/`` with a disambiguating
+    ``_pre-{session_id}`` suffix in the filename. Joining the prefixed key onto
+    the latent dir therefore points at a phantom ``latent/{model}/{session_id}/``
+    sub-directory that does not exist (this is what surfaced as
+    "Latent file missing" / "No latents loaded").
+
+    Try the key as a relative path first (legacy / any future sub-dir layout),
+    then fall back to the flat basename so prefixed keys resolve correctly.
+    """
+    direct = os.path.join(latent_dir_path, config_key)
+    if os.path.exists(direct):
+        return direct
+    return os.path.join(latent_dir_path, os.path.basename(config_key))
+
+
 def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float, tree=None) -> Tuple[int, float]:
     """
     Find the nearest point in embedding space using KDTree.
@@ -267,7 +289,7 @@ class LatentAggregator:
                 # embedded in the npz (or its sidecar .json) over fragile
                 # filename splitting. Fall back to the old stem-split when
                 # the npz predates the metadata helper.
-                latent_file_path = os.path.join(latent_dir_path, filename)
+                latent_file_path = _resolve_latent_path(latent_dir_path, filename)
                 model_name_matches = False
                 if os.path.exists(latent_file_path):
                     meta = load_latent_metadata(latent_file_path)
@@ -277,7 +299,7 @@ class LatentAggregator:
                         # Metadata present but model mismatch → definitively skip.
                         continue
                 if not model_name_matches:
-                    stem = os.path.splitext(filename)[0]
+                    stem = os.path.splitext(os.path.basename(filename))[0]
                     stem_after_roi = stem.split(f'_ROI_{select_roi_id}_', 1)
                     legacy_match = (
                         len(stem_after_roi) > 1
@@ -299,7 +321,7 @@ class LatentAggregator:
         for filename, video_source_name in latent_files:
             self.notify(f'Loading latent: {video_source_name}')
             try:
-                latent_path = os.path.join(latent_dir_path, filename)
+                latent_path = _resolve_latent_path(latent_dir_path, filename)
                 if not os.path.exists(latent_path):
                     self.notify(f"Latent file missing: {latent_path}", "warning")
                     continue

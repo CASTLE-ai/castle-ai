@@ -213,3 +213,35 @@ def test_dinov3_mask_alignment_square_identity_nonsquare_crops():
     res = v2.resolution  # 518
     stretch_v2 = F.interpolate(mns[:, None], size=(res, res), mode="nearest")[:, 0]
     assert torch.equal(v2._align_mask_to_input(mns, res), stretch_v2)
+
+
+# --------------------------------------------------------------------------- #
+# Follow-up (manual-test feedback): session-latent path resolution
+# --------------------------------------------------------------------------- #
+
+def test_resolve_latent_path_handles_session_prefix(tmp_path):
+    """KIT session latents register a logical '{session_id}/{file}' key but are
+    stored flat (disambiguated by a _pre-{session} suffix); the loader must
+    resolve to the flat file, not a phantom '{session_id}/' sub-directory."""
+    from castle.core.cluster import _resolve_latent_path
+
+    latent_dir = tmp_path / "latent" / "dinov3_vitb16"
+    latent_dir.mkdir(parents=True)
+    fname = "mouse06_ROI_1_dinov3_vitb16_rmbg_spp1x2x4_pre-02dfd768.npz"
+    (latent_dir / fname).write_bytes(b"x")  # flat file on disk
+
+    # Logical key with the session prefix (what config['latent'] stores).
+    key = f"02dfd768/{fname}"
+    resolved = _resolve_latent_path(str(latent_dir), key)
+    assert os.path.exists(resolved)
+    assert os.path.basename(resolved) == fname
+    # Resolves flat in latent_dir, not under a phantom '02dfd768/' sub-directory.
+    assert os.path.dirname(resolved) == str(latent_dir)
+
+    # Non-session (flat) keys still resolve directly.
+    flat = "mouse06_ROI_1_dinov3_vitb16.npz"
+    (latent_dir / flat).write_bytes(b"y")
+    assert os.path.exists(_resolve_latent_path(str(latent_dir), flat))
+
+    # A genuinely missing latent resolves to a non-existent path (caller warns).
+    assert not os.path.exists(_resolve_latent_path(str(latent_dir), "nope/ghost.npz"))

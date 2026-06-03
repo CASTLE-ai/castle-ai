@@ -21,6 +21,9 @@ from ..utils.tracking_manager import ROITracker, read_roi_labels  # noqa: E402
 from ..utils.analysis_utils import compute_roi_info, save_kinematic_csv  # noqa: E402
 from ..service.tracking_service import track_videos  # noqa: E402
 from ..core.gpu_pool import available_cuda_devices  # noqa: E402
+from .video_select import (  # noqa: E402
+    build_video_selector, wire_video_selector, populate_selector, resolve_selected,
+)
 
 
 def update_video_count(storage_path_val, project_name_val):
@@ -273,6 +276,7 @@ def track_all_videos(
     skip_existing: bool = True,
     use_multi_gpu: bool = True,
     cancel_event=None,
+    selected_videos=None,
 ):
     """Execute tracking on all videos in the project (generator → live UI).
 
@@ -295,6 +299,8 @@ def track_all_videos(
             ``CASTLE_MULTI_GPU`` env gate). Falls back to single-GPU otherwise.
         cancel_event: ``threading.Event``; once set, new videos stop launching and
             the in-flight video aborts mid-track (partial output discarded).
+        selected_videos: the checked subset (list) to process; ``None``/empty means
+            none selected. Lets one project be split across machines.
     """
     # First yield: running state. Start disabled, Cancel enabled. The status bar
     # (its own component) is the live display; clear the log textbox for now.
@@ -323,11 +329,14 @@ def track_all_videos(
         messages.append("Error: No project selected")
     else:
         all_videos = get_project_videos(storage_path, project_name)
+        chosen = resolve_selected(all_videos, selected_videos)
         if not all_videos:
             messages.append("Error: No videos found in project")
+        elif not chosen:
+            messages.append("Error: No videos selected — tick at least one video to process.")
         else:
-            messages.append(f"Starting pre-flight check for {len(all_videos)} videos...")
-            for video_name in all_videos:
+            messages.append(f"Starting pre-flight check for {len(chosen)} selected videos...")
+            for video_name in chosen:
                 rois_results_path = Path(storage_path) / project_name / "track" / video_name / "mask_list.h5"
                 if skip_existing and rois_results_path.exists():
                     messages.append(f"  ⏩ Skipping existing video: {video_name}")
@@ -629,6 +638,9 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
                     visible=False # 設置為預設不可見
                 )
 
+                # Per-video selection (split a project across machines).
+                ui["video_select"] = build_video_selector(label="Videos to track")
+
                 ui["track_all_btn"] = gr.Button(
                     "Start Tracking All Videos",
                     variant="primary",
@@ -710,11 +722,15 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
             ui["skip_existing_checkbox"],
             ui["multi_gpu_toggle"],
             states["cancel_event"],
+            ui["video_select"]["group"],
         ],
         outputs=[ui["progress_text"], ui["track_all_btn"], ui["cancel_tracking_btn"],
                  ui["batch_status"]],
         show_progress="hidden",  # we render our own bar in batch_status
     )
+
+    # Per-video selection quick buttons (All / None / Invert / halves).
+    wire_video_selector(ui["video_select"])
 
     # Cancel: set the flag + immediate relabel (the generator's final yield
     # restores the idle label). queue=False so it runs even while the work
@@ -738,7 +754,9 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
         ui["track_all_btn"],
         ui["cancel_tracking_btn"],
         ui["batch_status"],
-        ui["progress_text"]
+        ui["progress_text"],
+        ui["video_select"]["group"],
+        ui["video_select"]["btn_row"],
     ]
 
     def show_batch_track_ui(project_name_val):
@@ -785,6 +803,11 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
             fn=refresh_gallery,
             inputs=[storage_path, project_name],
             outputs=[states["label_list_state"], ui["gallery"]]
+        )
+        .then(  # populate the per-video selector (all checked by default)
+            fn=lambda sp, pn: populate_selector(get_project_videos(sp, pn) if pn else []),
+            inputs=[storage_path, project_name],
+            outputs=[ui["video_select"]["group"], ui["video_select"]["all_state"]],
         )
     )
 

@@ -14,6 +14,9 @@ from typing import Any, List
 import gradio as gr
 
 from castle.utils.video_manager import get_project_videos
+from castle.ui.video_select import (
+    build_video_selector, wire_video_selector, resolve_selected,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -500,7 +503,7 @@ def _make_preview_image(orig_frame, orig_mask, proc_frame, proc_mask):
 def _run_preprocess(
     storage_path: str,
     project_name: str,
-    video_name: str,
+    selected_videos,
     method: str,
     ant_roi: Any,
     post_roi: Any,
@@ -520,14 +523,17 @@ def _run_preprocess(
         gr.Warning("No project open. Please create or open a project in the 'Project' tab first.")
         return "No project selected."
 
-    if not video_name:
-        gr.Warning("No video selected.")
-        return "No video selected."
+    if not selected_videos:
+        gr.Warning("No videos selected — tick at least one video to process.")
+        return "No videos selected."
 
     from pathlib import Path
     from castle.core.project import get_project_config
     project_path, config = get_project_config(storage_path, project_name)
-    video_list = sorted(config.get("source", [])) if video_name == "All" else [video_name]
+    video_list = resolve_selected(config.get("source", []), selected_videos)
+    if not video_list:
+        gr.Warning("None of the selected videos are in this project.")
+        return "No videos selected."
 
     log_lines: list[str] = []
 
@@ -747,10 +753,11 @@ def create_preprocess_ui(
         with gr.Row():
             with gr.Column(scale=1):
                 ui["video_drop"] = gr.Dropdown(
-                    label="Select Video",
+                    label="ROI source / preview video",
                     choices=[],
                     interactive=True,
-                    info="Select a single video or 'All' to process all videos.",
+                    info="Which video to sample ROI IDs from and preview. "
+                         "Choose the videos to actually process below.",
                 )
                 ui["preview_btn"] = gr.Button("🔍 Preview (single frame)", variant="secondary")
 
@@ -763,6 +770,8 @@ def create_preprocess_ui(
 
         # -- Run -----------------------------------------------------------
         gr.Markdown("---\n### Run")
+        # Per-video selection (split a project across machines). Default: all checked.
+        ui["video_select"] = build_video_selector(label="Videos to process", visible=True)
         ui["skip_existing"] = gr.Checkbox(label="Skip existing", value=True)
         with gr.Row():
             ui["run_btn"] = gr.Button("▶ Run Pre-process", variant="primary", scale=4)
@@ -825,12 +834,14 @@ def create_preprocess_ui(
     def _on_tab_select(sp, pn):
         # Compute videos once; derive video_drop update + first_video together.
         videos = get_project_videos(sp, pn) if (sp and pn) else []
-        choices = videos + (["All"] if videos else [])
         wrapper_upd = gr.update(visible=bool(sp and pn))
-        vupd = gr.update(choices=choices, value=videos[0] if videos else None)
+        # video_drop is the single ROI-source / preview picker (no "All").
+        vupd = gr.update(choices=videos, value=videos[0] if videos else None)
         supd = _list_sessions_dropdown(sp, pn)
         ant_upd, post_upd = _populate_roi_dropdowns(sp, pn, videos[0] if videos else None)
-        return wrapper_upd, vupd, supd, ant_upd, post_upd
+        # Per-video processing selector — all checked by default.
+        grp_upd = gr.update(choices=videos, value=videos)
+        return wrapper_upd, vupd, supd, ant_upd, post_upd, grp_upd, list(videos)
 
     preprocess_tab.select(
         fn=_on_tab_select,
@@ -838,6 +849,7 @@ def create_preprocess_ui(
         outputs=[
             ui["wrapper"], ui["video_drop"], ui["sessions_dropdown"],
             ui["anterior_roi_id"], ui["posterior_roi_id"],
+            ui["video_select"]["group"], ui["video_select"]["all_state"],
         ],
         show_progress=False,
     ).then(
@@ -906,6 +918,9 @@ def create_preprocess_ui(
         outputs=[ui["preview_image"]],
     )
 
+    # Per-video selection quick buttons (All / None / Invert / halves).
+    wire_video_selector(ui["video_select"])
+
     # Delete session — two-step confirmation. First click arms the button
     # (label flips to "⚠️ Confirm Delete Session?" and Cancel becomes visible);
     # second click executes; Cancel resets to idle.
@@ -957,7 +972,7 @@ def create_preprocess_ui(
     _run_gen = _run_click.then(
         fn=_run_preprocess,
         inputs=[
-            storage_path, project_name, ui["video_drop"],
+            storage_path, project_name, ui["video_select"]["group"],
             ui["method_radio"],
             ui["anterior_roi_id"], ui["posterior_roi_id"],
             ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],

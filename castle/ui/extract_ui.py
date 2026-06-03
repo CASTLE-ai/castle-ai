@@ -19,6 +19,9 @@ from castle.core.extractor import (
 )
 from castle.utils.video_manager import get_project_config
 from castle.utils.h5_io import H5IO
+from castle.ui.video_select import (
+    build_video_selector, wire_video_selector, resolve_selected,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +150,7 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False),  # 2  select_model
         gr.update(visible=False),  # 3  select_roi_id
         gr.update(visible=False),  # 4  batch_size
-        gr.update(choices=[], value=None, visible=False),  # 5  select_video
+        gr.update(choices=[], value=[], visible=False),  # 5  video_select group
         gr.update(value=0, visible=False),  # 6  video_count
         gr.update(visible=False),  # 7  skip_existing
         gr.update(visible=False),  # 8  remove_background_switch
@@ -159,6 +162,8 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False, interactive=False),  # 14 extract_cancel_btn
         gr.update(visible=False),  # 15 hdr_model
         gr.update(visible=False),  # 16 hdr_source
+        gr.update(visible=False),  # 17 video_select btn_row
+        [],                        # 18 video_select all_state (raw value)
     ])
 
     if not storage_path or not project_name:
@@ -172,9 +177,6 @@ def init_select_video_list(storage_path, project_name):
         video_count_val = len(choices)
 
         if video_count_val > 0:
-            choices_with_all = list(choices)
-            choices_with_all.append("All")
-
             # Session selector choices
             session_choices = ["(None — use raw source)"]
             try:
@@ -192,8 +194,10 @@ def init_select_video_list(storage_path, project_name):
             updates[2] = gr.update(visible=True)   # select_model
             updates[3] = gr.update(visible=True)   # select_roi_id
             updates[4] = gr.update(visible=True)   # batch_size
-            updates[5] = gr.update(choices=choices_with_all, value="All", visible=True)  # select_video
+            updates[5] = gr.update(choices=choices, value=choices, visible=True)  # video_select group (all checked)
             updates[6] = gr.update(value=video_count_val, visible=True)  # video_count
+            updates[17] = gr.update(visible=True)  # video_select btn_row
+            updates[18] = list(choices)            # video_select all_state
             updates[7] = gr.update(visible=True)   # skip_existing
             updates[8] = gr.update(visible=True)   # remove_background_switch
             updates[9] = gr.update(visible=True)   # adv_accordion
@@ -228,7 +232,7 @@ def ui_extract_roi_latent(
     project_name: str,
     select_model: str,
     select_roi: str,
-    select_video: str,
+    selected_videos,
     batch_size: str,
     skip_existing: bool,
     remove_background_switch: bool = False,
@@ -262,7 +266,9 @@ def ui_extract_roi_latent(
         raise ValueError(f"ROI ID must be an integer (got {select_roi!r}).")
 
     _, config = get_project_config(storage_path, project_name)
-    video_list = sorted(config['source']) if select_video == "All" else [select_video]
+    video_list = resolve_selected(config.get('source', []), selected_videos)
+    if not video_list:
+        return "No videos selected — tick at least one video to extract."
 
     if session_id:
         messages.append(f"Using pre-process session: {session_display.split(' | ')[0]}")
@@ -501,20 +507,14 @@ def create_extract_ui(storage_path, project_name, extract_tab):
 
     # ── Source & Options ───────────────────────────────────────────────
     ui['hdr_source'] = gr.Markdown("### Source & Options", visible=False)
-    with gr.Row():
-        ui['select_video'] = gr.Dropdown(
-            label="Target Video",
-            value=None,
-            visible=False,
-            scale=3,
-        )
-        ui['video_count'] = gr.Number(
-            label="Videos in project",
-            value=0,
-            interactive=False,
-            visible=False,
-            scale=1,
-        )
+    ui['video_count'] = gr.Number(
+        label="Videos in project",
+        value=0,
+        interactive=False,
+        visible=False,
+    )
+    # Per-video selection (split a project across machines).
+    ui['video_select'] = build_video_selector(label="Videos to extract")
     with gr.Row():
         ui['skip_existing'] = gr.Checkbox(
             label="Skip existing files",
@@ -591,7 +591,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['select_model'],              # 2
         ui['select_roi_id'],             # 3
         ui['batch_size'],                # 4
-        ui['select_video'],              # 5
+        ui['video_select']['group'],     # 5
         ui['video_count'],               # 6
         ui['skip_existing'],             # 7
         ui['remove_background_switch'],  # 8
@@ -603,6 +603,8 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['extract_cancel_btn'],        # 14
         ui['hdr_model'],                 # 15
         ui['hdr_source'],                # 16
+        ui['video_select']['btn_row'],   # 17
+        ui['video_select']['all_state'], # 18
     ]
 
     # ------------------------------------------------------------------
@@ -614,6 +616,9 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         inputs=[storage_path, project_name],
         outputs=all_ui_elements_to_control,
     )
+
+    # Per-video selection quick buttons (All / None / Invert / halves).
+    wire_video_selector(ui['video_select'])
 
     # Session selector: update status + ERA warning
     ui["session_selector"].change(
@@ -645,7 +650,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         fn=ui_extract_roi_latent,
         inputs=[
             storage_path, project_name, ui['select_model'], ui['select_roi_id'],
-            ui['select_video'], ui['batch_size'], ui['skip_existing'],
+            ui['video_select']['group'], ui['batch_size'], ui['skip_existing'],
             ui['remove_background_switch'],
             ui['eliminate_rotation_asymmetry'], ui['era_roi_id'],
             ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],

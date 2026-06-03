@@ -35,6 +35,7 @@ def test_track_all_videos_multigpu_toggle_threads_device_ids(monkeypatch, tmp_pa
     out = _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=True, cancel_event=threading.Event(),
+        selected_videos=["a.mp4", "b.mp4"],
     ))
 
     assert cap["kwargs"]["device_ids"] == [0, 1]  # toggle ON -> both GPUs
@@ -53,6 +54,7 @@ def test_track_all_videos_multigpu_off_passes_empty_device_ids(monkeypatch, tmp_
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=None,
+        selected_videos=["a.mp4", "b.mp4"],
     ))
     assert not cap["kwargs"]["device_ids"]  # falsy -> sequential single-GPU
 
@@ -69,6 +71,7 @@ def test_track_all_videos_skip_existing_preflight(monkeypatch, tmp_path):
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=None,
+        selected_videos=["a.mp4", "b.mp4"],
     ))
     assert cap["video_names"] == ["a.mp4"]  # existing one filtered out
     # Pre-flight already applied the skip, so the service is told skip_existing=False.
@@ -86,6 +89,7 @@ def test_track_all_videos_skip_existing_off_retracks_all(monkeypatch, tmp_path):
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=False, use_multi_gpu=False, cancel_event=None,
+        selected_videos=["a.mp4", "b.mp4"],
     ))
     assert cap["video_names"] == ["a.mp4", "b.mp4"]  # nothing skipped
 
@@ -99,6 +103,7 @@ def test_track_all_videos_threads_cancel_event(monkeypatch, tmp_path):
     _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=ev,
+        selected_videos=["a.mp4"],
     ))
     assert cap["kwargs"]["cancel_event"] is ev
 
@@ -116,10 +121,26 @@ def test_track_all_videos_crash_still_resets_buttons(monkeypatch, tmp_path):
     out = _drive(bt.track_all_videos(
         str(tmp_path), "P", "r50_deaotl",
         skip_existing=True, use_multi_gpu=False, cancel_event=None,
+        selected_videos=["a.mp4"],
     ))
     assert out[-1][1]["interactive"] is True    # Start re-enabled after crash
     assert out[-1][2]["interactive"] is False   # Cancel disabled
     assert "crashed" in out[-1][0]              # error surfaced in the log
+
+
+def test_track_all_videos_empty_selection_is_graceful(monkeypatch, tmp_path):
+    # No videos checked → don't call track_videos; surface a clear message.
+    cap = {}
+    _patch(monkeypatch, ["a.mp4", "b.mp4"], cap)
+    monkeypatch.setattr(bt, "available_cuda_devices", lambda: [])
+    out = _drive(bt.track_all_videos(
+        str(tmp_path), "P", "r50_deaotl",
+        skip_existing=True, use_multi_gpu=False, cancel_event=None,
+        selected_videos=[],
+    ))
+    assert "kwargs" not in cap                  # track_videos never called
+    assert "No videos selected" in out[-1][0]
+    assert out[-1][1]["interactive"] is True    # buttons still reset
 
 
 def test_request_cancel_sets_event_and_relabels():

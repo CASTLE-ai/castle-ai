@@ -75,22 +75,36 @@ _DELETE_PROJECT_IDLE_LABEL = "Delete"
 _DELETE_PROJECT_ARMED_LABEL = "⚠️ Confirm DELETE?"
 
 
+def _on_open_project(project_name):
+    """Persistent feedback after Open (the click also locks widgets / sets state)."""
+    if not project_name:
+        return gr.update()
+    return gr.update(
+        value=f"✅ Opened project: **{project_name}** — continue at **“1. Upload Videos”**.",
+        visible=True,
+    )
+
+
+# Delete handlers return 6 outputs, in this order:
+#   delete_btn, cancel_btn, warning, confirm_state, project_drop, status
 def _on_delete_project_click(storage_path, project_name, confirmed):
     """Two-step delete project handler.
 
     First click (confirmed=False): arm the button — show Cancel + warning,
     change label to "⚠️ Confirm DELETE?", set state to True. Nothing is deleted.
 
-    Second click (confirmed=True): execute deletion, reset to idle state.
+    Second click (confirmed=True): execute deletion, refresh the project dropdown
+    (so the deleted project disappears) and show a persistent status line.
     """
     if not project_name:
         gr.Warning("Please select a project to delete.")
-        # Stay in idle state.
         return (
             gr.update(value=_DELETE_PROJECT_IDLE_LABEL),
             gr.update(visible=False),
             gr.update(visible=False),
             False,
+            gr.update(),                 # project_drop unchanged
+            gr.update(),                 # status unchanged
         )
 
     if not confirmed:
@@ -100,15 +114,19 @@ def _on_delete_project_click(storage_path, project_name, confirmed):
             gr.update(visible=True),
             gr.update(visible=True),
             True,
+            gr.update(),                 # project_drop unchanged
+            gr.update(visible=False),    # clear any stale status while arming
         )
 
-    # Second click — execute and reset.
+    # Second click — execute, reset, refresh dropdown, report.
     delete_project_wrapper(storage_path, project_name)
     return (
         gr.update(value=_DELETE_PROJECT_IDLE_LABEL),
         gr.update(visible=False),
         gr.update(visible=False),
         False,
+        gr.update(choices=list_projects(storage_path), value=None),  # drop the deleted project
+        gr.update(value=f"🗑️ Deleted project: **{project_name}**", visible=True),
     )
 
 
@@ -119,6 +137,8 @@ def _on_delete_project_cancel():
         gr.update(visible=False),
         gr.update(visible=False),
         False,
+        gr.update(),                     # project_drop unchanged
+        gr.update(),                     # status unchanged
     )
 
 
@@ -184,28 +204,34 @@ def create_project_ui(OS_SYS, root=''):
             label="Open Project",
             interactive=True
         )
-        with gr.Row(visible=True):
-            with gr.Column(scale=9):
-                ui['project_open_btn'] = gr.Button(
-                    'Open',
-                    interactive=False
-                )
-            with gr.Column(scale=1):
-                ui['project_delete_btn'] = gr.Button(
-                    'Delete',
-                    interactive=False
-                )
-            with gr.Column(scale=1):
-                ui['project_delete_cancel_btn'] = gr.Button(
-                    'Cancel',
-                    interactive=True,
-                    visible=False,
-                )
+        # Open is the primary action (wider); Delete is a narrower secondary
+        # button, aligned on the same row. Cancel appears below only when armed.
+        with gr.Row():
+            ui['project_open_btn'] = gr.Button(
+                'Open',
+                variant='primary',
+                interactive=False,
+                scale=4,
+            )
+            ui['project_delete_btn'] = gr.Button(
+                'Delete',
+                variant='secondary',
+                interactive=False,
+                scale=1,
+            )
         ui['project_delete_warning'] = gr.Markdown(
             "⚠️ **This will permanently delete the project, including all videos, "
             "tracking masks, latents, and clustering results. This cannot be undone.**",
             visible=False,
         )
+        with gr.Row():
+            ui['project_delete_cancel_btn'] = gr.Button(
+                'Cancel',
+                interactive=True,
+                visible=False,
+            )
+        # Persistent feedback after Open / Delete (gr.Info toasts are transient).
+        ui['project_status'] = gr.Markdown("", visible=False)
         # Tracks whether the user has already clicked Delete once (armed → confirm).
         ui['project_delete_confirm_state'] = gr.State(False)
     
@@ -281,15 +307,23 @@ def create_project_ui(OS_SYS, root=''):
         inputs=ui['project_drop'],
         outputs=ui['project_name']
     )
-    
+    # Persistent "Opened …" feedback (the clicks above only lock widgets / set state).
+    ui['project_open_btn'].click(
+        fn=_on_open_project,
+        inputs=ui['project_drop'],
+        outputs=ui['project_status'],
+    )
+
     # Delete project — two-step confirmation. First click arms the button
     # (label flips to "⚠️ Confirm DELETE?" and Cancel becomes visible); second
-    # click executes the delete; Cancel resets to idle.
+    # click executes the delete, refreshes the dropdown, and reports status.
     _delete_outputs = [
         ui['project_delete_btn'],
         ui['project_delete_cancel_btn'],
         ui['project_delete_warning'],
         ui['project_delete_confirm_state'],
+        ui['project_drop'],
+        ui['project_status'],
     ]
     ui['project_delete_btn'].click(
         fn=_on_delete_project_click,

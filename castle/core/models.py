@@ -454,7 +454,7 @@ class DINOv3Encoder(VisualEncoder):
             layer_ids = layers
 
         with torch.inference_mode():
-            if self.device == 'cuda':
+            if 'cuda' in str(self.device):
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     feats = self.model.get_intermediate_layers(x, n=layer_ids, reshape=True, norm=True)
             else:

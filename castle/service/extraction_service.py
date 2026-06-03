@@ -14,6 +14,7 @@ from typing import Callable, Optional
 from castle.core.data import Preprocess
 from castle.core.extractor import (
     extract_roi_latent_from_video,
+    extract_roi_latent_from_video_auto,
     extract_roi_crop_video,
     extract_roi_rotation_latent_from_video,
 )
@@ -125,7 +126,7 @@ def extract_latent(
                 raise CastleIOError(f"'{vname}' {msg}") from exc
 
         try:
-            path = extract_roi_latent_from_video(
+            path = extract_roi_latent_from_video_auto(
                 storage_path=storage_path,
                 project_name=project_name,
                 video_name=vname,

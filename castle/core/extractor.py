@@ -7,10 +7,11 @@ from collections import Counter
 from typing import Protocol, Optional
 import json
 import os
+import threading
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 # Import from our new Core modules
 from castle.core.data import OnFrameError, VideoDataset, Preprocess
@@ -172,6 +173,155 @@ def interpolate_missing_points(valid_points, total_frames):
     return result
 
 
+def _run_extraction_loop(
+    observer,
+    loader,
+    *,
+    roi_id: int,
+    pooling_method: str,
+    pooling_scales: Optional[list],
+    feature_layers: Optional[list],
+    on_frame_error: OnFrameError,
+    max_batch_failure_rate: float,
+    video_name: str,
+    progress_callback: Optional[ProgressCallback] = None,
+):
+    """Run the per-batch extraction loop over ``loader`` and return the latent array.
+
+    Shared by single-GPU :func:`extract_roi_latent_from_video` and the per-GPU
+    workers of :func:`extract_roi_latent_from_video_2gpu`. Timeline integrity
+    (P0-2): every batch contributes exactly ``frames.shape[0]`` rows; a tolerated
+    failure becomes a NaN placeholder (filled once the feature dim is known) and
+    its frame range is recorded, so row index == frame index for this loader's
+    range (the caller offsets ranges to global frame coords when merging).
+
+    Returns:
+        ``(latent_array, failed_frame_ranges, n_batches_failed)``.
+    """
+    latent_slots: list = []          # real (B, C) arrays, or None placeholders
+    pending_fail: list = []          # (slot_index, n_rows) awaiting feature dim
+    failed_frame_ranges: list = []   # [[start, end), ...] loader-local frame indices
+    total_batches = len(loader)
+    n_batches_failed = 0
+    abs_failure_threshold = max(1, int(max_batch_failure_rate * total_batches))
+    first_batch_error: Optional[str] = None
+    expected_dim: Optional[int] = None
+    rows_seen = 0
+
+    def _record_failure(slot_pos: int, n_rows: int, frame_start: int) -> None:
+        pending_fail.append((slot_pos, n_rows))
+        failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
+
+    for i, (frames, masks) in enumerate(loader):
+        n_rows = int(frames.shape[0])
+        frame_start = rows_seen
+        rows_seen += n_rows
+        try:
+            if hasattr(observer, 'extract_tensor_batch'):
+                 latent_batch = observer.extract_tensor_batch(
+                     frames, masks, roi_id,
+                     pooling=pooling_method,
+                     scales=pooling_scales,
+                     layers=feature_layers,
+                 )
+            else:
+                 latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
+
+            latent_slots.append(latent_batch)
+            if expected_dim is None:
+                expected_dim = latent_batch.shape[1]
+
+        except (ROINotFoundError, PreprocessingError) as e:
+            # Strict path re-raises; tolerant path keeps the timeline aligned.
+            n_batches_failed += 1
+            if on_frame_error == "raise" or n_batches_failed > abs_failure_threshold:
+                raise
+            if first_batch_error is None:
+                first_batch_error = repr(e)
+            logger.warning(
+                "Batch %d/%d for %s failed (%s); inserting %d NaN placeholder "
+                "frame(s) to preserve the timeline.",
+                i + 1, total_batches, video_name, e, n_rows,
+            )
+            latent_slots.append(None)
+            _record_failure(len(latent_slots) - 1, n_rows, frame_start)
+        except Exception as e:
+            n_batches_failed += 1
+            if first_batch_error is None:
+                first_batch_error = repr(e)
+            logger.error(
+                "Batch %d/%d failed for %s: %s",
+                i + 1, total_batches, video_name, e,
+            )
+            if n_batches_failed > abs_failure_threshold:
+                raise ExtractionError(
+                    f"Aborting {video_name}: {n_batches_failed}/{i + 1} batches "
+                    f"failed (threshold {abs_failure_threshold} of "
+                    f"{total_batches}, max_rate={max_batch_failure_rate:.0%}). "
+                    f"Cause: {first_batch_error}."
+                ) from e
+            logger.warning(
+                "Batch %d/%d for %s tolerated after error; inserting %d NaN "
+                "placeholder frame(s) to preserve the timeline.",
+                i + 1, total_batches, video_name, n_rows,
+            )
+            latent_slots.append(None)
+            _record_failure(len(latent_slots) - 1, n_rows, frame_start)
+
+        if progress_callback:
+            progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name}")
+
+    if expected_dim is None:
+        raise ExtractionError(
+            f"All {total_batches} batches failed for {video_name}. "
+            f"No latent file written."
+        )
+
+    # BUG-05: validate feature-dimension consistency across the real batches so
+    # a model swap mid-extraction fails loudly instead of a cryptic ValueError.
+    mismatched = [
+        (idx, tuple(b.shape)) for idx, b in enumerate(latent_slots)
+        if b is not None and b.shape[1] != expected_dim
+    ]
+    if mismatched:
+        sample = mismatched[:5]
+        raise ExtractionError(
+            f"Inconsistent feature dimensions across batches for {video_name}. "
+            f"Expected dim {expected_dim}; mismatched batches: {sample}"
+            + ("..." if len(mismatched) > len(sample) else "")
+            + ". This usually indicates a model swap mid-extraction."
+        )
+
+    # Fill tolerated failures with NaN placeholders of the correct width.
+    for slot_pos, n_rows in pending_fail:
+        latent_slots[slot_pos] = np.full((n_rows, expected_dim), np.nan, dtype=np.float32)
+
+    latent_array = np.concatenate(latent_slots, axis=0)
+    return latent_array, failed_frame_ranges, n_batches_failed
+
+
+def _latent_filename(video_name, roi_id, model_name, preprocess_config,
+                     pooling_method, pooling_scales, feature_layers, session_id) -> str:
+    """Canonical latent ``.npz`` filename.
+
+    Shared by the single-GPU and multi-GPU paths so they produce identical names
+    (``skip_existing`` checks and ``config['latent']`` keys must match exactly).
+    """
+    base_name = os.path.splitext(video_name)[0]
+    tags = []
+    if preprocess_config.center_roi_switch:
+        tags.append("ctr")
+    if preprocess_config.remove_background_switch:
+        tags.append("rmbg")
+    if pooling_method == 'multiscale' and pooling_scales:
+        tags.append("spp" + "x".join(str(s) for s in sorted(pooling_scales)))
+    if feature_layers:
+        tags.append("L" + "x".join(str(layer) for layer in sorted(feature_layers)))
+    suffix = "_".join([model_name] + tags)
+    pre_tag = f"_pre-{session_id}" if session_id else ""
+    return f'{base_name}_ROI_{roi_id}_{suffix}{pre_tag}.npz'
+
+
 # --- Core Function 1: Extract Latent ---
 def extract_roi_latent_from_video(
     storage_path: str,
@@ -235,26 +385,10 @@ def extract_roi_latent_from_video(
     latent_dir_path = os.path.join(project_path, 'latent', model_name)
     os.makedirs(latent_dir_path, exist_ok=True)
     
-    base_name = os.path.splitext(video_name)[0]
-    
-    # Tags logic
-    tags = []
-    if preprocess_config.center_roi_switch:
-        tags.append("ctr")
-    if preprocess_config.remove_background_switch:
-        tags.append("rmbg")
-    # A-06: Add pooling/layer tags to filename
-    if pooling_method == 'multiscale' and pooling_scales:
-        scales_str = "x".join(str(s) for s in sorted(pooling_scales))
-        tags.append(f"spp{scales_str}")
-    if feature_layers:
-        layers_str = "x".join(str(layer) for layer in sorted(feature_layers))
-        tags.append(f"L{layers_str}")
-    
-    suffix = "_".join([model_name] + tags)
-    pre_tag = f"_pre-{session_id}" if session_id else ""
-    latent_filename = f'{base_name}_ROI_{roi_id}_{suffix}{pre_tag}.npz'
-
+    latent_filename = _latent_filename(
+        video_name, roi_id, model_name, preprocess_config,
+        pooling_method, pooling_scales, feature_layers, session_id,
+    )
     latent_path = os.path.join(latent_dir_path, latent_filename)
 
     if skip_existing and os.path.exists(latent_path):
@@ -358,113 +492,18 @@ def extract_roi_latent_from_video(
 
     loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS))
 
-    # Per-batch slots preserve the timeline: every batch contributes exactly
-    # frames.shape[0] rows to the final array, even when it fails. A tolerated
-    # failure becomes a NaN placeholder (filled once the feature dim is known)
-    # and its absolute frame range is recorded in metadata. This guarantees
-    # row index == frame index downstream — cluster labels are assigned per row
-    # and `Latent.select()` filters NaN rows, so a failed frame is excluded from
-    # clustering with a visible warning rather than silently shifting every
-    # subsequent frame's label (which is what dropping the batch used to do).
-    latent_slots: list = []          # real (B, C) arrays, or None placeholders
-    pending_fail: list = []          # (slot_index, n_rows) awaiting feature dim
-    failed_frame_ranges: list = []   # [[start, end), ...] absolute frame indices
+    latent_array, failed_frame_ranges, n_batches_failed = _run_extraction_loop(
+        observer, loader,
+        roi_id=roi_id,
+        pooling_method=pooling_method,
+        pooling_scales=pooling_scales,
+        feature_layers=feature_layers,
+        on_frame_error=on_frame_error,
+        max_batch_failure_rate=max_batch_failure_rate,
+        video_name=video_name,
+        progress_callback=progress_callback,
+    )
     total_batches = len(loader)
-    n_batches_failed = 0
-    abs_failure_threshold = max(1, int(max_batch_failure_rate * total_batches))
-    first_batch_error: Optional[str] = None
-    expected_dim: Optional[int] = None
-    rows_seen = 0
-
-    def _record_failure(slot_pos: int, n_rows: int, frame_start: int) -> None:
-        pending_fail.append((slot_pos, n_rows))
-        failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
-
-    for i, (frames, masks) in enumerate(loader):
-        n_rows = int(frames.shape[0])
-        frame_start = rows_seen
-        rows_seen += n_rows
-        try:
-            if hasattr(observer, 'extract_tensor_batch'):
-                 latent_batch = observer.extract_tensor_batch(
-                     frames, masks, roi_id,
-                     pooling=pooling_method,
-                     scales=pooling_scales,
-                     layers=feature_layers,
-                 )
-            else:
-                 latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
-
-            latent_slots.append(latent_batch)
-            if expected_dim is None:
-                expected_dim = latent_batch.shape[1]
-
-        except (ROINotFoundError, PreprocessingError) as e:
-            # Strict path re-raises; tolerant path keeps the timeline aligned.
-            n_batches_failed += 1
-            if on_frame_error == "raise" or n_batches_failed > abs_failure_threshold:
-                raise
-            if first_batch_error is None:
-                first_batch_error = repr(e)
-            logger.warning(
-                "Batch %d/%d for %s failed (%s); inserting %d NaN placeholder "
-                "frame(s) to preserve the timeline.",
-                i + 1, total_batches, video_name, e, n_rows,
-            )
-            latent_slots.append(None)
-            _record_failure(len(latent_slots) - 1, n_rows, frame_start)
-        except Exception as e:
-            n_batches_failed += 1
-            if first_batch_error is None:
-                first_batch_error = repr(e)
-            logger.error(
-                "Batch %d/%d failed for %s: %s",
-                i + 1, total_batches, video_name, e,
-            )
-            if n_batches_failed > abs_failure_threshold:
-                raise ExtractionError(
-                    f"Aborting {video_name}: {n_batches_failed}/{i + 1} batches "
-                    f"failed (threshold {abs_failure_threshold} of "
-                    f"{total_batches}, max_rate={max_batch_failure_rate:.0%}). "
-                    f"Cause: {first_batch_error}."
-                ) from e
-            logger.warning(
-                "Batch %d/%d for %s tolerated after error; inserting %d NaN "
-                "placeholder frame(s) to preserve the timeline.",
-                i + 1, total_batches, video_name, n_rows,
-            )
-            latent_slots.append(None)
-            _record_failure(len(latent_slots) - 1, n_rows, frame_start)
-
-        if progress_callback:
-            progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name}")
-
-    if expected_dim is None:
-        raise ExtractionError(
-            f"All {total_batches} batches failed for {video_name}. "
-            f"No latent file written."
-        )
-
-    # BUG-05: validate feature-dimension consistency across the real batches so
-    # a model swap mid-extraction fails loudly instead of a cryptic ValueError.
-    mismatched = [
-        (idx, tuple(b.shape)) for idx, b in enumerate(latent_slots)
-        if b is not None and b.shape[1] != expected_dim
-    ]
-    if mismatched:
-        sample = mismatched[:5]
-        raise ExtractionError(
-            f"Inconsistent feature dimensions across batches for {video_name}. "
-            f"Expected dim {expected_dim}; mismatched batches: {sample}"
-            + ("..." if len(mismatched) > len(sample) else "")
-            + ". This usually indicates a model swap mid-extraction."
-        )
-
-    # Fill tolerated failures with NaN placeholders of the correct width.
-    for slot_pos, n_rows in pending_fail:
-        latent_slots[slot_pos] = np.full((n_rows, expected_dim), np.nan, dtype=np.float32)
-
-    latent_array = np.concatenate(latent_slots, axis=0)
 
     # BUG-14: embed video / ROI / model identity so loaders can stop relying
     # on filename parsing.
@@ -857,5 +896,239 @@ def extract_roi_rotation_latent_from_video(
                     "Could not remove partial latent %s: %s", latent_path, cleanup_err,
                 )
         raise
+
+
+# ---------------------------------------------------------------------------
+# Multi-GPU extraction (opt-in): split one video's frames across GPUs
+# ---------------------------------------------------------------------------
+
+_device_encoder_cache: dict = {}
+_device_encoder_lock = threading.Lock()
+
+
+def _get_device_encoder(model_name: str, device: str):
+    """Get an encoder pinned to a specific CUDA device for multi-GPU extraction.
+
+    The primary device reuses the shared singleton (``get_visual_encoder`` via
+    ``_get_observer``, no reload); other devices get a dedicated encoder built +
+    cached here so repeated videos don't reload weights. Two extraction threads
+    use *different* encoder objects (no shared mutable state during inference).
+    """
+    if device in ('cuda', 'cuda:0'):
+        return _get_observer(model_name)
+    key = (model_name, device)
+    with _device_encoder_lock:
+        enc = _device_encoder_cache.get(key)
+        if enc is None:
+            from castle.core.models import DINOv2Encoder, DINOv3Encoder
+            if 'dinov3' in model_name:
+                enc = DINOv3Encoder(model_name, device=device)
+            else:
+                enc = DINOv2Encoder(model_name, device=device)
+            enc.load_model()
+            _device_encoder_cache[key] = enc
+            logger.info("Multi-GPU: built %s encoder on %s", model_name, device)
+        return enc
+
+
+def extract_roi_latent_from_video_2gpu(
+    storage_path: str,
+    project_name: str,
+    video_name: str,
+    roi_id: int,
+    model_name: str,
+    batch_size: int,
+    preprocess_config: Preprocess,
+    skip_existing: bool,
+    progress_callback: Optional[ProgressCallback] = None,
+    pooling_method: str = 'weighted_average',
+    pooling_scales: Optional[list] = None,
+    feature_layers: Optional[list] = None,
+    *,
+    source_video_path: Optional[str] = None,
+    mask_path_override: Optional[str] = None,
+    session_id: Optional[str] = None,
+    on_frame_error: OnFrameError = "skip",
+    max_batch_failure_rate: float = 0.05,
+    device_ids=(0, 1),
+    min_frames_for_split: int = 2000,
+) -> str:
+    """Extract one video's ROI latents by splitting frames across GPUs.
+
+    Splits ``[0, N)`` into ``len(device_ids)`` contiguous ranges, runs each
+    range's *full* extraction loop on its own GPU + encoder concurrently
+    (threads — CUDA releases the GIL), then concatenates the per-range latents in
+    frame order. ``row index == frame index`` is preserved (contiguous slices
+    concatenated in order); the result is numerically equivalent to single-GPU up
+    to per-device float16 kernel rounding.
+
+    Falls back to :func:`extract_roi_latent_from_video` when the video is short
+    (``< min_frames_for_split``), the model isn't DINOv3, or ``rotate_roi_tail``
+    is enabled (the tail pre-scan path isn't split).
+
+    Same return contract as :func:`extract_roi_latent_from_video`.
+    """
+    batch_size = int(batch_size)
+    roi_id = int(roi_id)
+    _enable_cudnn_benchmark_if_not_strict()
+
+    project_path, _config = get_project_config(storage_path, project_name)
+    latent_dir_path = os.path.join(project_path, 'latent', model_name)
+    os.makedirs(latent_dir_path, exist_ok=True)
+
+    latent_filename = _latent_filename(
+        video_name, roi_id, model_name, preprocess_config,
+        pooling_method, pooling_scales, feature_layers, session_id,
+    )
+    latent_path = os.path.join(latent_dir_path, latent_filename)
+    if skip_existing and os.path.exists(latent_path):
+        logger.info(f"Skipping existing latent: {latent_path}")
+        return latent_path
+
+    source_path = source_video_path or os.path.join(storage_path, project_name, 'sources', video_name)
+    track_dir_path = os.path.join(project_path, 'track', video_name)
+    mask_list_path = mask_path_override or os.path.join(track_dir_path, 'mask_list.h5')
+    if not os.path.exists(mask_list_path):
+        raise MaskNotFoundError(
+            f"Mask file not found for video {video_name!r}. Expected at: "
+            f"{mask_list_path}. Hint: run `castle track {project_name}` first."
+        )
+
+    try:
+        with VideoReader(source_path) as vr:
+            video_len = len(vr)
+    except Exception as e:
+        raise VideoReadError(
+            f"Failed to open video {source_path}: {e}."
+        ) from e
+
+    # Fall back to single-GPU when splitting won't help or isn't supported here.
+    if (len(device_ids) < 2
+            or video_len < min_frames_for_split
+            or 'dinov3' not in model_name
+            or preprocess_config.rotate_roi_tail_switch):
+        logger.info(
+            "Multi-GPU: falling back to single-GPU for %s "
+            "(len=%d, model=%s, rotate_tail=%s).",
+            video_name, video_len, model_name, preprocess_config.rotate_roi_tail_switch,
+        )
+        return extract_roi_latent_from_video(
+            storage_path, project_name, video_name, roi_id, model_name, batch_size,
+            preprocess_config, skip_existing, progress_callback,
+            pooling_method, pooling_scales, feature_layers,
+            source_video_path=source_video_path, mask_path_override=mask_path_override,
+            session_id=session_id, on_frame_error=on_frame_error,
+            max_batch_failure_rate=max_batch_failure_rate,
+        )
+
+    # Contiguous frame ranges, one per device.
+    n_dev = len(device_ids)
+    bounds = [(k * video_len) // n_dev for k in range(n_dev + 1)]
+    ranges = [(bounds[k], bounds[k + 1]) for k in range(n_dev)]
+
+    per_thread_workers = max(0, get_num_workers('extraction') // n_dev)
+    results: dict = {}
+    errors: dict = {}
+
+    def _worker(slot: int, dev_id: int, fr):
+        start, end = fr
+        try:
+            enc = _get_device_encoder(model_name, f'cuda:{dev_id}')
+            dataset = VideoDataset(
+                source_path, video_len, mask_list_path, preprocess_config, roi_id,
+                interpolated_points=None, on_frame_error=on_frame_error,
+            )
+            sub = Subset(dataset, list(range(start, end)))
+            loader = DataLoader(sub, **_build_extractor_loader_kwargs(batch_size, per_thread_workers))
+            arr, fails, n_failed = _run_extraction_loop(
+                enc, loader,
+                roi_id=roi_id, pooling_method=pooling_method, pooling_scales=pooling_scales,
+                feature_layers=feature_layers, on_frame_error=on_frame_error,
+                max_batch_failure_rate=max_batch_failure_rate,
+                video_name=f"{video_name}[{start}:{end}]", progress_callback=None,
+            )
+            results[slot] = (arr, fails, n_failed)
+        except BaseException as exc:  # surfaced to the caller; no partial write
+            errors[slot] = exc
+
+    if progress_callback:
+        progress_callback(0.02, desc=f"Extracting {video_name} on {n_dev} GPUs")
+
+    threads = [
+        threading.Thread(target=_worker, args=(s, device_ids[s], ranges[s]), daemon=True)
+        for s in range(n_dev)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    if errors:
+        first = sorted(errors.items())[0][1]
+        raise first
+
+    # Merge per-range latents in frame order; offset failed ranges to global coords.
+    latent_parts = []
+    failed_frame_ranges: list = []
+    n_batches_failed = 0
+    for s in range(n_dev):
+        arr, fails, n_failed = results[s]
+        offset = ranges[s][0]
+        latent_parts.append(arr)
+        failed_frame_ranges.extend([[fs + offset, fe + offset] for fs, fe in fails])
+        n_batches_failed += n_failed
+    latent_array = np.concatenate(latent_parts, axis=0)
+
+    save_latent_with_metadata(
+        latent_path,
+        latent_array,
+        video_name=video_name,
+        roi_id=int(roi_id),
+        model_name=model_name,
+        tags={
+            "pooling_method": pooling_method,
+            "pooling_scales": list(pooling_scales) if pooling_scales else None,
+            "feature_layers": list(feature_layers) if feature_layers else None,
+            "rotation": False,
+            "failed_frame_ranges": failed_frame_ranges or None,
+            "multi_gpu_device_ids": list(device_ids),
+        },
+    )
+
+    if n_batches_failed:
+        n_nan_frames = sum(end - start for start, end in failed_frame_ranges)
+        logger.warning(
+            "Multi-GPU extraction for %s: %d batches failed; %d frame(s) stored as "
+            "NaN placeholders to keep the timeline aligned (ranges in metadata).",
+            video_name, n_batches_failed, n_nan_frames,
+        )
+
+    from castle.core.project import update_config
+    latent_key = f"{session_id}/{latent_filename}" if session_id else latent_filename
+    with update_config(storage_path, project_name) as config:
+        config.setdefault('latent', {})[latent_key] = video_name
+
+    logger.info(
+        "Multi-GPU extraction complete for %s (%d frames across GPUs %s) -> %s",
+        video_name, video_len, list(device_ids), latent_path,
+    )
+    return latent_path
+
+
+def extract_roi_latent_from_video_auto(*args, **kwargs) -> str:
+    """Dispatch to multi-GPU extraction when opted-in, else single-GPU.
+
+    Multi-GPU runs only when ``CASTLE_MULTI_GPU`` is truthy AND more than one CUDA
+    device is visible; otherwise (the default) the single-GPU path runs unchanged.
+    Same signature / return as :func:`extract_roi_latent_from_video`.
+    """
+    flag = os.environ.get("CASTLE_MULTI_GPU", "").strip().lower()
+    if flag not in ("", "0", "false", "no", "off"):
+        try:
+            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                return extract_roi_latent_from_video_2gpu(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — never let dispatch break extraction
+            logger.warning("Multi-GPU dispatch check failed (%s); using single GPU.", exc)
+    return extract_roi_latent_from_video(*args, **kwargs)
 
 

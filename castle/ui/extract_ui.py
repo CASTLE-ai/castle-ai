@@ -11,7 +11,11 @@ import gradio as gr
 from tqdm import tqdm
 
 from castle.core.data import Preprocess
-from castle.core.extractor import extract_roi_latent_from_video, extract_roi_rotation_latent_from_video
+from castle.core.extractor import (
+    extract_roi_latent_from_video,
+    extract_roi_latent_from_video_auto,
+    extract_roi_rotation_latent_from_video,
+)
 from castle.utils.video_manager import get_project_config
 from castle.utils.h5_io import H5IO
 
@@ -300,7 +304,7 @@ def ui_extract_roi_latent(
 
         try:
             messages.append(f"\nProcessing {video_name}...")
-            path = extract_roi_latent_from_video(
+            path = extract_roi_latent_from_video_auto(
                 storage_path=storage_path,
                 project_name=project_name,
                 video_name=video_name,

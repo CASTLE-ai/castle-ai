@@ -26,7 +26,7 @@ from castle.core.logging_config import setup_logger
 from castle.core.model_registry import ModelRegistry, _TrackingModelSentinel
 from castle.core.project import get_project_config
 from castle.service.extraction_service import extract_latent
-from castle.service.tracking_service import track_video
+from castle.service.tracking_service import track_videos
 
 logger = setup_logger(__name__)
 
@@ -176,30 +176,33 @@ class Pipeline:
         Returns:
             Dict mapping ``video_name → status string``.
         """
-        results: dict = {}
-        n = len(video_list)
         _log_vram("tracking-start")
+        done = {'n': 0}
 
-        for i, video_name in enumerate(video_list):
-            logger.info("Pipeline: tracking [%d/%d] %s", i + 1, n, video_name)
-            self._progress((i / n) * 0.5, f"Tracking {video_name}")
+        def _cb(frac: float, desc: str) -> None:
+            # Tracking is the first half of the overall pipeline progress.
+            self._progress(frac * 0.5, desc)
 
-            status = track_video(
-                storage_path=self.config.storage_path,
-                project_name=self.config.project_name,
-                video_name=video_name,
-                model=self.config.tracking_model,
-                start=self.config.track_start,
-                stop=self.config.track_stop,
-                skip_existing=self.config.skip_existing_tracking,
-            )
-            results[video_name] = status
+        def _on_done(video_name: str, status: str) -> None:
             logger.info("Pipeline: tracking %s → %s", video_name, status)
-
+            done['n'] += 1
             # VRAM log approximately every 5 videos as a rough proxy for frames.
-            if (i + 1) % 5 == 0:
-                _log_vram(f"tracking-video-{i + 1}")
+            if done['n'] % 5 == 0:
+                _log_vram(f"tracking-video-{done['n']}")
 
+        # track_videos spreads whole videos across GPUs when CASTLE_MULTI_GPU is
+        # set (>1 CUDA device), else runs sequentially — identical results.
+        results = track_videos(
+            storage_path=self.config.storage_path,
+            project_name=self.config.project_name,
+            video_names=video_list,
+            model=self.config.tracking_model,
+            start=self.config.track_start,
+            stop=self.config.track_stop,
+            skip_existing=self.config.skip_existing_tracking,
+            progress_callback=_cb,
+            on_video_done=_on_done,
+        )
         return results
 
     def _cleanup_tracking(self) -> None:

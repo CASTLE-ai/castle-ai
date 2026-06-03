@@ -342,6 +342,8 @@ def extract_roi_latent_from_video(
     session_id: Optional[str] = None,
     on_frame_error: OnFrameError = "skip",
     max_batch_failure_rate: float = 0.05,
+    device: Optional[str] = None,
+    num_workers: Optional[int] = None,
 ) -> str:
     """Extracts latent features from a specific video ROI.
 
@@ -407,16 +409,20 @@ def extract_roi_latent_from_video(
             f"Hint: run `castle track {project_name}` first."
         )
 
-    # 3. Setup Models
+    # 3. Setup Models — pin to an explicit device for video-level multi-GPU
+    # (extract_latent runs one video per GPU); device=None / 'cuda' / 'cuda:0'
+    # reuse the primary-device singleton via _get_device_encoder.
     try:
-        observer = _get_observer(model_name)
+        observer = _get_device_encoder(model_name, device) if device else _get_observer(model_name)
     except (ImportError, ValueError, RuntimeError) as e:
         raise ExtractionError(
             f"Failed to load model {model_name!r} for {video_name}: {e}"
         ) from e
 
-    # 4. Processing
-    NUM_WORKERS = get_num_workers('extraction')
+    # 4. Processing — when several videos extract concurrently (one per GPU) the
+    # caller passes a reduced num_workers (total // n_gpu) so the DataLoaders
+    # don't oversubscribe the CPU and starve the GPUs.
+    NUM_WORKERS = num_workers if num_workers is not None else get_num_workers('extraction')
 
     # Get video length
     try:
@@ -1122,13 +1128,9 @@ def extract_roi_latent_from_video_auto(*args, **kwargs) -> str:
     device is visible; otherwise (the default) the single-GPU path runs unchanged.
     Same signature / return as :func:`extract_roi_latent_from_video`.
     """
-    flag = os.environ.get("CASTLE_MULTI_GPU", "").strip().lower()
-    if flag not in ("", "0", "false", "no", "off"):
-        try:
-            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                return extract_roi_latent_from_video_2gpu(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — never let dispatch break extraction
-            logger.warning("Multi-GPU dispatch check failed (%s); using single GPU.", exc)
+    from castle.core.gpu_pool import multi_gpu_enabled
+    if multi_gpu_enabled():
+        return extract_roi_latent_from_video_2gpu(*args, **kwargs)
     return extract_roi_latent_from_video(*args, **kwargs)
 
 

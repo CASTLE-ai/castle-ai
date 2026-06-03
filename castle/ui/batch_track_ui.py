@@ -17,6 +17,7 @@ from ..utils.plot import generate_mix_image  # noqa: E402
 from ..utils.video_io import ReadArray, WriteArray  # noqa: E402
 from ..utils.tracking_manager import ROITracker, read_roi_labels  # noqa: E402
 from ..utils.analysis_utils import compute_roi_info, save_kinematic_csv  # noqa: E402
+from ..service.tracking_service import track_videos  # noqa: E402
 
 
 def update_video_count(storage_path_val, project_name_val):
@@ -239,123 +240,54 @@ def track_all_videos(storage_path: str, project_name: str, model_aot: str = "r50
 
     total_videos_to_process = len(videos_to_process)
     messages.append(f"Found {total_videos_to_process} new videos to process")
-    
-    # --- Second Pass: Execution (Process identified videos) ---
-    success_count = 0
-    failed_videos = []
-    last_processed_video: Optional[str] = None
 
-    for i, video_name in enumerate(tqdm(videos_to_process, desc="Processing videos", unit="video")):
-        # Outer progress bar slice for this video: [i / N, (i + 1) / N)
-        video_slice_start = i / total_videos_to_process
-        video_slice_width = 1.0 / total_videos_to_process
-        progress(
-            video_slice_start,
-            desc=f"Video {i + 1}/{total_videos_to_process}: {video_name}",
-        )
+    # --- Second Pass: Execution ---
+    # track_videos spreads whole videos across GPUs when CASTLE_MULTI_GPU is set
+    # (>1 CUDA device); otherwise it runs sequentially. DeAOT is sequential within
+    # a video, so the parallelism is video-level (one whole video per GPU). The
+    # per-video CSV + mix-video analysis runs in the on_video_done hook as each
+    # video finishes; progress is reported per completed video (concurrent videos
+    # make a single linear frame-level bar meaningless).
+    success_count = {"n": 0}
+    failed_videos: List[str] = []
 
-        def _frame_progress(frame_frac: float, frame_desc: str, _idx=i, _name=video_name):
-            """Map frame-level progress into this video's slice of the outer bar."""
-            outer_frac = video_slice_start + frame_frac * video_slice_width
-            progress(
-                outer_frac,
-                desc=f"Video {_idx + 1}/{total_videos_to_process} ({_name}): {frame_desc}",
-            )
-
-        try:
-            # Load video file
-            project_path = Path(storage_path) / project_name
-            video_path = project_path / "sources" / video_name
-
-            if not video_path.exists():
-                failed_videos.append(video_name)
-                msg = f"Warning: Video file not found {video_name}"
-                messages.append(msg)
-                logger.warning(msg)
-                continue
-
-            # Create video reader
-            source_video = ReadArray(str(video_path))
-            total_frames = len(source_video)
-
-            msg = f"Video {video_name}: {total_frames} frames total"
-            messages.append(msg)
-            logger.info(msg)
-
-            # Create tracker (track entire video)
-            start_frame = 0
-            stop_frame = total_frames - 1
-
-            tracker = ROITracker(
-                storage_path=storage_path,
-                project_name=project_name,
-                video_source=source_video,
-                start_frame=start_frame,
-                stop_frame=stop_frame,
-                model_type=model_aot
-            )
-
-            msg = f"Starting tracking for video {video_name} (frames {start_frame}-{stop_frame})"
-            messages.append(msg)
-            logger.info(msg)
-
-            last_processed_video = video_name
-            # Frame-level callback maps into this video's outer-bar slice.
-            result = tracker.track(progress=None, frame_callback=_frame_progress)
-            
-            if result == "Done":
-                success_count += 1
-                msg = f"✅ Completed tracking for video {video_name}"
-                messages.append(msg)
-                logger.info(msg)
-                
-                # Generate CSV and mix video after successful tracking
-                try:
-                    msg = f"Generating analysis files for {video_name}..."
-                    messages.append(msg)
-                    logger.info(msg)
-                    
-                    csv_path, mix_video_path = generate_video_analysis(storage_path, project_name, video_name)
-                    
-                    if csv_path:
-                        msg = f"  ✅ Generated CSV: {os.path.basename(csv_path)}"
-                        messages.append(msg)
-                        logger.info(msg)
-                    if mix_video_path:
-                        msg = f"  ✅ Generated mix video: {os.path.basename(mix_video_path)}"
-                        messages.append(msg)
-                        logger.info(msg)
-                        
-                except Exception as e:
-                    msg = f"  ⚠️  Warning: Failed to generate analysis files for {video_name}: {str(e)}"
-                    messages.append(msg)
-                    logger.warning(msg)
-                    
-            elif result == "Cancel":
-                remaining = total_videos_to_process - (i + 1)
-                msg = (
-                    f"❌ Batch tracking cancelled during '{video_name}' "
-                    f"(video {i + 1}/{total_videos_to_process}). "
-                    f"{remaining} video(s) not processed."
-                )
-                messages.append(msg)
-                logger.warning(msg)
-                break
-            else:
-                failed_videos.append(video_name)
-                msg = f"❌ Tracking failed for video {video_name}: {result}"
-                messages.append(msg)
-                logger.error(msg)
-                
-        except Exception as e:
+    def _on_video_done(video_name: str, status: str) -> None:
+        if status == "Done":
+            success_count["n"] += 1
+            messages.append(f"✅ Completed tracking for video {video_name}")
+            logger.info("Completed tracking for %s", video_name)
+            # Per-video post-tracking analysis (CSV + mix video).
+            try:
+                messages.append(f"Generating analysis files for {video_name}...")
+                csv_path, mix_video_path = generate_video_analysis(storage_path, project_name, video_name)
+                if csv_path:
+                    messages.append(f"  ✅ Generated CSV: {os.path.basename(csv_path)}")
+                if mix_video_path:
+                    messages.append(f"  ✅ Generated mix video: {os.path.basename(mix_video_path)}")
+            except Exception as e:  # noqa: BLE001
+                messages.append(f"  ⚠️  Warning: Failed to generate analysis files for {video_name}: {str(e)}")
+                logger.warning("Analysis generation failed for %s: %s", video_name, e)
+        elif status in ("Skipped", "Skip"):
+            messages.append(f"  Skipping existing video: {video_name}")
+        else:
             failed_videos.append(video_name)
-            msg = f"❌ Error: Failed to process video {video_name}: {str(e)}"
-            messages.append(msg)
-            logger.error(msg)
-    
+            messages.append(f"❌ Tracking failed for video {video_name}: {status}")
+            logger.error("Tracking failed for %s: %s", video_name, status)
+
+    def _progress_cb(frac: float, desc: str) -> None:
+        progress(frac, desc=desc)
+
+    # Pre-flight already filtered existing videos, so skip_existing=False here.
+    track_videos(
+        storage_path, project_name, videos_to_process,
+        model=model_aot, skip_existing=False,
+        progress_callback=_progress_cb,
+        on_video_done=_on_video_done,
+    )
+
     progress(1.0, desc="Batch tracking completed")
-    
-    result_msg = f"\n🎉 Batch tracking completed! Successfully processed {success_count}/{total_videos_to_process} videos"
+
+    result_msg = f"\n🎉 Batch tracking completed! Successfully processed {success_count['n']}/{total_videos_to_process} videos"
     result_msg += "\n📊 CSV analysis files and 🎬 mix videos generated for successful tracks"
     if failed_videos:
         result_msg += f"\n⚠️  Failed videos: {', '.join(failed_videos)}"

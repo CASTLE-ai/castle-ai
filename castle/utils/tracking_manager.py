@@ -138,9 +138,12 @@ class ROITracker:
         stop_frame: int,
         model_type: str = "r50_deaotl",
         smart_filter_ratio: float = 0.1,
+        device: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        pin_memory: bool = True,
     ) -> None:
         """Initialize the ROI tracker.
-        
+
         Args:
             storage_path: Base storage directory
             project_name: Name of the project
@@ -149,10 +152,24 @@ class ROITracker:
             stop_frame: Stopping frame index
             model_type: Tracking model type (e.g., 'r50_deaotl', 'swinb_deaotl')
             smart_filter_ratio: Ratio of median reference area used as smart filter threshold (default 0.1 = 10%)
+            device: CUDA device this tracker's AOT model runs on (e.g. ``'cuda:1'``).
+                ``None`` defers to the module default (single-GPU). Video-level
+                multi-GPU (``track_videos``) passes an explicit ``cuda:N`` so each
+                concurrent tracker pins to its own card.
+            num_workers: DataLoader worker count override. ``None`` uses
+                ``get_num_workers('tracking')``. Video-level multi-GPU passes the
+                budget divided by the number of GPUs so N concurrent trackers do
+                not oversubscribe the CPU / pinned host RAM.
+            pin_memory: DataLoader ``pin_memory``. Set ``False`` for concurrent
+                multi-GPU tracking — pinned (page-locked) host buffers across many
+                workers are the main host-RAM/OOM driver.
         """
         self.cancel = False
         self.show_middle_result = False
         self.model_type = model_type
+        self.device = device
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
         
         # Setup paths
         project_path = Path(storage_path) / project_name
@@ -235,8 +252,9 @@ class ROITracker:
         """
         time.sleep(0.5)
 
-        # Initialize tracker model and HDF5 writer
-        tracker = generate_aot(model_type=self.model_type)
+        # Initialize tracker model and HDF5 writer (on this tracker's device;
+        # None -> module default for single-GPU, 'cuda:N' for multi-GPU workers).
+        tracker = generate_aot(model_type=self.model_type, device=self.device)
         mask_list_path = self.track_dir / "mask_list.h5"
         
         if os.path.exists(mask_list_path):
@@ -267,20 +285,22 @@ class ROITracker:
         delta = 1 if self.start_frame < self.stop_frame else -1
         frame_range = list(range(self.start_frame, self.stop_frame + delta, delta))
 
-        # Initialize DataLoader for batch processing
+        # Initialize DataLoader for batch processing. num_workers / pin_memory
+        # can be overridden (video-level multi-GPU passes a reduced worker count
+        # and pin_memory=False so N concurrent trackers don't exhaust host RAM).
         from castle.core.environment import get_num_workers
-        num_workers = get_num_workers('tracking')
+        num_workers = self.num_workers if self.num_workers is not None else get_num_workers('tracking')
         batch_size = 16
-        logger.debug(f"Tracking with {num_workers} workers and batch size {batch_size}")
+        logger.debug(f"Tracking with {num_workers} workers, batch size {batch_size}, pin_memory={self.pin_memory}")
 
         dataset = TrackingDataset(self.video_source, frame_range, tracker.transform)
-        
+
         loader = DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=True
+            pin_memory=self.pin_memory
         )
 
         

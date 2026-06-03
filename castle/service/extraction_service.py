@@ -106,61 +106,126 @@ def extract_latent(
     successes: list[str] = []
     failures: list[tuple[str, str]] = []
 
-    for vname in video_list:
-        source_video_path: Optional[str] = None
-        mask_path_override: Optional[str] = None
-        if session_id:
-            try:
-                vpath, mpath = get_preprocessed_paths(storage_path, project_name, session_id, vname)
-                source_video_path = str(vpath)
-                mask_path_override = str(mpath)
-            except FileNotFoundError as exc:
-                msg = (
-                    f"not preprocessed in session '{session_id}'. "
-                    f"Run Pre-process first. ({exc})"
-                )
-                if is_batch:
-                    failures.append((vname, msg))
-                    logger.error("Extraction failed for %s: %s", vname, msg)
-                    continue
-                raise CastleIOError(f"'{vname}' {msg}") from exc
+    # Video-level multi-GPU: when opted in (CASTLE_MULTI_GPU + >1 CUDA device) and
+    # there are >= 2 videos, run one whole video per GPU concurrently (each pinned
+    # single-GPU via the device arg). A single video (or flag off) falls through to
+    # the sequential path below, where `_auto` still applies the within-video
+    # 2-GPU split when multi-GPU is on. Per-video outputs are independent; they
+    # match sequential exactly except for fp16-autocast rounding (~1e-2) on videos
+    # that run on the second GPU (accepted as negligible; UMAP standardizes).
+    from castle.core.gpu_pool import (
+        resolve_device_ids, run_on_device_pool, deterministic_ctx_if_enabled,
+        host_ram_available_bytes,
+    )
+    device_ids = resolve_device_ids() if is_batch else []
 
-        try:
-            path = extract_roi_latent_from_video_auto(
-                storage_path=storage_path,
-                project_name=project_name,
-                video_name=vname,
-                roi_id=roi,
-                model_name=model,
-                batch_size=batch_size,
-                preprocess_config=preprocess_config,
-                skip_existing=skip_existing,
-                progress_callback=progress_callback,
-                pooling_method=pooling_method,
-                pooling_scales=pooling_scales,
+    if is_batch and len(device_ids) >= 2 and len(video_list) >= 2:
+        from castle.core.environment import get_num_workers
+        n_gpu = len(device_ids)
+        per_worker = max(1, get_num_workers('extraction') // n_gpu)
+        total = len(video_list)
+        completed = {'n': 0}
+
+        def _worker(vname: str, device: str):
+            # Session-path resolution per video (a missing session video raises here
+            # and the pool records it as this item's failure).
+            svp = mpo = None
+            if session_id:
+                vpath, mpath = get_preprocessed_paths(storage_path, project_name, session_id, vname)
+                svp, mpo = str(vpath), str(mpath)
+            return extract_roi_latent_from_video(
+                storage_path=storage_path, project_name=project_name, video_name=vname,
+                roi_id=roi, model_name=model, batch_size=batch_size,
+                preprocess_config=preprocess_config, skip_existing=skip_existing,
+                progress_callback=None,  # per-video % would interleave; report on completion
+                pooling_method=pooling_method, pooling_scales=pooling_scales,
                 feature_layers=feature_layers,
-                source_video_path=source_video_path,
-                mask_path_override=mask_path_override,
-                session_id=session_id,
+                source_video_path=svp, mask_path_override=mpo, session_id=session_id,
+                device=device, num_workers=per_worker,
             )
-            if path:
-                paths.append(path)
+
+        def _on_done(vname: str, res) -> None:
+            completed['n'] += 1
+            if progress_callback is not None:
+                ok = (not isinstance(res, BaseException)) and bool(res)
+                progress_callback(completed['n'] / total,
+                                  f"[{completed['n']}/{total}] {vname} {'✅' if ok else '❌'}")
+
+        logger.info("extract_latent: video-level multi-GPU over %s for %d video(s) (%d workers/GPU)",
+                    list(device_ids), len(video_list), per_worker)
+        free = host_ram_available_bytes()
+        if free is not None and free < 2 * (1024 ** 3) * n_gpu:
+            logger.warning("extract_latent: low free host RAM (%.1f GB) for %d-GPU extraction.",
+                           free / 1024 ** 3, n_gpu)
+        # Speed by default (fast cuDNN benchmark + fp16, like single-GPU). Opt in
+        # to per-GPU-reproducible cuDNN-deterministic via CASTLE_MULTI_GPU_DETERMINISTIC.
+        with deterministic_ctx_if_enabled():
+            pool_out = run_on_device_pool(video_list, _worker, device_ids, on_done=_on_done)
+        for vname, res in zip(video_list, pool_out):
+            if isinstance(res, BaseException):
+                logger.error("Extraction failed for %s: %s", vname, res)
+                failures.append((vname, str(res)))
+            elif res:
+                paths.append(res)
                 successes.append(vname)
             else:
-                # extract_roi_latent_from_video returned empty: treat as failure in batch mode.
-                if is_batch:
-                    failures.append((vname, "extractor returned empty path (see logs)"))
-                else:
-                    raise ExtractionError(
-                        f"Extraction for '{vname}' returned no latent. See logs."
+                failures.append((vname, "extractor returned empty path (see logs)"))
+    else:
+        for vname in video_list:
+            source_video_path: Optional[str] = None
+            mask_path_override: Optional[str] = None
+            if session_id:
+                try:
+                    vpath, mpath = get_preprocessed_paths(storage_path, project_name, session_id, vname)
+                    source_video_path = str(vpath)
+                    mask_path_override = str(mpath)
+                except FileNotFoundError as exc:
+                    msg = (
+                        f"not preprocessed in session '{session_id}'. "
+                        f"Run Pre-process first. ({exc})"
                     )
-        except Exception as e:
-            logger.error("Extraction failed for %s: %s", vname, e, exc_info=True)
-            if is_batch:
-                failures.append((vname, str(e)))
-                continue
-            # Single-video mode: re-raise immediately so the caller sees the real error.
-            raise
+                    if is_batch:
+                        failures.append((vname, msg))
+                        logger.error("Extraction failed for %s: %s", vname, msg)
+                        continue
+                    raise CastleIOError(f"'{vname}' {msg}") from exc
+
+            try:
+                path = extract_roi_latent_from_video_auto(
+                    storage_path=storage_path,
+                    project_name=project_name,
+                    video_name=vname,
+                    roi_id=roi,
+                    model_name=model,
+                    batch_size=batch_size,
+                    preprocess_config=preprocess_config,
+                    skip_existing=skip_existing,
+                    progress_callback=progress_callback,
+                    pooling_method=pooling_method,
+                    pooling_scales=pooling_scales,
+                    feature_layers=feature_layers,
+                    source_video_path=source_video_path,
+                    mask_path_override=mask_path_override,
+                    session_id=session_id,
+                )
+                if path:
+                    paths.append(path)
+                    successes.append(vname)
+                else:
+                    # extract_roi_latent_from_video returned empty: treat as failure in batch mode.
+                    if is_batch:
+                        failures.append((vname, "extractor returned empty path (see logs)"))
+                    else:
+                        raise ExtractionError(
+                            f"Extraction for '{vname}' returned no latent. See logs."
+                        )
+            except Exception as e:
+                logger.error("Extraction failed for %s: %s", vname, e, exc_info=True)
+                if is_batch:
+                    failures.append((vname, str(e)))
+                    continue
+                # Single-video mode: re-raise immediately so the caller sees the real error.
+                raise
 
     if is_batch and failures:
         # Build per-video ✅/❌ summary in original video_list order.

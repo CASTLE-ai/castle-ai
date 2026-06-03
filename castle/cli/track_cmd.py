@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from castle.service.project_service import get_project_info
-from castle.service.tracking_service import track_video, get_tracking_status
+from castle.service.tracking_service import track_videos
 from castle.cli.storage_util import get_storage
 
 console = Console()
@@ -38,32 +38,34 @@ def track(
 
     console.print(f"Tracking {len(videos)} videos with model [bold]{model}[/bold]...")
 
+    # track_videos handles skip-existing and spreads whole videos across GPUs
+    # when CASTLE_MULTI_GPU is set (>1 CUDA device); otherwise it runs sequentially.
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        for video_name in videos:
-            task = progress.add_task(f"Tracking {video_name}...", total=None)
+        task = progress.add_task("Tracking…", total=None)
 
-            status = get_tracking_status(storage, project, video_name)
-            if skip_existing and status['tracked']:
-                progress.update(task, description=f"[dim]Skipped {video_name} (already tracked)[/dim]")
-                progress.stop_task(task)
-                continue
+        def _cb(frac: float, desc: str) -> None:
+            progress.update(task, description=desc)
 
-            result = track_video(
-                storage, project, video_name,
-                model=model, start=start, stop=stop,
-                skip_existing=skip_existing,
-            )
+        results = track_videos(
+            storage, project, videos,
+            model=model, start=start, stop=stop,
+            skip_existing=skip_existing,
+            progress_callback=_cb,
+        )
 
-            if result == 'Done':
-                progress.update(task, description=f"[green]✓ {video_name}[/green]")
-            elif result == 'Skipped':
-                progress.update(task, description=f"[dim]Skipped {video_name}[/dim]")
-            else:
-                progress.update(task, description=f"[red]✗ {video_name}: {result}[/red]")
-            progress.stop_task(task)
+    for video_name in videos:
+        result = results.get(video_name, '?')
+        if result == 'Done':
+            console.print(f"[green]✓ {video_name}[/green]")
+        elif result in ('Skipped', 'Skip'):
+            console.print(f"[dim]Skipped {video_name}[/dim]")
+        elif result == 'Cancel':
+            console.print(f"[yellow]Cancelled {video_name}[/yellow]")
+        else:
+            console.print(f"[red]✗ {video_name}: {result}[/red]")
 
     console.print("[green]Tracking complete.[/green]")

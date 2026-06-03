@@ -130,19 +130,18 @@ def track_run(
     """
     try:
         from castle.service.project_service import get_project_info
-        from castle.service.tracking_service import track_video
+        from castle.service.tracking_service import track_videos
 
         info = get_project_info(_storage(), project)
         if info.get("error"):
             return {"status": "error", "message": info["error"]}
 
         videos = info["videos"] if video == "All" else [video]
-        results = {}
-        for vname in videos:
-            status = track_video(_storage(), project, vname, model=model)
-            results[vname] = status
+        # track_videos spreads whole videos across GPUs when CASTLE_MULTI_GPU is
+        # set (>1 CUDA device), else runs sequentially.
+        results = track_videos(_storage(), project, videos, model=model)
 
-        errors = {k: v for k, v in results.items() if v.startswith("Error")}
+        errors = {k: v for k, v in results.items() if isinstance(v, str) and v.startswith("Error")}
         if errors:
             return {
                 "status": "error",

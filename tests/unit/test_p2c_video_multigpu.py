@@ -75,7 +75,8 @@ def test_track_videos_forwards_cancel_event_pool(monkeypatch, tmp_path):
     seen = []
 
     def fake_track_video(storage, project, video, *, model, start, stop, skip_existing,
-                         device=None, num_workers=None, pin_memory=True, cancel_event=None):
+                         device=None, num_workers=None, pin_memory=True, cancel_event=None,
+                         frame_callback=None):
         seen.append(cancel_event)
         return "Done"
 
@@ -99,6 +100,23 @@ def test_track_videos_forwards_cancel_event_sequential(monkeypatch, tmp_path):
     ts.track_videos(str(tmp_path), "P", ["a.mp4", "b.mp4"], device_ids=[],
                     skip_existing=False, cancel_event=ev)
     assert seen and all(c is ev for c in seen)
+
+
+def test_track_videos_frame_callback_tagged_with_video(monkeypatch, tmp_path):
+    # track_videos must hand each track_video a frame_callback that tags the
+    # per-video fraction with the video name, so the UI can aggregate a
+    # frame-granular bar across (concurrent) videos.
+    tagged = []
+
+    def fake_track_video(storage, project, video, *, frame_callback=None, **k):
+        if frame_callback:
+            frame_callback(0.5, "Tracking frame 8/16")  # tracker emits (frac, desc)
+        return "Done"
+
+    monkeypatch.setattr(ts, "track_video", fake_track_video)
+    ts.track_videos(str(tmp_path), "P", ["a.mp4", "b.mp4"], device_ids=[],
+                    skip_existing=False, frame_callback=lambda v, f: tagged.append((v, f)))
+    assert sorted(tagged) == [("a.mp4", 0.5), ("b.mp4", 0.5)]
 
 
 def test_track_videos_error_isolation(monkeypatch, tmp_path):
@@ -178,7 +196,8 @@ def test_track_videos_pool_divides_workers_and_disables_pin_memory(monkeypatch, 
     captured = []
 
     def fake_track_video(storage, project, video, *, model, start, stop, skip_existing,
-                         device=None, num_workers=None, pin_memory=True, cancel_event=None):
+                         device=None, num_workers=None, pin_memory=True, cancel_event=None,
+                         frame_callback=None):
         captured.append((num_workers, pin_memory))
         return "Done"
 

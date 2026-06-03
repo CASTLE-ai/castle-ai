@@ -224,15 +224,29 @@ def _fmt_mmss(seconds: float) -> str:
     return f"{m}:{s:02d}"
 
 
-def _eta_header(completed: int, total: int, t0: float, cancelling: bool) -> str:
-    """One-line live status: N/total · elapsed · ETA. Always shown at the top of
-    the Progress textbox so the remaining-time estimate is visible during the run."""
+def _progress_desc(frames_done: float, total_frames: int, vids_done: int,
+                   vids_total: int, t0: float, cancelling: bool) -> str:
+    """Frame-granular bar caption: ``frames done / total (%) · videos · ETA``.
+
+    The bar advances per frame-batch (not per whole video), so it moves smoothly
+    instead of jumping only when a video finishes. ETA is derived from the frame
+    fraction. Falls back to a video-count caption when frame totals are unknown.
+    """
     elapsed = time.time() - t0
-    prefix = "🛑 Cancelling (current video stopping)…  " if cancelling else "⏱️ "
-    if completed > 0:
-        eta = elapsed / completed * (total - completed)
-        return f"{prefix}{completed}/{total} done · elapsed {_fmt_mmss(elapsed)} · ETA ~{_fmt_mmss(eta)}"
-    return f"{prefix}{completed}/{total} done · elapsed {_fmt_mmss(elapsed)} · estimating…"
+    prefix = "🛑 Cancelling… " if cancelling else ""
+    if total_frames > 0:
+        frac = min(1.0, frames_done / total_frames)
+        fd = int(frames_done)
+        if frac > 0:
+            eta = elapsed * (1 - frac) / frac
+            return (f"{prefix}{fd:,}/{total_frames:,} frames ({frac*100:.0f}%) · "
+                    f"{vids_done}/{vids_total} videos · ETA ~{_fmt_mmss(eta)}")
+        return f"{prefix}0/{total_frames:,} frames · {vids_done}/{vids_total} videos · estimating…"
+    # Fallback (frame counts unavailable): video-granular.
+    if vids_done > 0:
+        eta = elapsed / vids_done * (vids_total - vids_done)
+        return f"{prefix}{vids_done}/{vids_total} videos · ETA ~{_fmt_mmss(eta)}"
+    return f"{prefix}{vids_done}/{vids_total} videos · estimating…"
 
 
 def track_all_videos(
@@ -247,12 +261,13 @@ def track_all_videos(
     """Execute tracking on all videos in the project (generator → live UI).
 
     Runs ``track_videos`` in a background thread and **polls** every ~0.5 s,
-    yielding ``(progress_text, start_btn_update, cancel_btn_update)`` so the
-    Progress textbox streams a live ``N/total · elapsed · ETA`` header plus the
-    recent per-video log — visible throughout the run (a manual ``gr.Progress``
-    bar inside a blocking call would not surface here). The button states are
-    owned by this function: the first yield flips to the running state and the
-    **final** yield always resets them — on success, error, or cancel.
+    driving the ``gr.Progress`` bar with a *frame-granular* caption (frames done
+    across all videos / total frames, with ETA) so the bar advances per
+    frame-batch rather than jumping per whole video. During the run the bar is
+    the live display and the textbox is left untouched (so the two don't overlap);
+    the **final** yield writes the full per-video log to the textbox. The button
+    states are owned by this function: the first yield flips to the running state
+    and the final yield always resets them — on success, error, or cancel.
 
     Args:
         skip_existing: when True (default) only videos missing ``mask_list.h5`` are
@@ -263,9 +278,10 @@ def track_all_videos(
         cancel_event: ``threading.Event``; once set, new videos stop launching and
             the in-flight video aborts mid-track (partial output discarded).
     """
-    # First yield: running state. Start disabled, Cancel enabled.
+    # First yield: running state. Start disabled, Cancel enabled. The bar (not
+    # this textbox) is the live display during the run, so keep the text minimal.
     yield (
-        "🚀 Batch tracking starting…",
+        "🚀 Batch tracking running — live progress on the bar above.",
         gr.update(interactive=False),
         gr.update(value=_CANCEL_BTN_IDLE, interactive=True),
     )
@@ -274,6 +290,13 @@ def track_all_videos(
     success_count = {"n": 0}
     failed_videos: List[str] = []
     stats = {"completed": 0}
+    # Frame accounting for the frame-granular bar. video_frac holds each started
+    # video's tracked fraction (completed videos pinned to 1.0); video_total_frames
+    # is the per-video frame count from pre-flight. Guarded by frac_lock because
+    # frame_callback / on_video_done fire from (possibly concurrent) GPU workers.
+    video_frac: Dict[str, float] = {}
+    video_total_frames: Dict[str, int] = {}
+    frac_lock = threading.Lock()
 
     # --- Validation + pre-flight (fast; runs in the generator thread) ---
     videos_to_process: List[str] = []
@@ -296,6 +319,20 @@ def track_all_videos(
         total = len(videos_to_process)
         messages.append(f"Found {total} videos to process")
 
+        # Count total frames (metadata only — fast) for the frame-granular bar.
+        total_frames = 0
+        for v in videos_to_process:
+            try:
+                with ReadArray(str(Path(storage_path) / project_name / "sources" / v)) as _r:
+                    n = len(_r)
+            except Exception as exc:  # noqa: BLE001 - fall back to video-granular
+                logger.warning("Could not read frame count for %s: %s", v, exc)
+                n = 0
+            video_total_frames[v] = n
+            total_frames += n
+        if total_frames > 0:
+            messages.append(f"Total frames to track: {total_frames:,}")
+
         # Resolve the GPU set from the UI toggle (independent of the
         # CASTLE_MULTI_GPU env gate). [] → sequential single-GPU path.
         if use_multi_gpu:
@@ -310,8 +347,16 @@ def track_all_videos(
         # DeAOT is sequential within a video, so parallelism is video-level (one
         # whole video per GPU). Per-video CSV + mix-video analysis runs in
         # on_video_done as each video finishes.
+        def _on_frame(video_name: str, frac: float) -> None:
+            with frac_lock:
+                video_frac[video_name] = max(0.0, min(1.0, frac))
+
         def _on_video_done(video_name: str, status: str) -> None:
             stats["completed"] += 1  # every finished video (done/skip/fail/cancel)
+            with frac_lock:
+                # Pin to full so the bar reflects the whole video as done (a
+                # cancelled/failed video still counts as "no more work pending").
+                video_frac[video_name] = 1.0
             if status == "Done":
                 success_count["n"] += 1
                 messages.append(f"✅ Completed tracking for video {video_name}")
@@ -349,6 +394,7 @@ def track_all_videos(
                     device_ids=device_ids,
                     on_video_done=_on_video_done,
                     cancel_event=cancel_event,
+                    frame_callback=_on_frame,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.exception("Batch tracking crashed")
@@ -360,19 +406,27 @@ def track_all_videos(
         t0 = time.time()
         worker.start()
 
-        # Poll loop: stream header + recent log into the textbox. Leave the
-        # buttons untouched (gr.update()) so the Cancel relabel isn't clobbered.
+        # Poll loop: drive the frame-granular bar. Leave the textbox and buttons
+        # untouched (gr.update()) so the bar doesn't overlap streamed text and the
+        # Cancel relabel isn't clobbered.
         try:
             while not done.wait(timeout=0.5):
-                completed = stats["completed"]
                 cancelling = cancel_event is not None and cancel_event.is_set()
-                header = _eta_header(completed, total, t0, cancelling)
+                with frac_lock:
+                    frames_done = sum(video_frac.get(v, 0.0) * video_total_frames.get(v, 0)
+                                      for v in video_total_frames)
+                if total_frames > 0:
+                    overall = min(1.0, frames_done / total_frames)
+                else:
+                    with frac_lock:
+                        overall = min(1.0, sum(video_frac.values()) / total) if total else 1.0
+                desc = _progress_desc(frames_done, total_frames, stats["completed"],
+                                      total, t0, cancelling)
                 try:
-                    progress(completed / total if total else 1.0, desc=header)
+                    progress(overall, desc=desc)
                 except Exception:  # noqa: BLE001 - bar is best-effort
                     pass
-                body = "\n".join(messages[-12:])
-                yield (f"{header}\n{'─' * 32}\n{body}", gr.update(), gr.update())
+                yield (gr.update(), gr.update(), gr.update())
         except GeneratorExit:
             # Client disconnected / event cancelled — stop the worker too.
             if cancel_event is not None:

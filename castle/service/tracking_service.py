@@ -25,7 +25,8 @@ def track_video(storage_path: str, project_name: str, video_name: str,
                 device: Optional[str] = None,
                 num_workers: Optional[int] = None,
                 pin_memory: bool = True,
-                cancel_event=None) -> str:
+                cancel_event=None,
+                frame_callback: Optional[Callable] = None) -> str:
     """
     Execute tracking on a single video.
 
@@ -44,6 +45,8 @@ def track_video(storage_path: str, project_name: str, video_name: str,
         pin_memory: DataLoader ``pin_memory`` (set ``False`` for concurrent multi-GPU).
         cancel_event: optional ``threading.Event``; checked per batch inside the
             tracker so an in-flight video aborts mid-track (partial output removed).
+        frame_callback: optional ``(fraction, desc)`` fired by the tracker after
+            each frame-batch — used by the batch UI for a frame-granular bar.
 
     Returns:
         Status string: 'Done', 'Skipped', 'Cancel', or error message
@@ -78,7 +81,8 @@ def track_video(storage_path: str, project_name: str, video_name: str,
                 pin_memory=pin_memory,
             )
 
-            return tracker.track(progress=None, cancel_event=cancel_event)
+            return tracker.track(progress=None, cancel_event=cancel_event,
+                                 frame_callback=frame_callback)
 
     except Exception as e:
         logger.error(f"Tracking failed for {video_name}: {e}", exc_info=True)
@@ -91,7 +95,8 @@ def track_videos(storage_path: str, project_name: str, video_names,
                  device_ids=None,
                  progress_callback: Optional[Callable] = None,
                  on_video_done: Optional[Callable] = None,
-                 cancel_event=None) -> dict:
+                 cancel_event=None,
+                 frame_callback: Optional[Callable] = None) -> dict:
     """Track multiple videos, spreading **whole videos across GPUs** when opted in.
 
     DeAOT is sequential *within* a video (memory propagation), so it cannot be
@@ -113,6 +118,10 @@ def track_videos(storage_path: str, project_name: str, video_names,
             by the Gradio batch UI to run its per-video post-tracking analysis.
         cancel_event: optional ``threading.Event``; once set, unstarted videos are
             reported as ``'Cancel'``.
+        frame_callback: optional ``(video_name, fraction)`` fired after each
+            frame-batch of *every* video (the per-video tracker fraction, tagged
+            with the video name) — lets the batch UI aggregate a frame-granular
+            overall progress bar across (possibly concurrent) videos.
 
     Returns:
         ``{video_name: status}`` where status is 'Done'/'Skip'/'Skipped'/'Cancel'/'Error: …'.
@@ -172,10 +181,11 @@ def track_videos(storage_path: str, project_name: str, video_names,
             assert device and str(device).startswith("cuda"), (
                 f"track_videos worker requires an explicit cuda device, got {device!r}"
             )
+            fcb = (lambda frac, desc, v=video: frame_callback(v, frac)) if frame_callback else None
             return track_video(storage_path, project_name, video, model=model,
                                start=start, stop=stop, skip_existing=False, device=device,
                                num_workers=per_gpu_workers, pin_memory=False,
-                               cancel_event=cancel_event)
+                               cancel_event=cancel_event, frame_callback=fcb)
 
         def _on_done(video: str, res) -> None:
             _announce(video, _norm(res))
@@ -193,9 +203,10 @@ def track_videos(storage_path: str, project_name: str, video_names,
             if cancel_event is not None and cancel_event.is_set():
                 results[v] = 'Cancel'
                 continue
+            fcb = (lambda frac, desc, v=v: frame_callback(v, frac)) if frame_callback else None
             status = track_video(storage_path, project_name, v, model=model,
                                  start=start, stop=stop, skip_existing=False,
-                                 cancel_event=cancel_event)
+                                 cancel_event=cancel_event, frame_callback=fcb)
             results[v] = status
             _announce(v, status)
 

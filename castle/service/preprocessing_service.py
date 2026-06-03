@@ -9,10 +9,72 @@ Session management is delegated to castle.core.preprocess_session.
 from __future__ import annotations
 
 import logging
+import queue
+import threading
+import time
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Iterator, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _threaded_iter(producer, maxsize: int = 16) -> Iterator:
+    """Run a generator ``producer()`` on a background thread, yielding its items
+    in order on the calling thread.
+
+    This overlaps a CPU/I-O producer (e.g. video decode + warpAffine, which
+    release the GIL) with whatever the caller does per item (e.g. the libx264
+    encode that dominates KIT wall-clock). Items are delivered through a bounded
+    FIFO queue, so ordering is preserved exactly; the caller drives the encode at
+    its own pace with unchanged settings, keeping output byte-identical to the
+    serial version. A producer exception is re-raised on the calling thread.
+    """
+    q: "queue.Queue" = queue.Queue(maxsize=maxsize)
+    sentinel = object()
+    state: dict = {}
+    stop = threading.Event()
+
+    def _put(item) -> bool:
+        # Block on a full queue but stay responsive to an early consumer exit,
+        # so we never deadlock if the consumer stops draining.
+        while not stop.is_set():
+            try:
+                q.put(item, timeout=0.25)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def _run() -> None:
+        try:
+            for item in producer():
+                if not _put(item):
+                    return
+        except BaseException as exc:  # surfaced to the consumer thread below
+            state["exc"] = exc
+        finally:
+            _put(sentinel)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    try:
+        while True:
+            item = q.get()
+            if item is sentinel:
+                break
+            yield item
+    finally:
+        # On early exit (consumer raised / broke), signal + drain so a producer
+        # blocked on a full queue can wake up and stop.
+        stop.set()
+        try:
+            while True:
+                q.get_nowait()
+        except queue.Empty:
+            pass
+        worker.join(timeout=5.0)
+    if "exc" in state:
+        raise state["exc"]
 
 
 def preprocess_stabilized_camera(
@@ -125,12 +187,18 @@ def preprocess_stabilized_camera(
     if progress_callback:
         progress_callback(0.0, "Extracting centroids…")
 
+    _t_centroid_start = time.perf_counter()
     positions = extract_centroids_from_masks(mask_h5_path, body_roi_id, n_frames)
 
     if progress_callback:
         progress_callback(0.05, "Extracting orientations…")
 
-    angles = extract_orientations_from_masks(mask_h5_path, body_roi_id, head_roi_id, n_frames)
+    # Reuse the body centroids we just computed (avoids a second full H5 sweep
+    # + connected-components pass over the body ROI inside extract_orientations).
+    angles = extract_orientations_from_masks(
+        mask_h5_path, body_roi_id, head_roi_id, n_frames, body_pos=positions,
+    )
+    _t_centroid = time.perf_counter() - _t_centroid_start
 
     if progress_callback:
         progress_callback(0.10, "Computing stabilised trajectory…")
@@ -153,6 +221,7 @@ def preprocess_stabilized_camera(
     from castle.utils.h5_io import H5IO
 
     try:
+        _t_encode_start = time.perf_counter()
         _encode_stabilized_video(
             video_path=source_path,
             cam=cam,
@@ -164,10 +233,12 @@ def preprocess_stabilized_camera(
             progress_start=0.12,
             progress_end=0.80,
         )
+        _t_encode = time.perf_counter() - _t_encode_start
 
         if progress_callback:
             progress_callback(0.80, "Saving transformed masks…")
 
+        _t_mask_start = time.perf_counter()
         with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
             keys = sorted(f_in.keys(), key=lambda x: int(x) if x.isdigit() else 0)
             for i, key in enumerate(keys):
@@ -181,6 +252,13 @@ def preprocess_stabilized_camera(
                 if progress_callback and i % 500 == 0:
                     frac = 0.80 + 0.18 * i / max(len(keys), 1)
                     progress_callback(frac, f"Mask {i}/{len(keys)}")
+        _t_mask = time.perf_counter() - _t_mask_start
+
+        logger.info(
+            "KIT timing (%s, %d frames): centroids+orient=%.1fs, encode=%.1fs, "
+            "mask-transform=%.1fs",
+            video_name, n_frames, _t_centroid, _t_encode, _t_mask,
+        )
     except BaseException:
         # Remove partial artifacts so skip_existing won't silently reuse corrupt output.
         for p in (out_video_path, out_mask_path):
@@ -331,22 +409,24 @@ def preprocess_center_crop(
     encode_failed = False
     try:
         with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
-            try:
+            def _produce():
+                # Decode + read source mask + center-crop transform on a
+                # background thread, overlapping the encode below. Frames are
+                # yielded in order; skipped frames (missing mask / failed
+                # transform) are simply not yielded — identical to the serial
+                # path, so output stays byte-identical.
                 for frame_idx, pkt_frame in enumerate(in_container.decode(in_stream)):
                     if frame_idx >= n_frames:
                         break
-
                     img_bgr = pkt_frame.to_ndarray(format="bgr24")
                     key = str(frame_idx)
                     orig_mask = f_in[key][:] if key in f_in else None
-
                     if orig_mask is None:
                         logger.warning(
                             "preprocess_center_crop: mask missing at frame %d — skipping",
                             frame_idx,
                         )
                         continue
-
                     try:
                         cropped_frame, cropped_mask = preprocess.transform(img_bgr, orig_mask)
                     except Exception:
@@ -355,7 +435,10 @@ def preprocess_center_crop(
                             frame_idx, exc_info=True,
                         )
                         continue
+                    yield frame_idx, cropped_frame, cropped_mask
 
+            try:
+                for frame_idx, cropped_frame, cropped_mask in _threaded_iter(_produce):
                     out_frame = av.VideoFrame.from_ndarray(cropped_frame, format="bgr24")
                     for packet in out_stream.encode(out_frame):
                         out_container.mux(packet)
@@ -432,12 +515,19 @@ def _encode_stabilized_video(
     out_stream.pix_fmt = "yuv420p"
     out_stream.options = {"crf": "18", "preset": "fast"}
 
-    try:
+    def _produce():
+        # Decode + warpAffine on a background thread (both release the GIL),
+        # overlapping the libx264 encode below. Frames are yielded strictly in
+        # order, so the encoder sees the same sequence + settings as before →
+        # byte-identical output.
         for i, pkt_frame in enumerate(in_container.decode(in_stream)):
             if i >= limit:
                 break
             img_bgr = pkt_frame.to_ndarray(format="bgr24")
-            result = cam.generate_frame(img_bgr, i)
+            yield i, cam.generate_frame(img_bgr, i)
+
+    try:
+        for i, result in _threaded_iter(_produce):
             out_frame = av.VideoFrame.from_ndarray(result, format="bgr24")
             for packet in out_stream.encode(out_frame):
                 out_container.mux(packet)

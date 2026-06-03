@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -531,6 +531,7 @@ def extract_orientations_from_masks(
     body_roi_id: int,
     head_roi_id: int,
     n_frames: int,
+    body_pos: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Compute unwrapped orientation angles from body→head vector.
 
@@ -553,8 +554,14 @@ def extract_orientations_from_masks(
     -------
     np.ndarray, shape (n_frames,)
         Unwrapped orientation in degrees (float64).
+    body_pos : np.ndarray, optional
+        Pre-computed body centroids, shape ``(n_frames, 2)``. If supplied, the
+        body ROI is NOT re-read from the mask HDF5 — the caller already swept it
+        (e.g. ``preprocess_stabilized_camera`` computes ``positions`` first),
+        which avoids a second full sweep + connected-components pass.
     """
-    body_pos = extract_centroids_from_masks(mask_h5_path, body_roi_id, n_frames)
+    if body_pos is None:
+        body_pos = extract_centroids_from_masks(mask_h5_path, body_roi_id, n_frames)
     head_pos = extract_centroids_from_masks(mask_h5_path, head_roi_id, n_frames)
 
     dx = head_pos[:, 0] - body_pos[:, 0]

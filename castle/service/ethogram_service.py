@@ -194,6 +194,8 @@ def _ethogram_to_dict(ethogram) -> dict:
         "n_frames": ethogram.n_frames,
         "fps": ethogram.fps,
         "n_clusters": ethogram.n_clusters,
+        "n_unlabeled": ethogram.n_unlabeled,
+        "unlabeled_fraction": round(ethogram.unlabeled_fraction, 4),
         "cluster_names": ethogram.cluster_names,
         "temporal_coherence": round(ethogram.temporal_coherence, 4),
         "transition_matrix": {
@@ -429,19 +431,44 @@ def export_ethogram_csv(
         "video", "cluster_id", "cluster_name", "start_frame", "end_frame",
         "duration_frames", "duration_seconds",
     ]
+    # Per-video summary: unlabeled (noise) frames are excluded from the bout /
+    # transition stats above and reported here separately (ready for group analysis).
+    summary_fields = [
+        "video", "n_frames", "fps", "n_clusters", "n_unlabeled", "unlabeled_fraction",
+        "temporal_coherence", "transition_entropy", "stationarity", "n_transitions",
+    ]
 
     stats_path = os.path.join(output_path, "bout_stats.csv")
     bouts_path = os.path.join(output_path, "bouts.csv")
-    with open(stats_path, "w", newline="") as sf, open(bouts_path, "w", newline="") as bf:
+    summary_path = os.path.join(output_path, "video_summary.csv")
+    with open(stats_path, "w", newline="") as sf, \
+            open(bouts_path, "w", newline="") as bf, \
+            open(summary_path, "w", newline="") as mf:
         stats_writer = csv.DictWriter(sf, fieldnames=stats_fields)
         stats_writer.writeheader()
         bouts_writer = csv.writer(bf)
         bouts_writer.writerow(bouts_fields)
+        summary_writer = csv.DictWriter(mf, fieldnames=summary_fields)
+        summary_writer.writeheader()
 
         for basename, _ts_path in videos:
             ethogram = compute_video_ethogram(
                 project_path, basename, cluster_names=annotated_names,
             )
+
+            tm_summary = ethogram.transition_matrix
+            summary_writer.writerow({
+                "video": basename,
+                "n_frames": ethogram.n_frames,
+                "fps": round(ethogram.fps, 6),
+                "n_clusters": ethogram.n_clusters,
+                "n_unlabeled": ethogram.n_unlabeled,
+                "unlabeled_fraction": round(ethogram.unlabeled_fraction, 6),
+                "temporal_coherence": round(ethogram.temporal_coherence, 6),
+                "transition_entropy": round(tm_summary.entropy, 6),
+                "stationarity": round(tm_summary.stationarity, 6),
+                "n_transitions": tm_summary.n_transitions,
+            })
 
             for cid in sorted(ethogram.bout_stats.keys()):
                 bs = ethogram.bout_stats[cid]

@@ -348,11 +348,14 @@ class TestExportCSV:
 
 class TestEdgeCases:
     def test_negative_cluster_ids(self):
-        """Cluster ID -1 (noise) should still work."""
+        """Cluster ID -1 (noise/unclustered) is an unlabeled gap, not a state:
+        excluded from bouts/stats/n_clusters and reported separately."""
         labels = np.array([-1, -1, 0, 0, -1])
         eth = compute_ethogram(labels, fps=1.0)
-        assert -1 in eth.bout_stats
-        assert eth.n_clusters == 2
+        assert -1 not in eth.bout_stats
+        assert eth.n_clusters == 1           # only cluster 0 is real
+        assert eth.n_unlabeled == 3
+        assert eth.unlabeled_fraction == 0.6
 
     def test_large_cluster_ids(self):
         labels = np.array([100, 100, 200, 200, 300])

@@ -487,7 +487,28 @@ def generate_ethogram(annotator_data, selected_video):
                 "Mean IBI (s)": f"{bs.mean_inter_bout_interval_s:.3f}",
             }
         )
+    # Report unlabeled (noise / unclustered) frames separately — they are
+    # excluded from every bout/transition statistic above, not treated as a
+    # behavior. Surface the fraction both persistently (a marked row) and as
+    # a toast so it isn't missed for a published figure.
+    unlabeled_pct = ethogram.unlabeled_fraction * 100.0
+    rows.append(
+        {
+            "Cluster": "Unlabeled (noise, excluded)",
+            "N Bouts": "—",
+            "Freq (%)": f"{unlabeled_pct:.1f}",
+            "Mean Dur (s)": "—",
+            "Median Dur (s)": "—",
+            "Std Dur (s)": "—",
+            "CV": "—",
+            "Mean IBI (s)": "—",
+        }
+    )
     stats_df = pd.DataFrame(rows)
+    gr.Info(
+        f"{selected_video}: {unlabeled_pct:.1f}% of frames are unlabeled "
+        f"(noise / unclustered) and were excluded from bout & transition statistics."
+    )
 
     # --- A3: Ethogram raster ---
     raster_fig = plot_ethogram_raster(ethogram)

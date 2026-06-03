@@ -51,7 +51,14 @@ class TransitionMatrix:
 
 @dataclass
 class Ethogram:
-    """Complete ethogram analysis result."""
+    """Complete ethogram analysis result.
+
+    Unclustered/noise frames (cluster id ``-1`` — DBSCAN noise plus any
+    extraction-dropped frames carried as NaN→-1) are treated as *unlabeled
+    gaps*, not as a behavioral state: they are excluded from ``n_clusters``,
+    bouts, the transition matrix and temporal coherence, and reported
+    separately via ``n_unlabeled`` / ``unlabeled_fraction``.
+    """
     cluster_labels: np.ndarray  # per-frame cluster assignments
     fps: float
     n_frames: int
@@ -61,6 +68,8 @@ class Ethogram:
     bout_stats: Dict[int, BoutStatistics]
     transition_matrix: TransitionMatrix
     temporal_coherence: float
+    n_unlabeled: int = 0            # frames with cluster id -1 (noise/dropped)
+    unlabeled_fraction: float = 0.0  # n_unlabeled / n_frames
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +79,10 @@ class Ethogram:
 def extract_bouts(cluster_labels: np.ndarray, fps: float = 30.0) -> List[BoutInfo]:
     """Extract all behavioral bouts from frame-level cluster labels.
 
-    A bout is a maximal consecutive run of the same cluster ID.
+    A bout is a maximal consecutive run of the same cluster ID.  Noise /
+    unclustered frames (``cluster_id == -1``) are **not** emitted as bouts;
+    they still segment the real bouts on either side (a run of ``-1`` between
+    two ``0`` runs leaves two separate ``0`` bouts, never one merged bout).
 
     Args:
         cluster_labels: 1-D integer array of per-frame cluster assignments.
@@ -85,9 +97,12 @@ def extract_bouts(cluster_labels: np.ndarray, fps: float = 30.0) -> List[BoutInf
     from castle.service.bout_service import find_bouts as _find_bouts
 
     unique_ids = np.unique(cluster_labels)
-    # Collect (start, end, cluster_id) tuples then sort by start
+    # Collect (start, end, cluster_id) tuples then sort by start.
+    # Skip -1 (noise/unlabeled): it is a gap, not a behavioral state.
     raw: List[Tuple[int, int, int]] = []
     for cid in unique_ids:
+        if int(cid) == -1:
+            continue
         for start, end in _find_bouts(cluster_labels, int(cid)):
             raw.append((start, end, int(cid)))
 
@@ -181,7 +196,10 @@ def compute_transition_matrix(
     ``P[i, j] = P(cluster_j at t+1 | cluster_i at t)``
 
     Self-transitions (i == j) are excluded: the matrix only counts actual
-    state changes so that rows sum to 1 over off-diagonal entries.
+    state changes so that rows sum to 1 over off-diagonal entries.  Noise /
+    unclustered frames (``-1``) are excluded from the axes, and any transition
+    with ``-1`` on either side is not counted (a behavior → unlabeled gap →
+    behavior is not a real behavioral transition).
 
     Args:
         cluster_labels: 1-D integer array.
@@ -193,7 +211,7 @@ def compute_transition_matrix(
     if cluster_names is None:
         cluster_names = {}
 
-    unique_ids = sorted(int(x) for x in np.unique(cluster_labels))
+    unique_ids = sorted(int(x) for x in np.unique(cluster_labels) if int(x) != -1)
     K = len(unique_ids)
     id_to_idx = {cid: i for i, cid in enumerate(unique_ids)}
     names = [cluster_names.get(cid, f"cluster_{cid}") for cid in unique_ids]
@@ -203,8 +221,8 @@ def compute_transition_matrix(
     if len(cluster_labels) > 1:
         prev = cluster_labels[:-1]
         curr = cluster_labels[1:]
-        # Only count actual transitions
-        mask = prev != curr
+        # Count actual transitions only, excluding any pair touching -1.
+        mask = (prev != curr) & (prev != -1) & (curr != -1)
         for p, c in zip(prev[mask], curr[mask]):
             counts[id_to_idx[int(p)], id_to_idx[int(c)]] += 1
 
@@ -251,11 +269,15 @@ def _compute_stationarity(
     if K <= 1:
         return 1.0
 
-    # Build full transition matrix including self-transitions for eigen analysis
+    # Build full transition matrix including self-transitions for eigen
+    # analysis.  Skip any pair touching -1 (not in id_to_idx — unlabeled).
     full_counts = np.zeros((K, K), dtype=np.float64)
     if len(cluster_labels) > 1:
         for p, c in zip(cluster_labels[:-1], cluster_labels[1:]):
-            full_counts[id_to_idx[int(p)], id_to_idx[int(c)]] += 1
+            pi_, ci_ = int(p), int(c)
+            if pi_ == -1 or ci_ == -1:
+                continue
+            full_counts[id_to_idx[pi_], id_to_idx[ci_]] += 1
     row_sums = full_counts.sum(axis=1)
     full_prob = np.zeros_like(full_counts)
     nonzero = row_sums > 0
@@ -296,17 +318,27 @@ def compute_temporal_coherence(cluster_labels: np.ndarray, window: int = 1) -> f
     High coherence → stable, long bouts (good segmentation).
     Low coherence → flickering labels (noisy segmentation).
 
+    Noise / unclustered frames (``-1``) are excluded: a neighbor pair where
+    either side is ``-1`` is not counted (an unlabeled gap is neither a match
+    nor a flicker).  Computed only over pairs of labeled frames.
+
     Args:
         cluster_labels: 1-D integer array.
         window: Neighbor distance (default 1 = adjacent frames).
 
     Returns:
-        Float in [0, 1].  Returns 1.0 for arrays of length ≤ window.
+        Float in [0, 1].  Returns 1.0 for arrays of length ≤ window or with
+        no labeled neighbor pairs.
     """
     n = len(cluster_labels)
     if n <= window:
         return 1.0
-    matches = cluster_labels[:-window] == cluster_labels[window:]
+    left = cluster_labels[:-window]
+    right = cluster_labels[window:]
+    valid = (left != -1) & (right != -1)
+    if not np.any(valid):
+        return 1.0
+    matches = left[valid] == right[valid]
     return float(np.mean(matches))
 
 
@@ -333,8 +365,12 @@ def compute_ethogram(
 
     labels = np.asarray(cluster_labels)
     n_frames = len(labels)
-    unique_ids = sorted(int(x) for x in np.unique(labels))
+    # -1 (noise/unclustered/dropped) is an unlabeled gap, not a behavioral
+    # state: exclude it from the cluster set and report it separately.
+    unique_ids = sorted(int(x) for x in np.unique(labels) if int(x) != -1)
     n_clusters = len(unique_ids)
+    n_unlabeled = int(np.sum(labels == -1))
+    unlabeled_fraction = (n_unlabeled / n_frames) if n_frames > 0 else 0.0
 
     # Fill in any missing names
     names = {cid: cluster_names.get(cid, f"cluster_{cid}") for cid in unique_ids}
@@ -354,4 +390,6 @@ def compute_ethogram(
         bout_stats=bout_stats,
         transition_matrix=tm,
         temporal_coherence=tc,
+        n_unlabeled=n_unlabeled,
+        unlabeled_fraction=unlabeled_fraction,
     )

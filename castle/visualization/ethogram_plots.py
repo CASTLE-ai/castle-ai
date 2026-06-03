@@ -46,11 +46,15 @@ def plot_ethogram_raster(
     from matplotlib.colors import ListedColormap
 
     labels = ethogram.cluster_labels
-    unique_ids = sorted(ethogram.cluster_names.keys())
+    unique_ids = sorted(ethogram.cluster_names.keys())  # excludes -1 (unlabeled)
     n = len(unique_ids)
-    id_to_idx = {cid: i for i, cid in enumerate(unique_ids)}
+    # Reserve colour index 0 for unlabeled (-1 / noise); real clusters take 1..n
+    # so unlabeled frames render as a neutral grey gap, not as the first cluster.
+    id_to_idx = {cid: i + 1 for i, cid in enumerate(unique_ids)}
 
-    colors = _get_cluster_colors(ethogram.cluster_names, n)
+    UNLABELED_COLOR = "#dddddd"
+    real_colors = _get_cluster_colors(ethogram.cluster_names, n)
+    colors = [UNLABELED_COLOR] + real_colors
     cmap = ListedColormap(colors)
 
     mapped = np.array([id_to_idx.get(int(lbl), 0) for lbl in labels])
@@ -63,7 +67,7 @@ def plot_ethogram_raster(
         aspect="auto",
         cmap=cmap,
         vmin=0,
-        vmax=n - 1,
+        vmax=len(colors) - 1,
         extent=[time_s[0], time_s[-1], 0, 1],
         interpolation="nearest",
     )
@@ -72,13 +76,17 @@ def plot_ethogram_raster(
     ax.set_yticks([])
     ax.set_title("Ethogram Raster")
 
-    # Legend
+    # Legend: real clusters, plus an "Unlabeled" entry when noise is present.
     import matplotlib.patches as mpatches
     patches = [
-        mpatches.Patch(color=colors[i], label=ethogram.cluster_names.get(cid, f"c{cid}"))
+        mpatches.Patch(color=real_colors[i], label=ethogram.cluster_names.get(cid, f"c{cid}"))
         for i, cid in enumerate(unique_ids)
     ]
-    ax.legend(handles=patches, loc="upper right", fontsize="small", ncol=min(n, 6))
+    if getattr(ethogram, "n_unlabeled", 0) > 0:
+        patches.append(mpatches.Patch(color=UNLABELED_COLOR, label="Unlabeled"))
+    if patches:
+        ax.legend(handles=patches, loc="upper right", fontsize="small",
+                  ncol=min(max(n, 1), 6))
 
     fig.tight_layout()
     return fig

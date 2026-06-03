@@ -100,7 +100,7 @@ def _enable_cudnn_benchmark_if_not_strict() -> None:
         torch.backends.cudnn.benchmark = True
 
 
-def _build_extractor_loader_kwargs(batch_size: int, num_workers: int) -> dict:
+def _build_extractor_loader_kwargs(batch_size: int, num_workers: int, pin_memory: bool = True) -> dict:
     """Common DataLoader kwargs for both latent + rotation extraction paths.
 
     Adds ``persistent_workers`` + ``prefetch_factor`` (PERF-07) and threads
@@ -111,7 +111,7 @@ def _build_extractor_loader_kwargs(batch_size: int, num_workers: int) -> dict:
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
     gen = make_torch_generator()
     if gen is not None:
@@ -496,7 +496,7 @@ def extract_roi_latent_from_video(
         on_frame_error=on_frame_error,
     )
 
-    loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS))
+    loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS, pin_memory=(device is None)))
 
     latent_array, failed_frame_ranges, n_batches_failed = _run_extraction_loop(
         observer, loader,
@@ -937,6 +937,33 @@ def _get_device_encoder(model_name: str, device: str):
         return enc
 
 
+def clear_device_encoder_cache() -> None:
+    """Evict the multi-GPU per-device encoders and free their GPU memory.
+
+    The primary-device encoder lives in models._model_cache (evicted by
+    _evict_model_cache); the cuda:1+ encoders built here for multi-GPU
+    extraction were previously never freed, leaking VRAM on the secondary
+    GPU for the process lifetime (e.g. across model switches in Gradio).
+    """
+    import torch
+    with _device_encoder_lock:
+        for key, enc in list(_device_encoder_cache.items()):
+            dev = key[1]
+            try:
+                if getattr(enc, 'model', None) is not None:
+                    del enc.model
+                    enc.model = None
+            except Exception:  # noqa: BLE001
+                pass
+            _device_encoder_cache.pop(key, None)
+            try:
+                if torch.cuda.is_available():
+                    with torch.cuda.device(dev):
+                        torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def extract_roi_latent_from_video_2gpu(
     storage_path: str,
     project_name: str,
@@ -1045,7 +1072,7 @@ def extract_roi_latent_from_video_2gpu(
                 interpolated_points=None, on_frame_error=on_frame_error,
             )
             sub = Subset(dataset, list(range(start, end)))
-            loader = DataLoader(sub, **_build_extractor_loader_kwargs(batch_size, per_thread_workers))
+            loader = DataLoader(sub, **_build_extractor_loader_kwargs(batch_size, per_thread_workers, pin_memory=False))
             arr, fails, n_failed = _run_extraction_loop(
                 enc, loader,
                 roi_id=roi_id, pooling_method=pooling_method, pooling_scales=pooling_scales,
@@ -1054,7 +1081,7 @@ def extract_roi_latent_from_video_2gpu(
                 video_name=f"{video_name}[{start}:{end}]", progress_callback=None,
             )
             results[slot] = (arr, fails, n_failed)
-        except BaseException as exc:  # surfaced to the caller; no partial write
+        except Exception as exc:  # surfaced to the caller; no partial write
             errors[slot] = exc
 
     if progress_callback:
@@ -1070,8 +1097,13 @@ def extract_roi_latent_from_video_2gpu(
         t.join()
 
     if errors:
-        first = sorted(errors.items())[0][1]
-        raise first
+        slots = sorted(errors.items())
+        if len(slots) > 1:
+            detail = '; '.join(f'GPU{device_ids[s]}: {e}' for s, e in slots)
+            raise RuntimeError(
+                f'Multi-GPU extraction failed on {len(slots)} device(s): {detail}'
+            )
+        raise slots[0][1]
 
     # Merge per-range latents in frame order; offset failed ranges to global coords.
     latent_parts = []

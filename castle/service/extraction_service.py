@@ -170,6 +170,14 @@ def extract_latent(
                 successes.append(vname)
             else:
                 failures.append((vname, "extractor returned empty path (see logs)"))
+        # Free the secondary-GPU encoders built during the pool — they live in
+        # extractor._device_encoder_cache (separate from the model singleton) and
+        # would otherwise stay resident on GPU1 for the process lifetime.
+        try:
+            from castle.core.extractor import clear_device_encoder_cache
+            clear_device_encoder_cache()
+        except Exception:  # noqa: BLE001 - teardown must never fail the batch
+            logger.debug("clear_device_encoder_cache after pool failed", exc_info=True)
     else:
         for vname in video_list:
             source_video_path: Optional[str] = None

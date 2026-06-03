@@ -280,7 +280,7 @@ class DINOv2Encoder(VisualEncoder):
          masks_t = (mask_batch.to(self.device) == roi_id).to(dtype=torch.float32)
          
          with torch.inference_mode():
-             if self.device == 'cuda':
+             if 'cuda' in str(self.device):
                  with torch.autocast(device_type='cuda', dtype=torch.float16):
                      feats = self.extract_features(x, layers=layers)
                      if pooling == 'multiscale' and scales:
@@ -523,6 +523,13 @@ def _evict_model_cache():
             del old_model.model
             old_model.model = None
         del old_model
+    # Also drop the multi-GPU per-device encoders: extractor keeps them in
+    # a separate cache that eviction never touched, leaking VRAM on cuda:1+.
+    try:
+        from castle.core.extractor import clear_device_encoder_cache
+        clear_device_encoder_cache()
+    except Exception:  # noqa: BLE001 - never let teardown break eviction
+        logger.debug('clear_device_encoder_cache during eviction failed', exc_info=True)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 

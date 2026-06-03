@@ -210,3 +210,81 @@ def test_extract_latent_opt_in_determinism(monkeypatch):
     monkeypatch.setattr(es, "extract_roi_latent_from_video", lambda **k: f"/p/{k['video_name']}.npz")
     es.extract_latent("/tmp", "P", "All", model="dinov3_vitb16", roi=1)
     assert counter["n"] == 1, "CASTLE_MULTI_GPU_DETERMINISTIC=1 must enter deterministic ctx"
+
+
+# --------------------------------------------------------------------------
+# Second-round hardening: device-encoder VRAM leak, cuDNN flag safety,
+# split pin_memory, config-lock timeout
+# --------------------------------------------------------------------------
+
+import types  # noqa: E402
+
+
+def _fake_device_encoder():
+    return types.SimpleNamespace(model=object())
+
+
+def test_clear_device_encoder_cache_empties_and_drops_model():
+    # C1: cuda:1+ encoders must be evictable (they previously leaked VRAM forever).
+    from castle.core import extractor as ex
+    enc = _fake_device_encoder()
+    ex._device_encoder_cache[("dinov3_vitb16", "cuda:1")] = enc
+    ex.clear_device_encoder_cache()
+    assert ex._device_encoder_cache == {}
+    assert enc.model is None
+
+
+def test_clear_model_cache_also_clears_device_encoders(monkeypatch):
+    # C1: a model switch (models._evict_model_cache) must also free the
+    # extractor's separate per-device cache, not just the model singleton.
+    from castle.core import extractor as ex
+    from castle.core import models as md
+    ex._device_encoder_cache[("dinov2_vitb14_reg4_pretrain", "cuda:1")] = _fake_device_encoder()
+    md.clear_model_cache()
+    assert ex._device_encoder_cache == {}
+
+
+def test_extract_latent_pool_tears_down_device_encoders(monkeypatch):
+    # C1: the multi-GPU batch frees cuda:1 encoders when it finishes.
+    import castle.core.gpu_pool as gp
+    from castle.core import extractor as ex
+    _patch_project(monkeypatch, ["v1.mp4", "v2.mp4"])
+    monkeypatch.setattr(gp, "resolve_device_ids", lambda: [0, 1])
+    monkeypatch.setattr(es, "extract_roi_latent_from_video", lambda **k: f"/p/{k['video_name']}.npz")
+    calls = {"n": 0}
+    monkeypatch.setattr(ex, "clear_device_encoder_cache", lambda: calls.__setitem__("n", calls["n"] + 1))
+    es.extract_latent("/tmp", "P", "All", model="dinov3_vitb16", roi=1)
+    assert calls["n"] == 1, "multi-GPU batch must tear down per-device encoders"
+
+
+def test_cross_gpu_deterministic_restores_flags_on_exception():
+    # C2: an exception inside the block must still restore the prior cuDNN flags
+    # (a leaked deterministic=True would silently slow the long-lived process).
+    import torch
+    from castle.core.gpu_pool import cross_gpu_deterministic
+    cudnn = torch.backends.cudnn
+    saved = (cudnn.benchmark, cudnn.deterministic)
+    try:
+        cudnn.benchmark, cudnn.deterministic = True, False
+        with pytest.raises(RuntimeError):
+            with cross_gpu_deterministic():
+                assert cudnn.deterministic is True and cudnn.benchmark is False
+                raise RuntimeError("boom")
+        assert cudnn.benchmark is True and cudnn.deterministic is False  # restored
+    finally:
+        cudnn.benchmark, cudnn.deterministic = saved
+
+
+def test_build_loader_kwargs_pin_memory_param():
+    # C3: pin_memory must be tunable (the within-video 2-GPU split passes False to
+    # avoid the host-RAM OOM that the tracking path was already fixed for).
+    from castle.core.extractor import _build_extractor_loader_kwargs
+    assert _build_extractor_loader_kwargs(8, 0)["pin_memory"] is True       # default
+    assert _build_extractor_loader_kwargs(8, 0, pin_memory=False)["pin_memory"] is False
+
+
+def test_config_filelock_timeout_is_generous():
+    # C4: a 5s timeout could spuriously fail a successful extraction on slow /
+    # cross-process-contended storage; give it real headroom.
+    from castle.core import project as pj
+    assert pj._CONFIG_FILELOCK_TIMEOUT >= 30.0

@@ -268,97 +268,95 @@ class ROITracker:
             except Exception as e:
                 logger.warning(f"Could not remove existing HDF5 file {mask_list_path}: {e}")
 
-        mask_seq = H5IO(str(mask_list_path))
+        with H5IO(str(mask_list_path)) as mask_seq:
 
-        # Write video and ROI configuration
-        first_frame = self.video_source[0]
-        mask_seq.write_config("n_rois", self.n_rois)
-        mask_seq.write_config("total_frames", len(self.video_source))
-        mask_seq.write_config("height", first_frame.shape[0])
-        mask_seq.write_config("width", first_frame.shape[1])
+            # Write video and ROI configuration
+            first_frame = self.video_source[0]
+            mask_seq.write_config("n_rois", self.n_rois)
+            mask_seq.write_config("total_frames", len(self.video_source))
+            mask_seq.write_config("height", first_frame.shape[0])
+            mask_seq.write_config("width", first_frame.shape[1])
 
-        # Add all reference ROI frames to tracker's memory
-        for frame, mask in self.reference_frames:
-            tracker.add_reference_frame(frame, mask, self.n_rois, -1)
+            # Add all reference ROI frames to tracker's memory
+            for frame, mask in self.reference_frames:
+                tracker.add_reference_frame(frame, mask, self.n_rois, -1)
 
-        # Determine tracking direction
-        delta = 1 if self.start_frame < self.stop_frame else -1
-        frame_range = list(range(self.start_frame, self.stop_frame + delta, delta))
+            # Determine tracking direction
+            delta = 1 if self.start_frame < self.stop_frame else -1
+            frame_range = list(range(self.start_frame, self.stop_frame + delta, delta))
 
-        # Initialize DataLoader for batch processing. num_workers / pin_memory
-        # can be overridden (video-level multi-GPU passes a reduced worker count
-        # and pin_memory=False so N concurrent trackers don't exhaust host RAM).
-        from castle.core.environment import get_num_workers
-        num_workers = self.num_workers if self.num_workers is not None else get_num_workers('tracking')
-        batch_size = 16
-        logger.debug(f"Tracking with {num_workers} workers, batch size {batch_size}, pin_memory={self.pin_memory}")
+            # Initialize DataLoader for batch processing. num_workers / pin_memory
+            # can be overridden (video-level multi-GPU passes a reduced worker count
+            # and pin_memory=False so N concurrent trackers don't exhaust host RAM).
+            from castle.core.environment import get_num_workers
+            num_workers = self.num_workers if self.num_workers is not None else get_num_workers('tracking')
+            batch_size = 16
+            logger.debug(f"Tracking with {num_workers} workers, batch size {batch_size}, pin_memory={self.pin_memory}")
 
-        dataset = TrackingDataset(self.video_source, frame_range, tracker.transform)
+            dataset = TrackingDataset(self.video_source, frame_range, tracker.transform)
 
-        loader = DataLoader(
-            dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=self.pin_memory
-        )
+            loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=self.pin_memory
+            )
 
         
-        # Iterator with progress bar, handling custom notification callback if present
-        if progress is not None:
-            iterator = progress.tqdm(loader, desc="Tracking frames")
-        else:
-            iterator = tqdm(loader, desc="Tracking frames")
+            # Iterator with progress bar, handling custom notification callback if present
+            if progress is not None:
+                iterator = progress.tqdm(loader, desc="Tracking frames")
+            else:
+                iterator = tqdm(loader, desc="Tracking frames")
 
-        total_frames_to_track = len(frame_range)
-        frames_done = 0
+            total_frames_to_track = len(frame_range)
+            frames_done = 0
 
-        for frame_tensors, frame_indices, original_frames in iterator:
-            # Check for cancellation flag
-            if self.cancel:
-                self.show_middle_result = False
-                self.cancel = False
-                del mask_seq
-                return "Cancel"
+            for frame_tensors, frame_indices, original_frames in iterator:
+                # Check for cancellation flag
+                if self.cancel:
+                    self.show_middle_result = False
+                    self.cancel = False
+                    return "Cancel"
 
-            # Prepare batch of original sizes
-            original_sizes = [frame.shape[:2] for frame in original_frames.numpy()]
+                # Prepare batch of original sizes
+                original_sizes = [frame.shape[:2] for frame in original_frames.numpy()]
 
-            # Perform batch tracking
-            mask_batch = tracker.track_batch(frame_tensors, original_sizes=original_sizes)
+                # Perform batch tracking
+                mask_batch = tracker.track_batch(frame_tensors, original_sizes=original_sizes)
 
-            # Process and save the batch of masks
-            processed_masks = mask_batch.squeeze(1).detach().cpu().numpy().astype(np.uint8)
+                # Process and save the batch of masks
+                processed_masks = mask_batch.squeeze(1).detach().cpu().numpy().astype(np.uint8)
 
-            for i in range(len(processed_masks)):
-                frame_idx = frame_indices[i].item()
-                mask_to_save = processed_masks[i]
+                for i in range(len(processed_masks)):
+                    frame_idx = frame_indices[i].item()
+                    mask_to_save = processed_masks[i]
 
-                # Apply Smart Filtering (Keep Largest Component per class)
-                mask_to_save = self._smart_filter(mask_to_save)
+                    # Apply Smart Filtering (Keep Largest Component per class)
+                    mask_to_save = self._smart_filter(mask_to_save)
 
-                # Update current state for display (with the last frame of the batch)
-                self.current_frame = original_frames[i].numpy()
-                self.current_mask = mask_to_save
+                    # Update current state for display (with the last frame of the batch)
+                    self.current_frame = original_frames[i].numpy()
+                    self.current_mask = mask_to_save
 
-                # Write mask to HDF5 file
-                mask_seq.write_mask(frame_idx, mask_to_save)
+                    # Write mask to HDF5 file
+                    mask_seq.write_mask(frame_idx, mask_to_save)
 
-            frames_done += len(processed_masks)
-            if frame_callback is not None:
-                try:
-                    frame_callback(
-                        frames_done / max(total_frames_to_track, 1),
-                        f"Tracking frame {frames_done}/{total_frames_to_track}",
-                    )
-                except Exception as cb_exc:  # noqa: BLE001 — never let a UI callback abort tracking
-                    logger.debug("frame_callback raised; ignoring: %s", cb_exc)
+                frames_done += len(processed_masks)
+                if frame_callback is not None:
+                    try:
+                        frame_callback(
+                            frames_done / max(total_frames_to_track, 1),
+                            f"Tracking frame {frames_done}/{total_frames_to_track}",
+                        )
+                    except Exception as cb_exc:  # noqa: BLE001 — never let a UI callback abort tracking
+                        logger.debug("frame_callback raised; ignoring: %s", cb_exc)
 
-        # Cleanup
-        self.show_middle_result = False
-        del mask_seq
+            # Cleanup
+            self.show_middle_result = False
 
-        return "Done"
+            return "Done"
     
     def cancel_tracking(self) -> None:
         """Set flag to cancel tracking."""

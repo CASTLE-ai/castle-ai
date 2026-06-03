@@ -34,6 +34,13 @@ logger = logging.getLogger(__name__)
 # auto-dispatcher so the opt-in semantics are uniform across the codebase).
 _FALSEY = ("", "0", "false", "no", "off")
 
+# Serialises the process-global cuDNN flag save/restore in cross_gpu_deterministic.
+# cudnn.benchmark/.deterministic are process-wide; if two deterministic blocks
+# (or a block and another handler) interleaved their save/restore, the wrong
+# baseline could be restored, leaving the long-lived Gradio process stuck in
+# deterministic mode. Holding this for the block makes save→set→restore atomic.
+_cudnn_flag_lock = threading.Lock()
+
 
 class _Cancelled:
     """Sentinel result for an item that was never started (pool cancelled)."""
@@ -88,15 +95,19 @@ def cross_gpu_deterministic():
         yield
         return
     cudnn = torch.backends.cudnn
-    prev_benchmark, prev_deterministic = cudnn.benchmark, cudnn.deterministic
-    cudnn.benchmark = False
-    cudnn.deterministic = True
-    logger.info("cross_gpu_deterministic: cudnn.benchmark=False, deterministic=True")
-    try:
-        yield
-    finally:
-        cudnn.benchmark = prev_benchmark
-        cudnn.deterministic = prev_deterministic
+    # Hold the flag lock for the whole block so the save→set→restore is atomic
+    # w.r.t. any other cuDNN-flag mutation; the long-lived process is never left
+    # in deterministic mode by an interleaved restore.
+    with _cudnn_flag_lock:
+        prev_benchmark, prev_deterministic = cudnn.benchmark, cudnn.deterministic
+        cudnn.benchmark = False
+        cudnn.deterministic = True
+        logger.info("cross_gpu_deterministic: cudnn.benchmark=False, deterministic=True")
+        try:
+            yield
+        finally:
+            cudnn.benchmark = prev_benchmark
+            cudnn.deterministic = prev_deterministic
 
 
 def multi_gpu_deterministic_enabled() -> bool:
@@ -201,7 +212,8 @@ def run_on_device_pool(
             item = items[idx]
             try:
                 res: Any = worker(item, device)
-            except BaseException as exc:  # noqa: BLE001 - isolate per item
+            except Exception as exc:  # noqa: BLE001 - isolate per item (let
+                # KeyboardInterrupt/SystemExit propagate so a batch can abort)
                 logger.exception("gpu_pool worker failed for %r on %s", item, device)
                 res = exc
             results[idx] = res

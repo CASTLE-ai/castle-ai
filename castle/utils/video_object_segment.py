@@ -153,9 +153,22 @@ class AOTTracker(object):
             raise NotImplementedError
         
     def __del__(self):
-        del self.model
-        del self.engine
-        torch.cuda.empty_cache()
+        # Free this tracker's GPU memory on the device it actually lived on
+        # (multi-GPU: a cuda:1 tracker must trim cuda:1, not the default device).
+        # Best-effort only — __del__ can run at interpreter shutdown or on a
+        # partially constructed object, so guard everything.
+        for _attr in ("model", "engine"):
+            try:
+                delattr(self, _attr)
+            except Exception:
+                pass
+        try:
+            dev = getattr(self, "device", None)
+            if dev is not None and torch.cuda.is_available():
+                with torch.cuda.device(dev):
+                    torch.cuda.empty_cache()
+        except Exception:
+            pass
    
 
 

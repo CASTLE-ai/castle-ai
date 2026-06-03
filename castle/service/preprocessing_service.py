@@ -526,6 +526,7 @@ def _encode_stabilized_video(
             img_bgr = pkt_frame.to_ndarray(format="bgr24")
             yield i, cam.generate_frame(img_bgr, i)
 
+    ok = False
     try:
         for i, result in _threaded_iter(_produce):
             out_frame = av.VideoFrame.from_ndarray(result, format="bgr24")
@@ -536,6 +537,14 @@ def _encode_stabilized_video(
                 progress_callback(frac, f"Frame {i}/{limit}")
         for packet in out_stream.encode():
             out_container.mux(packet)
+        ok = True
     finally:
         out_container.close()
         in_container.close()
+        # Don't leave a truncated MP4 that a later skip_existing could treat as
+        # complete (mirrors the center-crop path's partial-output cleanup).
+        if not ok and os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass

@@ -25,7 +25,7 @@ import logging
 import threading
 from typing import Dict, Iterator, Optional, Tuple
 
-from filelock import FileLock
+from filelock import FileLock, Timeout as FileLockTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,12 @@ _DEFAULT_CONFIG: Dict = {}
 # projects get independent locks so they don't serialize.
 _PROJECT_LOCKS: Dict[str, threading.Lock] = {}
 _PROJECT_LOCKS_GUARD = threading.Lock()
-_CONFIG_FILELOCK_TIMEOUT = 5.0
+# 30s (was 5s): a slow / contended / network filesystem can make the
+# load→mutate→save sequence exceed a short timeout under *cross-process*
+# contention. In-process writers (e.g. two multi-GPU extraction workers) are
+# already serialized by the per-project threading.Lock below, so the FileLock
+# is only ever contended across processes — give that ample headroom.
+_CONFIG_FILELOCK_TIMEOUT = 30.0
 
 
 def _get_config_lock(project_path: str) -> threading.Lock:
@@ -71,10 +76,19 @@ def update_config(storage_path: str, project_name: str) -> Iterator[Dict]:
     os.makedirs(project_path, exist_ok=True)
     thread_lock = _get_config_lock(project_path)
     file_lock = FileLock(_config_filelock_path(project_path), timeout=_CONFIG_FILELOCK_TIMEOUT)
-    with thread_lock, file_lock:
-        _, config = get_project_config(storage_path, project_name)
-        yield config
-        save_project_config(storage_path, project_name, config)
+    try:
+        with thread_lock, file_lock:
+            _, config = get_project_config(storage_path, project_name)
+            yield config
+            save_project_config(storage_path, project_name, config)
+    except FileLockTimeout:
+        logger.error(
+            "Timed out (%.0fs) acquiring the config lock for project '%s'. Another "
+            "process may be writing it; if none is, remove a stale lock file at %s "
+            "and retry.",
+            _CONFIG_FILELOCK_TIMEOUT, project_name, _config_filelock_path(project_path),
+        )
+        raise
 
 
 def get_project_config(storage_path: str, project_name: str) -> Tuple[str, Dict]:

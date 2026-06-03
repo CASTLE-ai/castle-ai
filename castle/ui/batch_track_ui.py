@@ -318,7 +318,7 @@ def track_all_videos(
                         elif status in ("Skipped", "Skip"):
                             messages.append(f"  Skipping existing video: {video_name}")
                         elif status == "Cancel":
-                            messages.append(f"  🛑 Cancelled (not started): {video_name}")
+                            messages.append(f"  🛑 Cancelled mid-track (partial output discarded): {video_name}")
                         else:
                             failed_videos.append(video_name)
                             messages.append(f"❌ Tracking failed for video {video_name}: {status}")

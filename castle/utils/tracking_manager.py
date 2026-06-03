@@ -241,6 +241,7 @@ class ROITracker:
         progress=None,
         skip_existing: bool = False,
         frame_callback: Optional[Callable[[float, str], None]] = None,
+        cancel_event=None,
     ) -> str:
         """Execute ROI tracking over specified frames using a parallelized DataLoader and batch inference.
 
@@ -253,6 +254,11 @@ class ROITracker:
                 after each batch finishes writing.  Batch-tracking UI uses this
                 to drive an outer progress bar across multiple videos.  Mutually
                 useful with ``progress=None``.
+            cancel_event: Optional ``threading.Event``; checked once per batch
+                (~16 frames) so the **batch** Cancel button can abort *this* video
+                mid-track, not just stop launching new ones. On cancel the
+                partially-written ``mask_list.h5`` is deleted (so ``skip_existing``
+                won't later mistake a half-tracked video for a finished one).
         """
         time.sleep(0.5)
 
@@ -325,13 +331,17 @@ class ROITracker:
 
             total_frames_to_track = len(frame_range)
             frames_done = 0
+            cancelled = False
 
             for frame_tensors, frame_indices, original_frames in iterator:
-                # Check for cancellation flag
-                if self.cancel:
+                # Check for cancellation — either the per-instance flag (single-video
+                # tab) or the batch-shared cancel_event (batch tab). Checked once per
+                # batch, so abort latency is ~one 16-frame batch.
+                if self.cancel or (cancel_event is not None and cancel_event.is_set()):
                     self.show_middle_result = False
                     self.cancel = False
-                    return "Cancel"
+                    cancelled = True
+                    break
 
                 # Prepare batch of original sizes
                 original_sizes = [frame.shape[:2] for frame in original_frames.numpy()]
@@ -369,8 +379,19 @@ class ROITracker:
             # Cleanup
             self.show_middle_result = False
 
-            return "Done"
-    
+        # H5 file is now closed (left the `with` block). If we were cancelled
+        # mid-video, remove the partial mask file so a re-run with skip_existing
+        # re-tracks it cleanly instead of treating the stub as complete.
+        if cancelled:
+            try:
+                os.remove(mask_list_path)
+                logger.info("Removed partial mask file after cancel: %s", mask_list_path)
+            except OSError as e:
+                logger.warning("Could not remove partial mask file %s: %s", mask_list_path, e)
+            return "Cancel"
+
+        return "Done"
+
     def cancel_tracking(self) -> None:
         """Set flag to cancel tracking."""
         self.cancel = True

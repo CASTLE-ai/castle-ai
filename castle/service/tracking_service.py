@@ -24,7 +24,8 @@ def track_video(storage_path: str, project_name: str, video_name: str,
                 progress_callback: Optional[Callable] = None,
                 device: Optional[str] = None,
                 num_workers: Optional[int] = None,
-                pin_memory: bool = True) -> str:
+                pin_memory: bool = True,
+                cancel_event=None) -> str:
     """
     Execute tracking on a single video.
 
@@ -41,6 +42,8 @@ def track_video(storage_path: str, project_name: str, video_name: str,
             module default (single-GPU). Set by :func:`track_videos` workers.
         num_workers: DataLoader worker override (``None`` = ``get_num_workers('tracking')``).
         pin_memory: DataLoader ``pin_memory`` (set ``False`` for concurrent multi-GPU).
+        cancel_event: optional ``threading.Event``; checked per batch inside the
+            tracker so an in-flight video aborts mid-track (partial output removed).
 
     Returns:
         Status string: 'Done', 'Skipped', 'Cancel', or error message
@@ -75,7 +78,7 @@ def track_video(storage_path: str, project_name: str, video_name: str,
                 pin_memory=pin_memory,
             )
 
-            return tracker.track(progress=None)
+            return tracker.track(progress=None, cancel_event=cancel_event)
 
     except Exception as e:
         logger.error(f"Tracking failed for {video_name}: {e}", exc_info=True)
@@ -171,7 +174,8 @@ def track_videos(storage_path: str, project_name: str, video_names,
             )
             return track_video(storage_path, project_name, video, model=model,
                                start=start, stop=stop, skip_existing=False, device=device,
-                               num_workers=per_gpu_workers, pin_memory=False)
+                               num_workers=per_gpu_workers, pin_memory=False,
+                               cancel_event=cancel_event)
 
         def _on_done(video: str, res) -> None:
             _announce(video, _norm(res))
@@ -190,7 +194,8 @@ def track_videos(storage_path: str, project_name: str, video_names,
                 results[v] = 'Cancel'
                 continue
             status = track_video(storage_path, project_name, v, model=model,
-                                 start=start, stop=stop, skip_existing=False)
+                                 start=start, stop=stop, skip_existing=False,
+                                 cancel_event=cancel_event)
             results[v] = status
             _announce(v, status)
 

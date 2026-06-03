@@ -67,6 +67,40 @@ def test_track_videos_skip_existing_preflight(monkeypatch, tmp_path):
     assert seen == ["a.mp4"]  # the existing one was never tracked
 
 
+def test_track_videos_forwards_cancel_event_pool(monkeypatch, tmp_path):
+    # The batch cancel_event must reach track_video (→ ROITracker.track) so an
+    # in-flight video can abort mid-track, not just stop launching new ones.
+    import threading
+    ev = threading.Event()
+    seen = []
+
+    def fake_track_video(storage, project, video, *, model, start, stop, skip_existing,
+                         device=None, num_workers=None, pin_memory=True, cancel_event=None):
+        seen.append(cancel_event)
+        return "Done"
+
+    monkeypatch.setattr(ts, "track_video", fake_track_video)
+    ts.track_videos(str(tmp_path), "P", ["a.mp4", "b.mp4"], device_ids=[0, 1],
+                    skip_existing=False, cancel_event=ev)
+    assert seen and all(c is ev for c in seen)  # same event threaded into every worker
+
+
+def test_track_videos_forwards_cancel_event_sequential(monkeypatch, tmp_path):
+    import threading
+    ev = threading.Event()
+    seen = []
+
+    def fake_track_video(storage, project, video, *, model, start, stop, skip_existing,
+                         cancel_event=None, **k):
+        seen.append(cancel_event)
+        return "Done"
+
+    monkeypatch.setattr(ts, "track_video", fake_track_video)
+    ts.track_videos(str(tmp_path), "P", ["a.mp4", "b.mp4"], device_ids=[],
+                    skip_existing=False, cancel_event=ev)
+    assert seen and all(c is ev for c in seen)
+
+
 def test_track_videos_error_isolation(monkeypatch, tmp_path):
     def fake_track_video(storage, project, video, *, model, start, stop, skip_existing, device=None, **k):
         if video == "bad.mp4":
@@ -144,7 +178,7 @@ def test_track_videos_pool_divides_workers_and_disables_pin_memory(monkeypatch, 
     captured = []
 
     def fake_track_video(storage, project, video, *, model, start, stop, skip_existing,
-                         device=None, num_workers=None, pin_memory=True):
+                         device=None, num_workers=None, pin_memory=True, cancel_event=None):
         captured.append((num_workers, pin_memory))
         return "Done"
 

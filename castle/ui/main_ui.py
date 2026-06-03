@@ -68,6 +68,7 @@ input[type="text"][readonly], input[type="text"]:read-only,
 input[type="text"]:disabled {
     color: var(--body-text-color) !important;
     -webkit-text-fill-color: var(--body-text-color) !important;
+    background-color: var(--input-background-fill) !important;
     opacity: 1 !important;
 }
 """

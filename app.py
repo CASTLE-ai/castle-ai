@@ -4,7 +4,7 @@ import platform
 from argparse import ArgumentParser
 import gradio as gr
 from castle.ui import create_ui
-from castle.ui.main_ui import CASTLE_JS
+from castle.ui.main_ui import CASTLE_JS, CASTLE_CSS
 
 # System configuration
 OS_SYS = platform.uname().system
@@ -46,4 +46,5 @@ if __name__ == '__main__':
         allowed_paths=allowed_paths if allowed_paths else None,
         theme=gr.themes.Soft(),
         js=CASTLE_JS,
+        css=CASTLE_CSS,
     )

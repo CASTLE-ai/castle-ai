@@ -50,6 +50,29 @@ function castleTreeClick(el, name) {
 """
 
 
+# A non-interactive gr.Textbox (interactive=False) is rendered by Gradio 6.x as
+# a <textarea readonly> (NOT <textarea disabled>). Gradio never restores
+# -webkit-text-fill-color for that state, so on WebKit (Chrome/Edge) the glyphs
+# are painted with the UA's text-fill colour instead of the CSS `color`, which
+# in a dark-mode browser comes out near-white on the input fill -> the value
+# looks invisible ("white on white"), e.g. the Pre-process "Session name
+# (auto-computed)" box and every read-only log/status field.
+#
+# Pin BOTH `color` and `-webkit-text-fill-color` to the theme body-text colour
+# for the read-only / disabled states of textareas and text inputs. The colour
+# resolves from the element's own theme scope, so it stays legible in light
+# (dark text on white) and dark (near-white text on dark) modes alike.
+CASTLE_CSS = """
+textarea[readonly], textarea:read-only, textarea:disabled, textarea[disabled],
+input[type="text"][readonly], input[type="text"]:read-only,
+input[type="text"]:disabled {
+    color: var(--body-text-color) !important;
+    -webkit-text-fill-color: var(--body-text-color) !important;
+    opacity: 1 !important;
+}
+"""
+
+
 def create_ui(OS_SYS, root=''):
     """Create the main Gradio UI with multiple tabs."""
     with gr.Blocks() as app:

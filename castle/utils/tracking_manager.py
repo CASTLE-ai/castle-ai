@@ -183,9 +183,13 @@ class ROITracker:
         self.stop_frame = int(stop_frame)
         self.max_memory_length = 30
         
-        # Load reference knowledge from labels
+        # Load reference knowledge from labels. ROI prompts are SHARED ACROSS THE
+        # PROJECT (Rasio's original design): label one video and every video tracks
+        # against the same reference pool. (Commit 0c5191b had narrowed this to
+        # per-video via video_name=..., which broke the "label once" workflow and
+        # crashed tracking on videos without their own labels — reverted here.)
         self.reference_frames = []
-        label_list = read_roi_labels(storage_path, project_name, video_name=video_source.video_name)
+        label_list = read_roi_labels(storage_path, project_name)
         self.n_rois = 0
         
         for label in label_list:
@@ -251,6 +255,15 @@ class ROITracker:
                 useful with ``progress=None``.
         """
         time.sleep(0.5)
+
+        # Fail fast and clearly when the project has no ROI prompts at all —
+        # otherwise the AOT engine gets zero objects and the first decode crashes
+        # deep in torch.cat() with an opaque "non-empty list of Tensors" error.
+        if not self.reference_frames:
+            msg = ("No ROI prompts found in this project. Create at least one ROI in "
+                   "the 'Label ROI' tab first — prompts are shared across all videos.")
+            logger.warning("Tracking aborted for %s: %s", self.video_source.video_name, msg)
+            return f"Error: {msg}"
 
         # Initialize tracker model and HDF5 writer (on this tracker's device;
         # None -> module default for single-GPU, 'cuda:N' for multi-GPU workers).

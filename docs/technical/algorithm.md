@@ -109,13 +109,16 @@ Self-supervised Vision Transformers (ViT) extract rich visual features without t
 
 ### CASTLE's Usage
 
+- **Default model**: DINOv3 ViT-B/16 (`dinov3_vitb16`, 768-dim output)
 - **Models**:
 
-    | Model | Checkpoint | Feature Dim |
-    |-------|-----------|-------------|
-    | DINOv2 ViT-B/14 (with registers) | `dinov2_vitb14_reg4_pretrain.pth` | 768 |
-    | DINOv3 ViT-B/16 | `dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth` | 768 |
-    | DINOv3 ViT-L/16 | `dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth` | 1024 |
+    | Model | Checkpoint | Feature Dim | |
+    |-------|-----------|-------------|---|
+    | DINOv3 ViT-B/16 (`dinov3_vitb16`) | `dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth` | 768 | **default** |
+    | DINOv3 ViT-L/16 (`dinov3_vitl16`) | `dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth` | 1024 | |
+    | DINOv2 ViT-B/14 with registers (`dinov2_vitb14_reg4_pretrain`) | `dinov2_vitb14_reg4_pretrain.pth` | 768 | |
+
+    All three are selectable in the Extract Latent tab. The default `dinov3_vitb16` and the DINOv2 option both produce 768-dim vectors; the larger `dinov3_vitl16` produces 1024-dim vectors.
 
 - **Implementation**: `castle/core/extractor.py` + `castle/core/models.py`
 
@@ -126,6 +129,9 @@ Extraction process:
 3. Extract CLS token or pooled features per frame
 4. Save as `.npz` file with shape `(n_frames, feature_dim)`
 5. Frames with empty masks produce NaN vectors
+
+!!! tip "Optional multi-GPU extraction"
+    Set the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction. When it is set **and** at least two CUDA GPUs are present, latent extraction for a single video splits that video's frames by range across the GPUs — each GPU runs the full decode → preprocess → encode on its half, and the results are merged back in original frame order. Output is bit-identical to the single-GPU result on identical GPUs and runs ~1.9× faster on two GPUs. The default is OFF (single GPU).
 
 ### Reference
 
@@ -161,6 +167,11 @@ CASTLE's UMAP implementation uses:
 | High | 2 stages | → 10D → 2D |
 
 The `n_neighbors` parameter controls the scale of structure preserved — higher values capture more global patterns, lower values capture finer local details.
+
+**Input standardization (default ON)**: The first (raw-feature) UMAP stage now applies per-feature z-score standardization by default — the default UMAP config preset has `"standardize": true`. This improves cluster separation, but it **changes embeddings relative to older runs**, so the DBSCAN `eps` may need re-tuning. To opt out, set `"standardize": false` in the stage-0 UMAP config.
+
+!!! note "Reproducibility"
+    Every UMAP run records its resolved random seed. For each clustering session, CASTLE writes a `umap_log.jsonl` file with one JSON line per UMAP stage, capturing the seed and that stage's config. To reproduce an embedding exactly, reuse the logged seed (run on the CPU/deterministic path for bit-identical results; GPU optimization can still vary slightly even with a fixed seed).
 
 ### Reference
 

@@ -82,9 +82,12 @@
 **Solutions**:
 
 1. Increase **batch size** (e.g., 64, 128) if you have spare VRAM
-2. Use `dinov2_vitb14_reg4_pretrain` (fastest) instead of `dinov3_vitl16` (slowest)
+2. Use a smaller encoder — the default `dinov3_vitb16` (768-d) is faster than `dinov3_vitl16` (1024-d, slowest); `dinov2_vitb14_reg4_pretrain` (768-d) remains available too
 3. Enable **Skip existing files** to avoid re-processing
 4. Check GPU utilization — ensure the GPU is actually being used
+
+!!! tip "Multi-GPU extraction (opt-in)"
+    If you have 2 or more CUDA GPUs, set the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction (the Gradio app, the desktop app, and the CLI all honour it). Latent extraction for each video then splits its frames by range across the GPUs (each GPU runs the full decode → preprocess → encode on its half, and the results are merged in original order). On two identical GPUs this is bit-identical to single-GPU output and roughly 1.9× faster. It is **off** by default (single GPU).
 
 ### "Please click Apply on Preprocess settings first"
 
@@ -112,6 +115,13 @@ Adjust the **eps** parameter in DBSCAN:
 - **Too few clusters**: decrease eps (e.g., 0.5, 0.3)
 - **All noise (-1)**: eps is too small, increase it
 
+!!! note "Re-tuning eps after upgrading"
+    Per-feature **standardization (z-score) is now on by default** for the first (raw-feature) UMAP stage (`"standardize": true` in the default UMAP config). It generally improves cluster separation, but it changes the embedding scale compared with older runs, so a previously good `eps` may no longer fit — re-tune it. Standardization can be toggled in the UMAP config JSON.
+
+### How do I reproduce an embedding exactly?
+
+Every UMAP run records its resolved random seed, and each clustering session writes a `umap_log.jsonl` file with one JSON line per UMAP stage (seed plus config). To reproduce an embedding, reuse the logged seed in your UMAP config. For **bit-identical** results, run the CPU/deterministic path (GPU UMAP is not guaranteed bit-reproducible).
+
 ### Hierarchical analysis: how to zoom in
 
 1. Run UMAP + DBSCAN at low magnification
@@ -120,6 +130,10 @@ Adjust the **eps** parameter in DBSCAN:
 4. Re-run UMAP at intermediate or high magnification on just that cluster
 5. Cluster and label the sub-behaviors
 6. Submit again — results accumulate
+
+### Why is the ethogram per video?
+
+CASTLE computes **one ethogram per video** (i.e. per animal/subject), each from that video's own per-frame labels and frame rate. This keeps timing, bout durations, and transition structure correct when videos differ in length or fps, rather than mixing subjects into a single timeline.
 
 ---
 

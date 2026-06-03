@@ -125,6 +125,10 @@ You can edit the UMAP config JSON directly for full control. The format is a lis
 - `n_neighbors`: number of nearest neighbors (larger = broader structure)
 - `min_dist`: minimum distance between points in embedding (0.0 for clustering)
 - `n_components`: output dimensions for that stage
+- `standardize`: per-feature z-score the stage's input before UMAP (default `true` for the first, raw-feature stage)
+
+!!! note "Input standardization is on by default"
+    The default UMAP config preset has `"standardize": true` for the first (raw-feature) stage, which z-scores each input feature before reduction. This generally improves cluster separation, but it **changes the embedding** compared with older (non-standardized) runs — so you may need to **re-tune the DBSCAN `eps`** afterwards. Set `"standardize": false` in the config JSON to restore the previous behaviour.
 
 ---
 
@@ -142,6 +146,9 @@ The UMAP scatter plot appears on the right. Each point represents a data point (
 
 !!! tip "Interactive Exploration"
     Click on any point in the UMAP plot to see the corresponding video frame. This helps you understand what each region of the embedding represents.
+
+!!! note "Reproducible embeddings"
+    Each run records its resolved **UMAP seed**, shown in the status line below the plot. Leave the **UMAP seed** field blank to draw a fresh seed each run, or paste a previously logged seed to reproduce a layout. Every UMAP stage is also recorded as one JSON line (seed + config) in a per-session `umap_log.jsonl` file. For **bit-identical** reproduction, reuse the logged seed with the **CPU (umap-learn)** backend — the GPU (cuML) backend is fast but its layout may vary slightly run-to-run.
 
 ### 2. Cluster the Embedding
 
@@ -202,6 +209,9 @@ After submitting, the following are generated:
 | **Time Series CSV** | `.csv` | Frame-by-frame cluster assignments |
 | **SRT Subtitles** | `.srt` | Behavioral labels as video subtitles |
 | **Embedding NPZ** | `.npz` | UMAP coordinates and cluster labels |
+
+!!! note "Ethogram and time series are per video"
+    Ethogram results are computed **per video** — one ethogram per animal/video, each from that video's own per-frame assignments. Time series CSVs and SRT subtitles are likewise written per video, with no cross-video pooling of bouts or transitions.
 
 ---
 

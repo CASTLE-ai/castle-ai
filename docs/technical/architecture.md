@@ -212,8 +212,8 @@ Clean separation between frontends and business logic. All three frontends (CLI,
 | `cluster.py` | `LatentAggregator` — multi-video latent loading and frame retrieval |
 | `cluster_transfer.py` | Save / apply clustering models to new data |
 | `data.py` | `Preprocess` pipeline, `VideoDataset` for batched extraction |
-| `models.py` | `VisualEncoder` abstraction: DINOv2, DINOv3, multi-scale pooling |
-| `config.py` | Constants: checkpoint paths, model IDs, supported models |
+| `models.py` | `VisualEncoder` abstraction: DINOv3 (default `dinov3_vitb16`), DINOv2 (still selectable), multi-scale pooling |
+| `config.py` | Constants: checkpoint paths, model IDs, supported models (default `dinov3_vitb16`) |
 | `project.py` | Project config read/write (file inventory) |
 | `project_config.py` | `ProjectConfig` dataclass — typed processing parameters |
 | `environment.py` | Device detection (`cuda`/`mps`/`cpu`), worker count |
@@ -315,7 +315,9 @@ Video File (.mp4)
     │        (or use preprocessed video directly as input)
     │
     ▼
-[5. DINOv2/v3] Extract features → latent vectors (.npz)
+[5. DINOv3] Extract features → latent vectors (.npz)
+    │   (default dinov3_vitb16, 768-d; dinov3_vitl16 → 1024-d;
+    │    dinov2_vitb14_reg4_pretrain still selectable, 768-d)
     │         ├─ weighted_average pooling (default) → 768-dim
     │         └─ multiscale SPP (A-06) → e.g. 21×768 = 16128-dim
     │              (spatial pyramid: 1×1 + 2×2 + 4×4 grids)
@@ -331,6 +333,11 @@ Video File (.mp4)
     ▼
 [Output] CSV labels, SRT subtitles, embedding NPZ
 ```
+
+!!! note "UMAP reproducibility & input standardization"
+    Every UMAP run records its resolved random seed, and each clustering session writes a `umap_log.jsonl` file (one JSON line per UMAP stage, recording the seed plus the resolved config). Reuse a logged seed to reproduce an embedding exactly — take the CPU/deterministic path for bit-identical results.
+
+    The first (raw-feature) UMAP stage now applies **per-feature z-score standardization by default** (`"standardize": true` in the default UMAP config preset). This improves cluster separation but changes embeddings relative to older, unstandardized runs, so the DBSCAN `eps` may need re-tuning. Standardization is configurable in the UMAP config JSON.
 
 ---
 
@@ -359,11 +366,11 @@ projects/my-project/
 ├── crop/                                    # Cropped/aligned videos
 │   └── video1.mp4/
 │       └── video1_ROI_1_crop.mp4
-├── latent/                                  # Extracted features
-│   └── dinov2_vitb14_reg/
-│       ├── video1_ROI_1_dinov2_vitb14_reg_ctr_rmbg.npz        # default pooling
-│       ├── video1_ROI_1_dinov2_vitb14_reg_ctr_spp1x2x4.npz    # multiscale SPP
-│       └── video1_ROI_1_dinov2_vitb14_reg_ctr_L3x7x11.npz     # multi-layer
+├── latent/                                  # Extracted features (sub-dir per model)
+│   └── dinov3_vitb16/                        # default model (DINOv3)
+│       ├── video1_ROI_1_dinov3_vitb16_ctr_rmbg.npz        # default pooling
+│       ├── video1_ROI_1_dinov3_vitb16_ctr_spp1x2x4.npz    # multiscale SPP
+│       └── video1_ROI_1_dinov3_vitb16_ctr_L3x7x11.npz     # multi-layer
 ├── cluster/                                 # Clustering outputs
 │   ├── id.csv                               # Cluster ID → name mapping (legacy)
 │   ├── time_series.csv                      # Frame-by-frame assignments (legacy)
@@ -407,16 +414,19 @@ Pipeline.run()
 
 VRAM utilisation is logged at every stage boundary (`pipeline-start`, `before-tracking-cleanup`, `after-tracking-cleanup`, `extraction-start`, `after-extraction-cleanup`, `pipeline-end`) and approximately every 100 video iterations during extraction.
 
+!!! tip "Opt-in multi-GPU extraction"
+    Set `CASTLE_MULTI_GPU=1` in the environment to split a single video's frames by range across all available CUDA GPUs during latent extraction. Each GPU runs the full decode → preprocess → encode on its frame range, and the partial latents are merged back in original frame order. The merged output is **bit-identical** to the single-GPU result on identical GPUs and runs ~1.9× faster on 2 GPUs. Activates only when the variable is truthy **and** ≥ 2 CUDA GPUs are present; the default is single-GPU.
+
 ### ModelRegistry Singleton
 
 ```python
 registry = ModelRegistry.instance()   # thread-safe singleton
 
 # Lazy load (cached on first call)
-model = registry.load("dinov2_vitb14")
+model = registry.load("dinov3_vitb16")
 
 # Context manager — auto-unloads on exit
-with registry.use("dinov2_vitb14") as model:
+with registry.use("dinov3_vitb16") as model:
     latent = model.extract_tensor_batch(frames, masks, roi_id)
 
 # Bulk unload by family keyword
@@ -433,7 +443,7 @@ stats = registry.get_memory_stats()
 from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
 
 # Query VRAM and return recommended batch size
-batch = compute_optimal_batch_size("dinov2_vitb14", frame_size=(518, 518, 3))
+batch = compute_optimal_batch_size("dinov3_vitb16", frame_size=(518, 518, 3))
 
 # Wrap any callable; retries with halved batch on OOM
 result = auto_retry_on_oom(extract_fn, frames, batch_size=batch)
@@ -445,7 +455,7 @@ result = auto_retry_on_oom(extract_fn, frames, batch_size=batch)
 
 ```
 Thread 1 (I/O)       Thread 2 (CPU)       Main thread (GPU)
-VideoReader.get_frame  StabilizedCamera     DINOv2 batched
+VideoReader.get_frame  StabilizedCamera     DINOv3 batched
       │   → frame_queue →   .generate_frame   inference
       │                      │  → tensor_queue → np.concatenate → (N, D)
 ```
@@ -460,7 +470,7 @@ VideoReader.get_frame  StabilizedCamera     DINOv2 batched
 from castle.core.cache import PipelineCache
 
 cache = PipelineCache("/data/project/latent")
-key = cache.compute_key(video_path, preprocess_config, "dinov2_vitb14")
+key = cache.compute_key(video_path, preprocess_config, "dinov3_vitb16")
 
 if cache.is_cached(key):
     path = cache.get(key)

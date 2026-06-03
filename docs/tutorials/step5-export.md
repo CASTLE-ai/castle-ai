@@ -95,6 +95,9 @@ config = data['config']     # UMAP configuration used
 - NaN values in embeddings indicate frames that were excluded from analysis
 - Cluster value of `-1` indicates unclassified frames
 
+!!! tip "Reproducing an embedding"
+    Each clustering session writes a `umap_log.jsonl` file, with one JSON line per UMAP stage recording the resolved random seed and the config used. To reproduce an embedding exactly, reuse the logged seed (the default UMAP preset also z-score **standardizes** the raw-feature stage, so keep that setting too). For bit-identical results, run the CPU/deterministic UMAP path.
+
 ---
 
 ## Using Results in Your Research
@@ -188,6 +191,9 @@ Recommended figures for publications:
 - **Cluster representative frames** — example frames from each behavioral category
 - **Duration/proportion bar charts** — quantitative comparison between groups
 
+!!! note "Ethograms are per video"
+    Ethogram results are generated **one per video** (i.e. one per animal/subject), not pooled across videos. When exporting for publication, pick the video/subject for each ethogram figure rather than expecting a single combined timeline.
+
 ---
 
 ## Loading Latent Features
@@ -197,8 +203,8 @@ For advanced analysis, you can also work directly with the latent features extra
 ```python
 import numpy as np
 
-# Load latent features
-data = np.load('projects/my-project/latent/dinov2_vitb14_reg4_pretrain/video_ROI_1_dinov2_vitb14_reg4_pretrain.npz')
+# Load latent features (default encoder: dinov3_vitb16, 768-dim)
+data = np.load('projects/my-project/latent/dinov3_vitb16/video_ROI_1_dinov3_vitb16.npz')
 latent = data['latent']  # Shape: (n_frames, feature_dim)
 
 # Use with your own dimensionality reduction or clustering
@@ -225,7 +231,7 @@ You've completed the full CASTLE workflow:
 
 1. ✅ Created a project and uploaded videos
 2. ✅ Tracked ROIs with SAM + DeAOT
-3. ✅ Extracted latent features with DINOv2/v3
+3. ✅ Extracted latent features with DINOv3 (DINOv2 still available as an option)
 4. ✅ Discovered behavioral clusters with UMAP + DBSCAN
 5. ✅ Annotated clusters with behavior labels and comments
 6. ✅ Reviewed Ethogram, Quality Metrics, and Group Comparison in the Analysis tab

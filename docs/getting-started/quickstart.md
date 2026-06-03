@@ -68,7 +68,7 @@ This guide walks you through a complete analysis using a demo video in under 5 m
 
 ## 4.5. Preprocessing (Optional)
 
-Stabilized Camera Preprocessing normalises each frame around the tracked body centroid — removing camera drift and head orientation — to produce a clean 518×518 video optimal for DINOv2 feature extraction.
+Stabilized Camera Preprocessing normalises each frame around the tracked body centroid — removing camera drift and head orientation — to produce a clean 518×518 video optimal for DINOv3 feature extraction.
 
 === "Gradio Web UI"
 
@@ -100,14 +100,14 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
     | `--order` | `2` | Butterworth filter order |
     | `--margin` | `75` | Spatial margin around HP residual (px) |
     | `--min-crop` | `300` | Minimum crop side length (px) |
-    | `--output-size` | `518` | Output frame side length (px) — 518 for DINOv2 ViT-B/14 |
+    | `--output-size` | `518` | Output frame side length (px). 518 = 37×14 (DINOv2 ViT-B/14); use **592** (= 37×16) for the default DINOv3 ViT-B/16. |
 
 !!! note "Output"
     The stabilised video is saved to `{storage}/{project}/preprocessed/{video}/stabilized.mp4`.
     A short 10-second preview clip is also generated at `stabilized_preview.mp4`.
 
 !!! tip "When to use preprocessing"
-    Use preprocessing when your animal moves freely in the arena and you want DINOv2 features
+    Use preprocessing when your animal moves freely in the arena and you want DINOv3 features
     to capture **posture** rather than position or orientation. Skip it for fixed-camera or
     already-cropped videos.
 
@@ -117,9 +117,15 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 
 1. Switch to the **3. Extract Latent** tab
 2. Select your tracked ROIs
-3. Run feature extraction — this uses DINOv2/v3 to compute latent representations for each frame
+3. Run feature extraction — by default this uses **DINOv3** (`dinov3_vitb16`, 768-d) to compute latent representations for each frame. You can also select `dinov3_vitl16` (1024-d) or `dinov2_vitb14_reg4_pretrain` (768-d).
 
 ![Extract latent features](../assets/screenshots/quickstart-extract.png)
+
+!!! tip "Multi-GPU extraction (opt-in)"
+    Set the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction to split a
+    single video's frames by range across all available CUDA GPUs (each GPU decodes, preprocesses,
+    and encodes its half; results are merged in original order). This needs **≥2 CUDA GPUs** and is
+    off by default. Output is bit-identical to single-GPU on identical GPUs, and ~1.9× faster on 2 GPUs.
 
 !!! tip "Auto Batch Size & Cache (Phase 2)"
     CASTLE automatically selects a safe GPU batch size based on available VRAM, so you don't need to tune `batch_size` manually.
@@ -146,6 +152,13 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 3. Run the analysis to discover behavioral categories
 
 ![Behavior analysis results](../assets/screenshots/quickstart-analysis.png)
+
+!!! note "Reproducibility & input standardization"
+    The first (raw-feature) UMAP stage now applies **per-feature z-score standardization by default**
+    (`"standardize": true` in the UMAP config), which improves cluster separation but changes
+    embeddings relative to older runs — you may need to re-tune the DBSCAN `eps`. Every UMAP run also
+    records its resolved random seed in a per-session `umap_log.jsonl` (one JSON line per stage). Reuse
+    that seed — on the CPU/deterministic path — to reproduce an embedding exactly.
 
 ---
 

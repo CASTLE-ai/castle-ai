@@ -22,7 +22,7 @@ When you switch to the Extract Latent tab, the interface shows three columns:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| **Select Visual Model** | Feature extraction backbone | `dinov2_vitb14_reg4_pretrain` |
+| **Select Visual Model** | Feature extraction backbone | `dinov3_vitb16` |
 | **Enter ROI ID** | Which tracked ROI to extract features from | `1` |
 | **Batch size** | Frames processed per batch (increase if VRAM allows) | `32` |
 | **Select Target Video** | Specific video or "All" | `All` |
@@ -30,9 +30,9 @@ When you switch to the Extract Latent tab, the interface shows three columns:
 
 Available models:
 
-- **`dinov2_vitb14_reg4_pretrain`** — Meta's DINOv2 ViT-B/14 with registers (default, well-tested)
-- **`dinov3_vitb16`** — DINOv3 ViT-B/16 (newer, potentially better representations)
-- **`dinov3_vitl16`** — DINOv3 ViT-L/16 (larger model, higher quality but slower)
+- **`dinov3_vitb16`** — Meta's DINOv3 ViT-B/16 (default, 768-dim output)
+- **`dinov3_vitl16`** — DINOv3 ViT-L/16 (larger model, 1024-dim, higher quality but slower)
+- **`dinov2_vitb14_reg4_pretrain`** — DINOv2 ViT-B/14 with registers (768-dim, well-tested alternative)
 
 ### Preprocessing Settings (Middle Column)
 
@@ -108,6 +108,13 @@ The log shows:
 
 ![Extraction progress](../assets/screenshots/tutorial-step3-extract.png)
 
+!!! tip "Multi-GPU extraction (opt-in)"
+    On a machine with two or more CUDA GPUs you can speed up extraction by setting the environment variable `CASTLE_MULTI_GPU=1` in your environment before launching CASTLE (the Gradio app, the desktop app, and the CLI all honour it). CASTLE then splits a single video's frames by range across the available GPUs (each GPU runs the full decode → preprocess → encode on its half, and the results are merged in original order). On two identical GPUs this is bit-identical to the single-GPU output and roughly **1.9× faster**. The feature is **off by default** (single GPU).
+
+    ```bash
+    CASTLE_MULTI_GPU=1 python -m castle.desktop
+    ```
+
 ---
 
 ## Output Format
@@ -117,7 +124,7 @@ The standard latent extraction produces `.npz` files containing:
 ```python
 import numpy as np
 
-data = np.load('video_ROI_1_dinov2_vitb14_reg4_pretrain.npz')
+data = np.load('video_ROI_1_dinov3_vitb16.npz')
 latent_vectors = data['latent']  # Shape: (n_frames, feature_dim)
 ```
 
@@ -132,18 +139,19 @@ Processing time depends on video length, GPU, and model size.
 
 **Approximate benchmarks** (RTX 4090, 720×720 @ 30fps, batch_size=5):
 
-| Video Length | DINOv2 ViT-B (per ROI) | DINOv3 ViT-L (per ROI) |
+| Video Length | DINOv3 ViT-B (per ROI) | DINOv3 ViT-L (per ROI) |
 |-------------|----------------------|----------------------|
 | 10 min | ~4 min | ~12 min |
 | 30 min | ~12 min | ~36 min |
 | 60 min | ~24 min | ~72 min |
 
-With 7 ROIs on a 30-min video, DINOv2 ViT-B extraction takes ~84 min total.
+With 7 ROIs on a 30-min video, DINOv3 ViT-B extraction takes ~84 min total.
 
 !!! tip "Speed Tips"
     - Increase **batch size** if you have spare VRAM (e.g., 64 or 128 on a 24 GB card)
     - Use **Skip existing** when re-running after adding new videos
-    - `dinov2_vitb14_reg4_pretrain` is fastest; `dinov3_vitl16` is slowest but potentially highest quality
+    - The ViT-B models (`dinov3_vitb16`, `dinov2_vitb14_reg4_pretrain`) are fastest; `dinov3_vitl16` is slowest but potentially highest quality
+    - On a multi-GPU machine, set `CASTLE_MULTI_GPU=1` for roughly 1.9× faster extraction on 2 GPUs
     - Feature extraction is the pipeline bottleneck — plan accordingly for large datasets
 
 ---

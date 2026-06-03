@@ -49,7 +49,9 @@ CASTLE builds on these foundational works. Please also consider citing them:
 }
 ```
 
-### DINOv2
+### DINOv2 / DINOv3
+
+CASTLE's default visual encoder is now **DINOv3** (`dinov3_vitb16`); DINOv2 (`dinov2_vitb14_reg4_pretrain`) remains available as a selectable alternative. If you used the DINOv2 encoder, please cite:
 
 ```bibtex
 @article{oquab2024dinov2,
@@ -59,6 +61,9 @@ CASTLE builds on these foundational works. Please also consider citing them:
   year={2024}
 }
 ```
+
+!!! note "Citing DINOv3"
+    When you use the default DINOv3 encoder, please also cite the DINOv3 paper. See the [DINOv3 release](https://github.com/facebookresearch/dinov3) for the canonical BibTeX entry.
 
 ### UMAP
 

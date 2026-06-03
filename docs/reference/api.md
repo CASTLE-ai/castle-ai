@@ -168,7 +168,7 @@ Auto-generated documentation from Python docstrings using [mkdocstrings](https:/
 
 The `castle.core.stabilized_camera` module implements the **Phase 0 preprocessing** pipeline.
 It applies a zero-phase Butterworth low-pass filter to ROI centroid trajectories and orientation
-angles, then extracts dynamically-cropped and head-aligned frames resized to 518×518 for DINOv2.
+angles, then extracts dynamically-cropped and head-aligned frames resized to match the encoder patch grid (592×592 for the default DINOv3 ViT-B/16).
 
 ::: castle.core.stabilized_camera
     options:
@@ -379,11 +379,11 @@ from castle.core.model_registry import ModelRegistry
 registry = ModelRegistry.instance()
 
 # Explicit load / unload
-model = registry.load("dinov2_vitb14")
-registry.unload("dinov2_vitb14")
+model = registry.load("dinov3_vitb16")
+registry.unload("dinov3_vitb16")
 
 # Context manager (auto-unloads on exit)
-with registry.use("dinov2_vitb14") as model:
+with registry.use("dinov3_vitb16") as model:
     latent = model.extract_tensor_batch(frames, masks, roi_id)
 
 # Bulk unload by family keyword
@@ -417,8 +417,8 @@ from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
 
 # Query free VRAM and return a safe batch size
 batch = compute_optimal_batch_size(
-    model_name="dinov2_vitb14",
-    frame_size=(518, 518, 3),   # (H, W, C)
+    model_name="dinov3_vitb16",
+    frame_size=(592, 592, 3),   # (H, W, C)
     device="auto",              # auto-detect cuda/cpu
 )
 
@@ -467,7 +467,7 @@ config = PipelineConfig(
     storage_path="/data/storage",
     project_name="my_project",
     tracking_model="r50_deaotl",
-    extraction_model="dinov2_vitb14",
+    extraction_model="dinov3_vitb16",
     batch_size=16,
 )
 
@@ -557,8 +557,8 @@ cache = PipelineCache("/data/project/latent")
 
 key = cache.compute_key(
     video_path="/data/project/sources/vid.mp4",
-    config={"center_roi": True, "model": "dinov2_vitb14"},
-    model_name="dinov2_vitb14",
+    config={"center_roi": True, "model": "dinov3_vitb16"},
+    model_name="dinov3_vitb16",
 )
 
 if cache.is_cached(key):          # also validates file existence
@@ -744,7 +744,7 @@ pd = ProjectData.from_storage("/data/projects", "my_project")
 # Standard path helpers — no more manual os.path.join
 pd.sources_dir           # Path("/data/projects/my_project/sources")
 pd.mask_h5_path("v.mp4") # Path(".../track/v.mp4/mask_list.h5")
-pd.latent_model_dir("dinov2_vitb14")
+pd.latent_model_dir("dinov3_vitb16")
 pd.cluster_session_dir("session_001")
 
 # List source videos with metadata

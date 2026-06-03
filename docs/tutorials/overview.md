@@ -16,7 +16,7 @@ All of this is achieved **without any training data** — CASTLE leverages pretr
 ## The Pipeline
 
 ```
-Raw Video → SAM (segment) → DeAOT (track) → Preprocess (stabilize) → DINOv2/v3 (features) → UMAP + DBSCAN (cluster)
+Raw Video → SAM (segment) → DeAOT (track) → Preprocess (stabilize) → DINOv3 (features) → UMAP + DBSCAN (cluster)
 ```
 
 ![CASTLE Pipeline Flowchart](../assets/screenshots/flowchart.png)
@@ -44,10 +44,10 @@ Before feature extraction, the **StabilizedCamera** module normalises each frame
 
 - **Zero-phase Butterworth low-pass filter** (`filtfilt`, fc = 0.25 Hz, order 2) applied to centroid x(t) and heading angle θ(t) — no temporal delay
 - **Dynamic crop window**: `max(300, 2 × (‖residual‖ + 75))` px, adapting to fast movements
-- **Output**: 518×518 px MP4 (optimal for DINOv2 ViT-B/14) saved to `preprocessed/{video}/stabilized.mp4`
+- **Output**: 518×518 px MP4 saved to `preprocessed/{video}/stabilized.mp4`
 - Available via CLI (`castle preprocess`), Gradio UI (Tracking tab → Preprocessing sub-tab), and PyQt desktop app
 
-This ensures that DINOv2 features encode **posture and movement** rather than arena position or heading direction.
+This ensures that the extracted features encode **posture and movement** rather than arena position or heading direction.
 
 ### 3. Video Alignment
 
@@ -59,15 +59,19 @@ Before feature extraction, tracked ROIs are preprocessed:
 
 This normalization ensures that features reflect **posture and movement**, not position or orientation in the frame.
 
-### 4. Feature Extraction (DINOv2 / DINOv3)
+### 4. Feature Extraction (DINOv3)
 
 Visual foundation models extract latent features from each aligned frame:
 
-- **DINOv2 ViT-B/14** — Meta's self-supervised vision transformer (default)
-- **DINOv3 ViT-B/16** and **DINOv3 ViT-L/16** — newer models with improved representations
+- **DINOv3 ViT-B/16** (`dinov3_vitb16`, 768-d) — Meta's self-supervised vision transformer (**default**)
+- **DINOv3 ViT-L/16** (`dinov3_vitl16`, 1024-d) — larger model with richer representations
+- **DINOv2 ViT-B/14** (`dinov2_vitb14_reg4_pretrain`, 768-d) — still supported as a selectable alternative
 - Each frame produces a high-dimensional feature vector
 - ROI masking ensures only the animal contributes to the representation
 - Batch processing with configurable batch size
+
+!!! tip "Multi-GPU extraction (opt-in)"
+    Set `CASTLE_MULTI_GPU=1` in your environment before running extraction. When two or more CUDA GPUs are present, latent extraction for a single video splits its frames by range across the GPUs (each runs the full decode → preprocess → encode on its half; results are merged in original order). Output is bit-identical to the single-GPU path on identical GPUs and roughly **1.9× faster on 2 GPUs**. Default is off (single GPU).
 
 ### 5. Behavior Analysis (UMAP + DBSCAN)
 
@@ -79,6 +83,9 @@ The high-dimensional features are reduced and clustered to discover behavioral p
 - Interactive click-to-explore on the UMAP plot
 
 CASTLE is a **human-in-the-loop** tool: cluster boundaries and labels must be reviewed by the user in the Behavior Microscope tab before they are scientifically meaningful. There is intentionally no "one-click cluster" entry point.
+
+!!! note "Reproducibility & standardization"
+    Input **standardization (per-feature z-score) is on by default** for the first (raw-feature) UMAP stage (`"standardize": true` in the default UMAP config). It improves cluster separation but changes embeddings relative to older runs, so the DBSCAN `eps` may need re-tuning; it is configurable in the UMAP config JSON. Every UMAP run also records its resolved random seed, and each clustering session writes a `umap_log.jsonl` file (one JSON line per UMAP stage with seed + config). Reuse the logged seed — via the CPU/deterministic path — to reproduce an embedding exactly.
 
 ### 6. Cluster Annotator
 
@@ -92,7 +99,7 @@ After clustering, annotate discovered clusters with behavior labels:
 
 ### 7. Downstream Analysis
 
-- **Ethogram** — raster plot, transition matrix heatmap, bout duration distributions
+- **Ethogram** — raster plot, transition matrix heatmap, bout duration distributions, written **per video** (one ethogram per animal/video)
 - **Quality Metrics** — silhouette score, Calinski-Harabasz, Davies-Bouldin, V-measure, NMI, ARI
 - **Group Comparison** — behavioral fingerprint radar, BFA test, energy distance, permutation tests
 
@@ -119,7 +126,7 @@ Interactive web interface at `http://localhost:7860` with **7 tabs** following t
 | 0 | Project | Create / open projects |
 | 1 | Upload Videos | Import video files |
 | 2 | Tracking ROIs | SAM labeling + DeAOT tracking + batch + **Preprocessing** sub-tab |
-| 3 | Extract Latent | DINOv2/v3 feature extraction |
+| 3 | Extract Latent | DINOv3 feature extraction (DINOv2 still selectable) |
 | 4 | Behavior Microscope | UMAP + DBSCAN clustering + Cluster Annotator |
 | 5 | Analysis | Ethogram, Quality Metrics, Group Comparison |
 | 6 | Export | ZIP download with selectable data components |

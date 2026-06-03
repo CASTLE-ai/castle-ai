@@ -1,13 +1,13 @@
 # Step 2.5: Stabilized Camera Preprocessing *(Optional)*
 
 After tracking and before feature extraction, CASTLE can apply **Stabilized Camera Preprocessing**
-to produce a head-fixed, dynamically-cropped video that is optimal for DINOv2 feature extraction.
+to produce a head-fixed, dynamically-cropped video that is optimal for DINOv3 feature extraction.
 
 !!! note "When to use this step"
     This step is *optional* but strongly recommended when:
 
     - The animal moves freely across the arena (not a fixed-camera close-up)
-    - You want DINOv2 features to capture **posture** rather than position or heading direction
+    - You want DINOv3 features to capture **posture** rather than position or heading direction
     - You see poor cluster separation due to orientation-dependent features
 
     Skip it for fixed-camera or already-aligned videos.
@@ -38,7 +38,7 @@ crop_size = max(300, 2 × (‖x(t) − x_c(t)‖ + 75))   [px]
 warpAffine: translate → x_c(t), rotate → θ_c(t) − 90°
     │
     ▼
-Resize → 518 × 518 px   (DINOv2 ViT-B/14 optimal input)
+Resize → 592 × 592 px   (DINOv3 ViT-B/16 default; 518 = 37 × 14 suits DINOv2 ViT-B/14)
     │
     ▼
 preprocessed/{video}/stabilized.mp4
@@ -68,7 +68,7 @@ contracts to the minimum (300 px), giving a tighter zoom.
 | `order` | `2` | Butterworth filter order. Higher = steeper roll-off. |
 | `margin` | `75` px | Spatial buffer added around the HP residual. |
 | `min_crop` | `300` px | Floor for the dynamic crop window size. |
-| `output_size` | `518` px | Output frame side length — 518 = 37 × 14, optimal for DINOv2 ViT-B/14. |
+| `output_size` | `592` px | Output frame side length. Match the encoder patch grid: 592 = 37 × 16 for the default DINOv3 ViT-B/16; 518 = 37 × 14 for DINOv2 ViT-B/14. |
 
 ---
 

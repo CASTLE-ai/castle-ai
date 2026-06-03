@@ -6,7 +6,7 @@ CASTLE watches your video and creates a **"visual fingerprint"** for each frame 
 
 Then it groups these fingerprints into **clusters**. Each cluster represents a distinct behavioral pattern: frames where the mouse is grooming look different from frames where it's running, so they end up in different clusters.
 
-The key insight: **CASTLE never needs you to label body parts or train a classifier.** It uses a pre-trained vision model (DINOv2) that already "understands" visual similarity from having seen millions of images. You just tell it what each cluster *means* — and that's the only human input required.
+The key insight: **CASTLE never needs you to label body parts or train a classifier.** It uses a pre-trained vision model (DINOv3, `dinov3_vitb16` by default) that already "understands" visual similarity from having seen millions of images. You just tell it what each cluster *means* — and that's the only human input required.
 
 ---
 
@@ -18,7 +18,7 @@ Think of each video frame as having a **barcode** — except instead of thin and
 
 Two frames where the mouse is in a similar pose will have similar barcodes, even if the mouse is in a slightly different position in the arena. Frames showing very different behaviors (say, grooming vs. rearing) will have very different barcodes.
 
-These barcodes are formally called **latent vectors**, and they're produced by a visual foundation model (DINOv2) that has been pre-trained on millions of images. You don't need to train anything — the model already knows how to extract meaningful visual features.
+These barcodes are formally called **latent vectors**, and they're produced by a visual foundation model (DINOv3, `dinov3_vitb16` by default) that has been pre-trained on millions of images. You don't need to train anything — the model already knows how to extract meaningful visual features. Larger encoders are also selectable (`dinov3_vitl16`, 1024 numbers per frame), as is the previous-generation `dinov2_vitb14_reg4_pretrain` (also 768 numbers).
 
 ### Embedding (UMAP Plot)
 
@@ -30,6 +30,9 @@ UMAP (Uniform Manifold Approximation and Projection) is a dimensionality reducti
 - **Distant points** = frames that look different (probably different behaviors)
 - **Dense clumps** = behaviors that the animal performs consistently
 - **Scattered points** = transitional or ambiguous frames
+
+!!! note "Standardization and reproducibility"
+    By default, the first (raw-feature) UMAP stage now **standardizes** its input (per-feature z-score) before projecting, which sharpens cluster separation. This changes the embedding compared to older runs, so your DBSCAN `eps` may need re-tuning. Every UMAP run also records the random seed it resolved, logged one line per stage to a per-session `umap_log.jsonl`; reuse that seed (on the deterministic CPU path) to reproduce an embedding exactly. Both standardization and the seed are configurable in the UMAP config JSON.
 
 ### Clustering (DBSCAN)
 
@@ -72,6 +75,9 @@ A behavioral fingerprint is a **complete summary of one animal's behavior**, com
 3. **Transition probabilities** — how behaviors flow into each other
 
 Think of it like a personality profile for the animal's behavior during that recording session. You can then compare fingerprints between individuals, groups, or conditions to ask: "Does the treatment change behavior?"
+
+!!! note
+    Ethogram results are written **per video** — one ethogram per animal/video — so each recording's fingerprint stays separate and directly comparable.
 
 ---
 

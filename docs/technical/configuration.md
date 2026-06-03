@@ -119,7 +119,7 @@ Configured in the **3. Extract Latent** tab:
 
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
-| Visual Model | `dinov2_vitb14_reg4_pretrain` | 3 options | Feature extraction backbone |
+| Visual Model | `dinov3_vitb16` | 3 options | Feature extraction backbone (`dinov3_vitb16` default, 768-d; `dinov3_vitl16`, 1024-d; `dinov2_vitb14_reg4_pretrain`, 768-d) |
 | ROI ID | `1` | Any tracked ROI | Which ROI to extract |
 | Batch Size | `32` | 1–256+ | Frames per batch (limited by VRAM) |
 | Skip Existing | `True` | — | Don't re-extract existing files |
@@ -151,7 +151,8 @@ JSON array of UMAP stages:
     {
         "n_neighbors": 100,
         "min_dist": 0.0,
-        "n_components": 2
+        "n_components": 2,
+        "standardize": true
     }
 ]
 ```
@@ -161,8 +162,15 @@ JSON array of UMAP stages:
 | `n_neighbors` | Nearest neighbors (local vs global structure) | 25–1000 |
 | `min_dist` | Minimum distance in embedding | 0.0 (for clustering) |
 | `n_components` | Output dimensions per stage | 2, 5, or 10 |
+| `standardize` | Per-feature z-score of the raw features before stage 0 (first stage only). Default `true`. | `true` / `false` |
 
 **Internal parameter** (in `myumap.py`): `n_epochs = 20000` — number of optimization epochs. Not exposed in the UI.
+
+!!! note "Input standardization is on by default"
+    The first (raw-feature) UMAP stage now z-scores each feature before fitting (`"standardize": true` in the default preset). This improves cluster separation but **changes embeddings versus older runs**, so the DBSCAN `eps` may need re-tuning. Set `"standardize": false` in the stage-0 config to reproduce a pre-standardization layout. Later stages run on low-dim UMAP output and are not standardized.
+
+!!! tip "Reproducible UMAP runs"
+    Every UMAP run records its resolved random seed, and each clustering session writes a `umap_log.jsonl` file — one JSON line per UMAP stage capturing the seed and resolved config. To reproduce an embedding exactly, reuse the logged seed (set `random_state` in the stage config) and run the CPU/deterministic path for bit-identical results.
 
 ---
 
@@ -182,6 +190,10 @@ Smaller eps → more clusters. Larger eps → fewer clusters.
 |----------|-------------|
 | `COLAB_GPU` | Auto-detected in Google Colab; enables `--share` and Colab-specific paths |
 | `HDF5_USE_FILE_LOCKING` | Set to `FALSE` by `app.py` to avoid HDF5 locking issues |
+| `CASTLE_MULTI_GPU` | Opt-in multi-GPU latent extraction (Gradio app, desktop app, or CLI). Default OFF. Set to `1` to enable. |
+
+!!! tip "Multi-GPU latent extraction"
+    When `CASTLE_MULTI_GPU=1` **and** at least two CUDA GPUs are visible, latent extraction for a single video splits its frames by range across the GPUs (each GPU runs the full decode → preprocess → encode on its half; results are merged in original order). Output is bit-identical to the single-GPU path on identical GPUs, and roughly 1.9× faster on two GPUs. The default (unset, or `0`/`false`/`off`) is single-GPU.
 
 ---
 
@@ -211,7 +223,7 @@ cfg.save('castle_config.json')           # to file
 
 **Multi-scale pooling (A-06)** divides the patch grid into s×s regions for each scale s, computes mask-weighted average in each region, then concatenates. For example, `pooling_scales=[1, 2, 4]` produces a `(1 + 4 + 16) × 768 = 16128`-dim vector.
 
-**Multi-layer extraction (A-06)** concatenates features from multiple transformer layers (e.g. shallow layers capture texture/edges, deep layers capture semantics). For example, `feature_layers=[3, 7, 11]` on DINOv2-ViT-B/14 produces `3 × 768 = 2304`-dim features per patch.
+**Multi-layer extraction (A-06)** concatenates features from multiple transformer layers (e.g. shallow layers capture texture/edges, deep layers capture semantics). For example, `feature_layers=[3, 7, 11]` on the default DINOv3-ViT-B/16 (`dinov3_vitb16`, 768-d) produces `3 × 768 = 2304`-dim features per patch.
 
 ### Preprocessing Parameters
 
@@ -239,7 +251,9 @@ cfg.save('castle_config.json')           # to file
 |-------|------|---------|-------------|
 | `clustering.method` | `str` | `'dbscan'` | Clustering algorithm |
 | `clustering.eps` | `float` | `1.0` | DBSCAN epsilon |
-| `clustering.umap_stages` | `List[UMAPConfig]` | `[{n_neighbors:100, ...}]` | Multi-stage UMAP configs |
+| `clustering.umap_stages` | `List[UMAPConfig]` | `[{n_neighbors:100, ..., standardize:true}]` | Multi-stage UMAP configs |
+
+The stage-0 `UMAPConfig` defaults to `standardize: true` (per-feature z-score of the raw features). The top-level `master_seed` field (default `42`) seeds every stochastic component; resolved per-stage UMAP seeds are recorded in the session's `umap_log.jsonl` for reproducibility (see [UMAP Parameters](#umap-parameters)).
 
 ---
 

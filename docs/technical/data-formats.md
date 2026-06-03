@@ -74,12 +74,12 @@ Created by **Extract Latent**. Stored in `project/latent/{model_name}/`.
 
 ```python
 import numpy as np
-data = np.load('video_ROI_1_dinov2_vitb14_reg4_pretrain.npz')
+data = np.load('video_ROI_1_dinov3_vitb16.npz')
 
 data['latent']  # np.ndarray, shape (n_frames, feature_dim), dtype float32
 ```
 
-- **Feature dimensions**: 768 (ViT-B models) or 1024 (ViT-L models)
+- **Feature dimensions**: 768 (ViT-B models, e.g. the default `dinov3_vitb16`) or 1024 (ViT-L models, e.g. `dinov3_vitl16`)
 - Frames with empty masks → NaN vectors
 - **Filename pattern**: `{video}_ROI_{roi_id}_{model}_{tags}.npz`
 - **Tags**: `ctr` (centered), `rmbg` (background removed)
@@ -146,11 +146,22 @@ data = np.load('cluster_grooming_rearing_.npz')
 
 data['emb']     # np.ndarray, shape (n_samples, 2) — UMAP 2D coordinates
 data['cls']     # np.ndarray, shape (n_samples,), dtype int16 — cluster IDs
-data['config']  # UMAP configuration used
+data['config']  # UMAP configuration used (includes the resolved random seed)
 ```
 
 - NaN in `emb` → frame excluded from analysis
 - `-1` in `cls` → unclassified frame
+
+!!! tip "Reproducible embeddings"
+    Each clustering session also writes a `umap_log.jsonl` next to the session
+    files — one JSON line per UMAP stage recording the resolved random seed and
+    the config for that stage. Re-running with the logged seed reproduces the
+    embedding (use the CPU/deterministic path for bit-identical results). Note
+    that per-feature z-score **standardization is ON by default** for the first
+    (raw-feature) UMAP stage (`"standardize": true`), which improves cluster
+    separation but changes coordinates versus older runs, so the DBSCAN `eps`
+    may need re-tuning. Set `"standardize": false` in the stage-0 UMAP config to
+    disable it.
 
 ---
 
@@ -179,9 +190,9 @@ projects/my-project/
 │   └── video1.mp4/
 │       └── video1_ROI_1_crop.mp4
 ├── latent/
-│   └── dinov2_vitb14_reg4_pretrain/
-│       ├── video1_ROI_1_dinov2_vitb14_reg4_pretrain.npz
-│       └── video2_ROI_1_dinov2_vitb14_reg4_pretrain.npz
+│   └── dinov3_vitb16/
+│       ├── video1_ROI_1_dinov3_vitb16.npz
+│       └── video2_ROI_1_dinov3_vitb16.npz
 └── cluster/
     ├── id.csv
     ├── time_series.csv

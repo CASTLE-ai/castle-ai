@@ -136,4 +136,4 @@ Once all videos are tracked you have two options:
 - *(Optional but recommended for freely-moving experiments)*  
   [**Step 2.5: Stabilized Camera Preprocessing**](step2_5-preprocessing.md) — apply zero-phase Butterworth filtering to produce head-fixed 518×518 video before feature extraction.
 
-- [**Step 3: Extract Features**](step3-extract.md) — proceed directly to DINOv2/v3 feature extraction.
+- [**Step 3: Extract Features**](step3-extract.md) — proceed directly to DINOv3 feature extraction.

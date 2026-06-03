@@ -736,6 +736,7 @@ def create_preprocess_ui(
             value="",
             interactive=False,
             lines=1,
+            max_lines=1,
         )
 
         # -- Video + Preview -----------------------------------------------
@@ -753,44 +754,49 @@ def create_preprocess_ui(
                 ui["preview_image"] = gr.Image(
                     label="Preview",
                     interactive=False,
+                    height=320,
                 )
 
-        # -- Session management -------------------------------------------
-        gr.Markdown("---\n### Session Management")
-        with gr.Row():
-            ui["sessions_dropdown"] = gr.Dropdown(
-                label="Existing sessions (newest first)",
-                choices=[],
-                value=None,
-                interactive=True,
-            )
-            ui["delete_btn"] = gr.Button("🗑 Delete session", variant="stop")
-            ui["delete_cancel_btn"] = gr.Button("Cancel", visible=False)
-        ui["delete_warning"] = gr.Markdown(
-            "⚠️ **This will permanently delete all preprocessed videos and "
-            "extracted latents for this session. This cannot be undone.**",
-            visible=False,
-        )
-        ui["delete_confirm_state"] = gr.State(False)
-        ui["session_status"] = gr.Textbox(
-            label="",
-            value="",
-            interactive=False,
-            lines=1,
-        )
-
         # -- Run -----------------------------------------------------------
-        gr.Markdown("---")
+        gr.Markdown("---\n### Run")
         ui["skip_existing"] = gr.Checkbox(label="Skip existing", value=True)
         with gr.Row():
-            ui["run_btn"] = gr.Button("▶ Run Pre-process", variant="primary")
-            ui["run_cancel_btn"] = gr.Button("Cancel", interactive=False)
+            ui["run_btn"] = gr.Button("▶ Run Pre-process", variant="primary", scale=4)
+            ui["run_cancel_btn"] = gr.Button("Cancel", variant="secondary", interactive=False, scale=1)
         ui["log_text"] = gr.Textbox(
             label="Log",
             value="",
             interactive=False,
             lines=12,
         )
+
+        # -- Manage existing sessions (browse / delete past runs) ----------
+        # Secondary to the create-flow above, so it lives in a collapsed
+        # accordion at the bottom instead of interrupting configure→run.
+        with gr.Accordion("📂 Manage existing sessions", open=False):
+            with gr.Row(equal_height=True):
+                ui["sessions_dropdown"] = gr.Dropdown(
+                    label="Existing sessions (newest first)",
+                    choices=[],
+                    value=None,
+                    interactive=True,
+                    scale=4,
+                )
+                ui["delete_btn"] = gr.Button("🗑 Delete session", variant="stop", scale=1)
+                ui["delete_cancel_btn"] = gr.Button("Cancel", visible=False, scale=1)
+            ui["delete_warning"] = gr.Markdown(
+                "⚠️ **This will permanently delete all preprocessed videos and "
+                "extracted latents for this session. This cannot be undone.**",
+                visible=False,
+            )
+            ui["delete_confirm_state"] = gr.State(False)
+            ui["session_status"] = gr.Textbox(
+                label="Status",
+                value="",
+                interactive=False,
+                lines=1,
+                max_lines=1,
+            )
 
     # ------------------------------------------------------------------
     # Event handlers

@@ -426,12 +426,26 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
                  local_embedding_plot, ui['embedding_plot']],
     ).then(
-        fn=lambda: (
-            gr.update(visible=False),
-            gr.update(value="Session restored successfully."),
-            gr.update(visible=False),
-            gr.update(visible=False),
+        # Only claim success when restore_session actually produced latents.
+        # On failure it returns Nones (and already showed a gr.Warning); keep the
+        # restore/select controls available instead of a misleading success line.
+        fn=lambda restored_latents: (
+            (
+                gr.update(visible=False),
+                gr.update(value="Session restored successfully."),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            )
+            if restored_latents is not None
+            else (
+                gr.update(visible=True),
+                gr.update(value="⚠️ Session restore failed — see the warning above. "
+                                "Pick another session or initialize a new one."),
+                gr.update(visible=True),
+                gr.update(visible=False),
+            )
         ),
+        inputs=[latents],
         outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown'], ui['delete_session_btn']]
     )
 

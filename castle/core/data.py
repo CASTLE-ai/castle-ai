@@ -222,6 +222,10 @@ class VideoDataset(Dataset):
             )
             h, w = self.preprocess.center_roi_crop_height, self.preprocess.center_roi_crop_width
             pf = blank_page(h, w)
-            pm = blank_page(h, w)
+            # Mask must be 2D (H, W); blank_page() returns a 3D (H, W, 3) frame.
+            # A 3D mask breaks DataLoader collation (shape mismatch with real 2D
+            # masks) and, if a whole batch is blank, propagates a 3D tensor into
+            # the patch-grid pooling. Use a 2D all-background mask instead.
+            pm = np.zeros((h, w), dtype=np.uint8)
 
         return pf, pm

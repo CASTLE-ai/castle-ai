@@ -358,13 +358,32 @@ def extract_roi_latent_from_video(
 
     loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS))
 
-    latent_list = []
+    # Per-batch slots preserve the timeline: every batch contributes exactly
+    # frames.shape[0] rows to the final array, even when it fails. A tolerated
+    # failure becomes a NaN placeholder (filled once the feature dim is known)
+    # and its absolute frame range is recorded in metadata. This guarantees
+    # row index == frame index downstream — cluster labels are assigned per row
+    # and `Latent.select()` filters NaN rows, so a failed frame is excluded from
+    # clustering with a visible warning rather than silently shifting every
+    # subsequent frame's label (which is what dropping the batch used to do).
+    latent_slots: list = []          # real (B, C) arrays, or None placeholders
+    pending_fail: list = []          # (slot_index, n_rows) awaiting feature dim
+    failed_frame_ranges: list = []   # [[start, end), ...] absolute frame indices
     total_batches = len(loader)
     n_batches_failed = 0
     abs_failure_threshold = max(1, int(max_batch_failure_rate * total_batches))
     first_batch_error: Optional[str] = None
+    expected_dim: Optional[int] = None
+    rows_seen = 0
+
+    def _record_failure(slot_pos: int, n_rows: int, frame_start: int) -> None:
+        pending_fail.append((slot_pos, n_rows))
+        failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
 
     for i, (frames, masks) in enumerate(loader):
+        n_rows = int(frames.shape[0])
+        frame_start = rows_seen
+        rows_seen += n_rows
         try:
             if hasattr(observer, 'extract_tensor_batch'):
                  latent_batch = observer.extract_tensor_batch(
@@ -376,14 +395,24 @@ def extract_roi_latent_from_video(
             else:
                  latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
 
-            latent_list.append(latent_batch)
+            latent_slots.append(latent_batch)
+            if expected_dim is None:
+                expected_dim = latent_batch.shape[1]
 
-        except (ROINotFoundError, PreprocessingError):
-            # Frame-level error already explained by the dataset layer; raise
-            # immediately for the strict path or surface to abort logic.
+        except (ROINotFoundError, PreprocessingError) as e:
+            # Strict path re-raises; tolerant path keeps the timeline aligned.
             n_batches_failed += 1
             if on_frame_error == "raise" or n_batches_failed > abs_failure_threshold:
                 raise
+            if first_batch_error is None:
+                first_batch_error = repr(e)
+            logger.warning(
+                "Batch %d/%d for %s failed (%s); inserting %d NaN placeholder "
+                "frame(s) to preserve the timeline.",
+                i + 1, total_batches, video_name, e, n_rows,
+            )
+            latent_slots.append(None)
+            _record_failure(len(latent_slots) - 1, n_rows, frame_start)
         except Exception as e:
             n_batches_failed += 1
             if first_batch_error is None:
@@ -399,20 +428,29 @@ def extract_roi_latent_from_video(
                     f"{total_batches}, max_rate={max_batch_failure_rate:.0%}). "
                     f"Cause: {first_batch_error}."
                 ) from e
+            logger.warning(
+                "Batch %d/%d for %s tolerated after error; inserting %d NaN "
+                "placeholder frame(s) to preserve the timeline.",
+                i + 1, total_batches, video_name, n_rows,
+            )
+            latent_slots.append(None)
+            _record_failure(len(latent_slots) - 1, n_rows, frame_start)
 
         if progress_callback:
             progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name}")
 
-    if not latent_list:
+    if expected_dim is None:
         raise ExtractionError(
             f"All {total_batches} batches failed for {video_name}. "
             f"No latent file written."
         )
 
-    # BUG-05: validate feature-dimension consistency before concat so a model
-    # swap mid-extraction fails loudly instead of producing a cryptic ValueError.
-    expected_dim = latent_list[0].shape[1]
-    mismatched = [(i, tuple(b.shape)) for i, b in enumerate(latent_list) if b.shape[1] != expected_dim]
+    # BUG-05: validate feature-dimension consistency across the real batches so
+    # a model swap mid-extraction fails loudly instead of a cryptic ValueError.
+    mismatched = [
+        (idx, tuple(b.shape)) for idx, b in enumerate(latent_slots)
+        if b is not None and b.shape[1] != expected_dim
+    ]
     if mismatched:
         sample = mismatched[:5]
         raise ExtractionError(
@@ -422,7 +460,11 @@ def extract_roi_latent_from_video(
             + ". This usually indicates a model swap mid-extraction."
         )
 
-    latent_array = np.concatenate(latent_list, axis=0)
+    # Fill tolerated failures with NaN placeholders of the correct width.
+    for slot_pos, n_rows in pending_fail:
+        latent_slots[slot_pos] = np.full((n_rows, expected_dim), np.nan, dtype=np.float32)
+
+    latent_array = np.concatenate(latent_slots, axis=0)
 
     # BUG-14: embed video / ROI / model identity so loaders can stop relying
     # on filename parsing.
@@ -437,13 +479,19 @@ def extract_roi_latent_from_video(
             "pooling_scales": list(pooling_scales) if pooling_scales else None,
             "feature_layers": list(feature_layers) if feature_layers else None,
             "rotation": False,
+            "failed_frame_ranges": failed_frame_ranges or None,
         },
     )
 
     if n_batches_failed:
+        n_nan_frames = sum(end - start for start, end in failed_frame_ranges)
         logger.warning(
-            "Extraction for %s completed with %d/%d failed batches (below %.0f%% threshold).",
-            video_name, n_batches_failed, total_batches, max_batch_failure_rate * 100,
+            "Extraction for %s completed with %d/%d failed batches (below %.0f%% "
+            "threshold); %d frame(s) stored as NaN placeholders to keep the "
+            "timeline aligned (ranges recorded in metadata; downstream clustering "
+            "filters NaN rows).",
+            video_name, n_batches_failed, total_batches,
+            max_batch_failure_rate * 100, n_nan_frames,
         )
 
     # Update Config — use atomic read-modify-write context manager so two
@@ -590,7 +638,8 @@ class RotationDataset(VideoDataset):
                 h = self.preprocess.center_roi_crop_height
                 w = self.preprocess.center_roi_crop_width
                 pf = blank_page(h, w)
-                pm = blank_page(h, w)
+                # 2D all-background mask (blank_page is a 3D frame, wrong for masks).
+                pm = np.zeros((h, w), dtype=np.uint8)
             frames_list.append(pf)
             masks_list.append(pm)
 
@@ -692,17 +741,25 @@ def extract_roi_rotation_latent_from_video(
 
     loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS))
 
-    latent_list = []
+    # Timeline-preserving slots (see extract_roi_latent_from_video): a tolerated
+    # batch failure becomes a NaN placeholder of the right row count rather than
+    # being dropped, so row index == frame index is never violated.
+    latent_slots: list = []
+    failed_frame_ranges: list = []
     total_batches = len(loader)
     n_batches_failed = 0
     abs_failure_threshold = max(1, int(max_batch_failure_rate * total_batches))
     first_batch_error: Optional[str] = None
+    rows_seen = 0
 
     try:
         for i, (frames, masks) in enumerate(loader):
             if progress_callback:
                 progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name} (Rot)")
 
+            n_rows = int(frames.shape[0])
+            frame_start = rows_seen
+            rows_seen += n_rows
             try:
                 B, R, H, W, C = frames.shape
                 frames_flat = frames.reshape(B * R, H, W, C)
@@ -719,11 +776,18 @@ def extract_roi_rotation_latent_from_video(
                 latent_reshaped = latent_batch.reshape(B, R, embed_dim)
                 latent_averaged = latent_reshaped.mean(axis=1)
 
-                latent_list.append(latent_averaged)
-            except (ROINotFoundError, PreprocessingError):
+                latent_slots.append(latent_averaged)
+            except (ROINotFoundError, PreprocessingError) as e:
                 n_batches_failed += 1
                 if on_frame_error == "raise" or n_batches_failed > abs_failure_threshold:
                     raise
+                logger.warning(
+                    "Rotation batch %d/%d for %s failed (%s); inserting %d NaN "
+                    "placeholder frame(s) to preserve the timeline.",
+                    i + 1, total_batches, video_name, e, n_rows,
+                )
+                latent_slots.append(np.full((n_rows, embed_dim), np.nan, dtype=np.float32))
+                failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
             except Exception as e:
                 n_batches_failed += 1
                 if first_batch_error is None:
@@ -740,14 +804,22 @@ def extract_roi_rotation_latent_from_video(
                         f"max_rate={max_batch_failure_rate:.0%}). "
                         f"Cause: {first_batch_error}."
                     ) from e
+                logger.warning(
+                    "Rotation batch %d/%d for %s tolerated after error; inserting "
+                    "%d NaN placeholder frame(s) to preserve the timeline.",
+                    i + 1, total_batches, video_name, n_rows,
+                )
+                latent_slots.append(np.full((n_rows, embed_dim), np.nan, dtype=np.float32))
+                failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
 
-        if not latent_list:
+        n_failed_frames_total = sum(end - start for start, end in failed_frame_ranges)
+        if not latent_slots or n_failed_frames_total >= rows_seen:
             raise ExtractionError(
                 f"All {total_batches} rotation batches failed for {video_name}."
             )
 
         # Concatenate final results
-        latent_array = np.concatenate(latent_list, axis=0)
+        latent_array = np.concatenate(latent_slots, axis=0)
         # BUG-14: include metadata so loaders can stop relying on filename
         # parsing (rotation files don't carry model_name in the filename).
         save_latent_with_metadata(
@@ -756,7 +828,7 @@ def extract_roi_rotation_latent_from_video(
             video_name=video_name,
             roi_id=int(roi_id),
             model_name=model_name,
-            tags={"rotation": True},
+            tags={"rotation": True, "failed_frame_ranges": failed_frame_ranges or None},
         )
 
         # Update Config — atomic RMW per 3-F.
@@ -765,9 +837,12 @@ def extract_roi_rotation_latent_from_video(
             config.setdefault('latent', {})[latent_filename] = video_name
 
         if n_batches_failed:
+            n_nan_frames = sum(end - start for start, end in failed_frame_ranges)
             logger.warning(
-                "Rotation extraction for %s completed with %d/%d failed batches.",
-                video_name, n_batches_failed, total_batches,
+                "Rotation extraction for %s completed with %d/%d failed batches; "
+                "%d frame(s) stored as NaN placeholders to keep the timeline "
+                "aligned (ranges recorded in metadata).",
+                video_name, n_batches_failed, total_batches, n_nan_frames,
             )
 
         return latent_path

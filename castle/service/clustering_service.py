@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
-from castle.core.types import InsufficientDataError
+from castle.core.types import CastleDataError, InsufficientDataError
 from castle.service.session_manager import SessionManager
 from castle.utils.latent_explorer import LocalLatent
 
@@ -331,7 +331,15 @@ class ClusteringSession:
             if os.path.exists(ts_path):
                 ts_df = pd.read_csv(ts_path)
                 bin_clusters = ts_df['behavior'].values[::self.latents.time_window][:vn]
-                self.latents.cluster[cum:cum + len(bin_clusters)] = bin_clusters
+                if len(bin_clusters) != vn:
+                    raise CastleDataError(
+                        f"Session restore: {os.path.basename(ts_path)} downsamples "
+                        f"to {len(bin_clusters)} bins but video {v!r} expects {vn}. "
+                        f"The time_series CSV is likely truncated/corrupt. Assigning "
+                        f"it would mislabel this and every subsequent video — refusing. "
+                        f"Re-save the session or delete the corrupt CSV and re-cluster."
+                    )
+                self.latents.cluster[cum:cum + vn] = bin_clusters
                 ts_paths.append(ts_path)
             cum += vn
         
@@ -1324,7 +1332,15 @@ def restore_session_from_disk(
             if os.path.exists(ts_path):
                 ts_df = pd.read_csv(ts_path)
                 bin_clusters = ts_df['behavior'].values[::latents.time_window][:vn]
-                latents.cluster[cum:cum + len(bin_clusters)] = bin_clusters
+                if len(bin_clusters) != vn:
+                    raise CastleDataError(
+                        f"Session restore: {os.path.basename(ts_path)} downsamples "
+                        f"to {len(bin_clusters)} bins but video {v!r} expects {vn}. "
+                        f"The time_series CSV is likely truncated/corrupt. Assigning "
+                        f"it would mislabel this and every subsequent video — refusing. "
+                        f"Re-save the session or delete the corrupt CSV and re-cluster."
+                    )
+                latents.cluster[cum:cum + vn] = bin_clusters
                 df2_paths.append(ts_path)
             cum += vn
     else:

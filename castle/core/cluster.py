@@ -251,7 +251,10 @@ class LatentAggregator:
         
         self.latents: Optional[np.ndarray] = None
         self.videos_meta: List[Tuple[int, str]] = []
-        self.fps: float = 30.0 # Default fallback
+        self.fps: float = 30.0 # Default fallback (first video; see fps_per_video)
+        # Per-video frame rate: a project may mix frame rates (e.g. 24 + 60 fps).
+        # Keyed by video source name (the same string stored in videos_meta).
+        self.fps_per_video: Dict[str, float] = {}
         
         latent_files = []
         if 'latent' in project_config:
@@ -311,14 +314,19 @@ class LatentAggregator:
                 if n_frames_to_keep == 0:
                     continue
 
-                # Setup fps from the first video found
-                if not latents_buffer:
-                    try:
-                        video_path = os.path.join(self.source_path, video_source_name)
-                        with VideoReader(video_path) as vr:
-                            self.fps = vr.fps
-                    except Exception as e:
-                        self.notify(f"Warning: Could not read FPS from {video_source_name}, using default 30. Error: {e}", "warning")
+                # Read each video's OWN fps (not just the first). A project may
+                # mix frame rates; using one video's fps for all others produces
+                # systematically wrong timestamps. self.fps keeps the first
+                # successful read as a fallback for any video we can't probe.
+                try:
+                    video_path = os.path.join(self.source_path, video_source_name)
+                    with VideoReader(video_path) as vr:
+                        video_fps = vr.fps
+                    self.fps_per_video[video_source_name] = video_fps
+                    if not latents_buffer:
+                        self.fps = video_fps
+                except Exception as e:
+                    self.notify(f"Warning: Could not read FPS from {video_source_name}, using fallback {self.fps}. Error: {e}", "warning")
 
                 latents_buffer.append(latent_chunk[:n_frames_to_keep])
                 self.videos_meta.append((n_bins, video_source_name))
@@ -471,10 +479,13 @@ class LatentAggregator:
         cum_bins = 0
 
         for n_bins_in_video, video_name in self.videos_meta:
+            # Use this video's own fps (a project may mix frame rates).
+            video_fps = self.fps_per_video.get(video_name, self.fps)
+
             # Extract syllables corresponding to this video
             # Syllables are per-bin, so we repeat them to match frame-rate if we want per-frame arrays,
             # BUT the logic here seems to iterate changes in bins.
-            
+
             this_video_syllables_bins = syllables[cum_bins : cum_bins + n_bins_in_video]
             
             # Expand bins to frames for precision? 
@@ -493,8 +504,8 @@ class LatentAggregator:
                 start_frame = change_indices[i] + 1
                 end_frame = change_indices[i+1]
                 
-                start_time = frame_to_timestamp(start_frame, self.fps)
-                end_time = frame_to_timestamp(end_frame, self.fps)
+                start_time = frame_to_timestamp(start_frame, video_fps)
+                end_time = frame_to_timestamp(end_frame, video_fps)
                 
                 behavior_id = data[start_frame]
                 

@@ -68,19 +68,32 @@ class VisualEncoder(ABC):
         x = self.normalize(x)
         return x.to(self.device)
 
+    def _align_mask_to_input(self, masks: torch.Tensor, image_size: int) -> torch.Tensor:
+        """Transform ROI masks to ``(B, image_size, image_size)`` using the SAME
+        geometry this encoder applies to *frames* in ``preprocess_batch``.
+
+        The base implementation is an anisotropic resize (stretch), which is how
+        the DINOv2 frame path scales frames — so mask and features stay aligned.
+        :class:`DINOv3Encoder` overrides this with resize + center-crop to match
+        its own frame preprocessing; otherwise, for non-square inputs, the mask
+        weights would be spatially offset from the patch features and corrupt the
+        pooled latent. ``mode='nearest'`` keeps the mask binary.
+        """
+        return F.interpolate(masks[:, None, ...], size=(image_size, image_size), mode='nearest')[:, 0]
+
     def _weighted_pooling(self, features: torch.Tensor, masks: torch.Tensor, image_size: int, patch_size: int) -> torch.Tensor:
         """
         Computes weighted pooling of features using masks (DRY fix).
-        
+
         Args:
             features: (B, N, C) Feature tensor from backbone
             masks: (B, H, W) Tensor of masks (input resolution)
             image_size: Model input resolution (e.g. 518, 592)
             patch_size: Patch size in pixels (e.g. 14, 16)
         """
-        # Resize Masks (Nearest)
-        masks_resized = F.interpolate(masks[:, None, ...], size=(image_size, image_size), mode='nearest')[:, 0]
-        
+        # Resize masks with the encoder's own frame geometry (Nearest).
+        masks_resized = self._align_mask_to_input(masks, image_size)
+
         target_patches = image_size // patch_size
         
         # Downsample to Patch Grid
@@ -121,10 +134,9 @@ class VisualEncoder(ABC):
         """
         if scales is None:
             scales = [1, 2, 4]
-        # 1. Resize masks to image_size, then downsample to patch grid
-        masks_resized = F.interpolate(
-            masks[:, None, ...], size=(image_size, image_size), mode='nearest'
-        )[:, 0]
+        # 1. Align masks to the input grid using the encoder's frame geometry,
+        #    then downsample to the patch grid.
+        masks_resized = self._align_mask_to_input(masks, image_size)
         target_patches = image_size // patch_size
 
         # Patch-level weights: (B, target_patches, target_patches)
@@ -360,6 +372,28 @@ class DINOv3Encoder(VisualEncoder):
         img = TF.center_crop(img, (min_s, min_s))
         img = TF.resize(img, (target_size, target_size), interpolation=transforms.InterpolationMode.BICUBIC)
         return TF.to_tensor(img)
+
+    def _align_mask_to_input(self, masks, image_size):
+        """Mirror ``preprocess_batch``'s resize + center-crop geometry on the
+        mask so pooling weights stay aligned with patch features for non-square
+        input. Square input reduces to a plain resize — bit-identical to the
+        previous behaviour, so preprocessed (square) crops are unaffected.
+        """
+        target = image_size
+        B, H, W = masks.shape
+        m = masks[:, None, ...]
+        if H == W:
+            m = F.interpolate(m, size=(target, target), mode='nearest')
+        else:
+            scale = target / max(H, W)
+            new_h, new_w = int(H * scale), int(W * scale)
+            m = F.interpolate(m, size=(new_h, new_w), mode='nearest')
+            min_s = min(new_h, new_w)
+            start_h = (new_h - min_s) // 2
+            start_w = (new_w - min_s) // 2
+            m = m[:, :, start_h:start_h + min_s, start_w:start_w + min_s]
+            m = F.interpolate(m, size=(target, target), mode='nearest')
+        return m[:, 0]
 
     def preprocess_batch(self, frame_list, mask_list, roi_id):
         """Prepare a batch of frames for DINOv3 inference.

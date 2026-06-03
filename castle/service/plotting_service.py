@@ -104,6 +104,8 @@ def plot_syllables_per_video(latents: Any, aggregator: Any):
     cum = 0
     for video_idx, (vn, video_name) in enumerate(videos_meta):
         ax = axes[video_idx]
+        # Use this video's own fps so seconds-axis is correct in mixed-fps projects.
+        video_fps = getattr(aggregator, 'fps_per_video', {}).get(video_name, fps)
         video_cluster = cluster[cum:cum + vn]
         n = len(video_cluster)
         key_frames = (
@@ -111,10 +113,10 @@ def plot_syllables_per_video(latents: Any, aggregator: Any):
             + [i + 1 for i in range(n - 1) if video_cluster[i] != video_cluster[i + 1]]
             + [n]
         )
-        widths = [(key_frames[j + 1] - key_frames[j]) * bin_size / fps for j in range(len(key_frames) - 1)]
+        widths = [(key_frames[j + 1] - key_frames[j]) * bin_size / video_fps for j in range(len(key_frames) - 1)]
         colors = [palette(video_cluster[key_frames[j]]) for j in range(len(key_frames) - 1)]
-        lefts = [key_frames[j] * bin_size / fps for j in range(len(key_frames) - 1)]
-        total_seconds = n * bin_size / fps
+        lefts = [key_frames[j] * bin_size / video_fps for j in range(len(key_frames) - 1)]
+        total_seconds = n * bin_size / video_fps
 
         ax.bar(lefts, height=[1] * len(widths), width=widths, color=colors,
                align='edge', edgecolor='none')

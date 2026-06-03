@@ -142,6 +142,24 @@ def host_ram_available_bytes() -> Optional[int]:
         return None
 
 
+def available_cuda_devices() -> List[int]:
+    """CUDA device indices usable for multi-GPU, **ignoring the env gate**.
+
+    ``list(range(device_count()))`` when CUDA is available *and* ≥2 devices are
+    visible, else ``[]``. Unlike :func:`resolve_device_ids` (which honours the
+    ``CASTLE_MULTI_GPU`` env opt-in for CLI/headless), this reports raw hardware
+    capability so the Gradio UI can offer a multi-GPU checkbox and pass the ids
+    explicitly to ``track_videos(device_ids=…)`` regardless of the env var.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            return list(range(torch.cuda.device_count()))
+    except Exception as exc:  # noqa: BLE001 - never let the check break the caller
+        logger.warning("available_cuda_devices check failed (%s); assuming none.", exc)
+    return []
+
+
 def resolve_device_ids() -> List[int]:
     """CUDA device indices to spread work across, or ``[]`` when multi-GPU is off.
 

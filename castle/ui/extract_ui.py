@@ -6,6 +6,7 @@ Delegates all logic to castle.service.extraction_service and castle.core.extract
 
 import logging
 import os
+import time
 
 import gradio as gr
 from tqdm import tqdm
@@ -294,10 +295,34 @@ def ui_extract_roi_latent(
         messages.append("\n✅ All videos already have latent files. Nothing to extract.")
         return "\n".join(messages)
 
-    messages.append(f"\nFound {len(videos_to_process)} new videos to process.")
+    total_to_process = len(videos_to_process)
+    messages.append(f"\nFound {total_to_process} new videos to process.")
+
+    # Overall ETA across all videos. `p` from the extractor is the *intra-video*
+    # fraction (resets to 0 each video → bar would jump backwards); fold it into a
+    # monotonic overall fraction so the bar advances smoothly and report ETA.
+    # t0 is stamped just before the loop — after the pre-flight skip-filter — so
+    # skipped videos (which `continue` before the loop) never enter the timing.
+    completed = {"n": 0}
+    t0 = time.time()
 
     def update_progress(p, desc=None):
-        progress(p, desc=desc)
+        frac = max(0.0, min(1.0, float(p))) if p is not None else 0.0
+        overall = (completed["n"] + frac) / total_to_process
+        if overall <= 0:  # guard div-by-zero before computing ETA
+            progress(0.0, desc=desc)
+            return
+        overall = min(1.0, overall)
+        elapsed = time.time() - t0
+        eta = elapsed * (1 - overall) / overall
+        em, es = divmod(int(elapsed), 60)
+        rm, rs = divmod(int(eta), 60)
+        tail = f" · {desc}" if desc else ""
+        progress(
+            overall,
+            desc=(f"{completed['n']}/{total_to_process} · "
+                  f"elapsed {em}:{es:02d} · ETA ~{rm}:{rs:02d}{tail}"),
+        )
 
     success_count = 0
     failed_videos = []
@@ -315,6 +340,7 @@ def ui_extract_roi_latent(
             except FileNotFoundError as exc:
                 messages.append(f"  ❌ {video_name}: not preprocessed in session — {exc}")
                 failed_videos.append(video_name)
+                completed["n"] += 1  # keep the overall ETA fraction in step
                 continue
 
         try:
@@ -344,6 +370,8 @@ def ui_extract_roi_latent(
         except Exception as e:
             failed_videos.append(video_name)
             messages.append(f"  ❌ Error processing {video_name}: {e}")
+
+        completed["n"] += 1  # one more video done → advance the overall ETA bar
 
     summary_msg = f"\n\n🎉 Extraction Complete!\nSuccessfully processed {success_count}/{len(videos_to_process)} videos."
     if failed_videos:

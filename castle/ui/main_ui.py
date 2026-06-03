@@ -82,7 +82,7 @@ def create_ui(OS_SYS, root=''):
             _edit_ui = create_edit_ui(storage_path, project_name, edit_tab)
 
         # Pre-process tab (optional stabilization / cropping step)
-        with gr.Tab(label='3. Pre-process') as preprocess_tab:
+        with gr.Tab(label='3. Pre-process (Optional)') as preprocess_tab:
             create_preprocess_ui(storage_path, project_name, preprocess_tab)
 
         # Extract latent features tab

@@ -107,9 +107,13 @@ def _compute_session_name(
     try:
         from castle.core.preprocess_session import session_name_from_params, session_id_from_name
         if method == "KIT":
+            # Don't fabricate a name from defaulted ROIs — mirror the run-path
+            # validation so the preview reflects what will actually run.
+            if not ant_roi or not post_roi:
+                return "(select Anterior + Posterior ROI IDs)"
             params = {
-                "anterior_roi_id": int(ant_roi or 1),
-                "posterior_roi_id": int(post_roi or 2),
+                "anterior_roi_id": int(ant_roi),
+                "posterior_roi_id": int(post_roi),
                 "fc": float(fc or 0.25),
                 "order": int(order or 2),
                 "margin": int(margin or 75),
@@ -117,8 +121,10 @@ def _compute_session_name(
                 "output_size": int(output_size or 592),
             }
         else:
+            if not center_roi_id:
+                return "(select Center ROI ID)"
             params = {
-                "roi_id": int(center_roi_id or 1),
+                "roi_id": int(center_roi_id),
                 "crop_width": int(crop_w or 300),
                 "crop_height": int(crop_h or 300),
             }
@@ -141,7 +147,12 @@ def _list_sessions_dropdown(storage_path: str, project_name: str) -> gr.update:
             for m in metas
         ]
         return gr.update(choices=choices, value=choices[0] if choices else None)
-    except Exception:
+    except Exception as exc:
+        logger.exception("Failed to list preprocess sessions")
+        gr.Warning(
+            "Could not read preprocessing sessions (they may be corrupted). "
+            f"Details: {exc}"
+        )
         return gr.update(choices=[], value=None)
 
 

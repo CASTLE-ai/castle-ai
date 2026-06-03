@@ -220,7 +220,7 @@ from castle.core.model_registry import ModelRegistry
 registry = ModelRegistry.instance()          # global singleton
 
 # Context manager: auto-unload on exit
-with registry.use("dinov2_vitb14") as model:
+with registry.use("dinov3_vitb16") as model:   # current default encoder
     latents = model.extract_tensor_batch(frames, masks, roi_id)
 
 # Bulk unload by family keyword (e.g. after the tracking stage)
@@ -231,7 +231,7 @@ stats = registry.get_memory_stats()
 print(stats["free_mb"], "MB free on", stats["device"])
 ```
 
-The `Pipeline` class calls `unload_family` automatically between the tracking and extraction stages, ensuring SAM/DeAOT weights are evicted before DINOv2 is loaded.
+The `Pipeline` class calls `unload_family` automatically between the tracking and extraction stages, ensuring SAM/DeAOT weights are evicted before the DINOv3 encoder is loaded.
 
 ### Auto Batch Size & OOM Retry
 
@@ -239,7 +239,7 @@ The `Pipeline` class calls `unload_family` automatically between the tracking an
 from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
 
 # Queries free VRAM and returns a safe batch size for the given model + frame size
-batch = compute_optimal_batch_size("dinov2_vitb14", frame_size=(518, 518, 3))
+batch = compute_optimal_batch_size("dinov3_vitb16", frame_size=(592, 592, 3))
 
 # If an OOM error occurs, halves the batch and retries automatically
 result = auto_retry_on_oom(extract_fn, frames, initial_batch=batch)
@@ -251,7 +251,7 @@ The `ParallelExtractor` runs video decoding, preprocessing, and GPU inference co
 
 ```
 Thread 1 (I/O)       Thread 2 (CPU preprocess)      Main thread (GPU)
-VideoReader ──────▶ StabilizedCamera ──────────────▶ DINOv2 inference
+VideoReader ──────▶ StabilizedCamera ──────────────▶ DINOv3 inference
                      frame_queue (bounded)             tensor_queue (bounded)
 ```
 

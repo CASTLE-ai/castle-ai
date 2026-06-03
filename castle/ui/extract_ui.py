@@ -123,8 +123,12 @@ def _list_sessions_for_extract(storage_path: str, project_name: str) -> gr.updat
                 f"{m['session_name']} | {m['method']} | {len(m.get('videos', []))} videos"
                 for m in metas
             ]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("Failed to list preprocess sessions for extract")
+            gr.Warning(
+                "Could not read preprocessing sessions (they may be corrupted) — "
+                f"falling back to raw source. Details: {exc}"
+            )
     return gr.update(choices=choices, value=choices[0])
 
 
@@ -244,6 +248,13 @@ def ui_extract_roi_latent(
             raise ValueError(f"Invalid feature layers format: '{feature_layers_str}'.")
 
     session_id = _parse_session_id_from_display(session_display)
+
+    # Validate + normalise the ROI ID to an int (the gr.Number can still arrive as
+    # a float like 1.0; this also keeps the latent filename's _ROI_{id} an integer).
+    try:
+        select_roi = int(select_roi)
+    except (TypeError, ValueError):
+        raise ValueError(f"ROI ID must be an integer (got {select_roi!r}).")
 
     _, config = get_project_config(storage_path, project_name)
     video_list = sorted(config['source']) if select_video == "All" else [select_video]
@@ -434,9 +445,10 @@ def create_extract_ui(storage_path, project_name, extract_tab):
                     visible=False,
                     scale=2,
                 )
-                ui['select_roi_id'] = gr.Textbox(
+                ui['select_roi_id'] = gr.Number(
                     label="ROI ID",
-                    value="1",
+                    value=1,
+                    precision=0,
                     visible=False,
                     scale=1,
                 )

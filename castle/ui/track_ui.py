@@ -1,5 +1,6 @@
 """Tracking UI for ROI tracking in videos."""
 
+import logging
 import time
 from typing import Any, Dict, Generator, Tuple
 
@@ -7,6 +8,8 @@ import gradio as gr
 
 from ..utils.tracking_manager import read_roi_labels, ROITracker
 from ..utils.plot import generate_mix_image
+
+logger = logging.getLogger(__name__)
 
 
 # UI callback functions
@@ -83,12 +86,27 @@ def toggle_intermediate_display(tracker: ROITracker) -> Generator[Tuple[Any, str
         return
     tracker.toggle_display_mode()
 
+    # Normally this loop ends when tracking completes/cancels (the tracker clears
+    # show_middle_result). Guard against a crashed tracking thread that leaves the
+    # flag set: if no new frame arrives for MAX_IDLE_POLLS seconds, stop streaming
+    # so we don't spin a Gradio queue worker forever.
+    MAX_IDLE_POLLS = 60
+    idle = 0
     while tracker.show_middle_result:
         time.sleep(1)
         frame, mask = tracker.get_current_result()
         if frame is not None and mask is not None:
+            idle = 0
             mixed_image = generate_mix_image(frame, mask)
             yield mixed_image, "Show"
+        else:
+            idle += 1
+            if idle >= MAX_IDLE_POLLS:
+                logger.warning(
+                    "Intermediate display: no new frame for %ds; tracking likely "
+                    "ended or stalled — stopping the display stream.", MAX_IDLE_POLLS,
+                )
+                break
 
     yield gr.update(), "Close"
 

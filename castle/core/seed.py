@@ -35,8 +35,13 @@ def set_global_seed(seed: int = DEFAULT_MASTER_SEED, *, strict_cuda: bool = Fals
     """Seed every stochastic component CASTLE uses except UMAP.
 
     Args:
-        seed: Master seed applied to Python ``random``, NumPy, PyTorch (CPU
-            and all CUDA devices), and the ``PYTHONHASHSEED`` env var.
+        seed: Master seed applied to Python ``random``, NumPy, and PyTorch (CPU
+            and all CUDA devices). It is also written to the ``PYTHONHASHSEED``
+            env var, but note that ``os.environ["PYTHONHASHSEED"]`` set at
+            runtime only affects CHILD processes spawned afterwards — the current
+            interpreter's hash randomization is fixed at startup and cannot be
+            changed, so this is NOT a full within-process determinism guarantee
+            (NumPy/PyTorch/`random` seeding above is what the pipeline relies on).
 
             Note: UMAP has its own ``random_state`` parameter
             (see :class:`castle.utils.myumap.UMAP` and

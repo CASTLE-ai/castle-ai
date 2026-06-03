@@ -13,7 +13,7 @@ import numpy as np
 
 from castle.core.environment import get_device
 from castle.core.config import PALETTE_HEX
-from castle.core.types import InsufficientDataError
+from castle.core.types import CastleDataError, InsufficientDataError
 
 if TYPE_CHECKING:
     from castle.core.clustering_protocols import Clusterer, DimensionReducer
@@ -390,6 +390,19 @@ class LocalLatent:
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
 
+        # P1-3: fail loud on non-finite input instead of letting UMAP build a
+        # silent garbage embedding. Normal flow can't hit this — Latent marks
+        # NaN rows as cluster -1 (latent_explorer Latent.__init__) and select()
+        # excludes them — so this only catches genuine misuse (e.g. select(-1)
+        # or a hand-built LocalLatent fed unfiltered NaN/Inf rows).
+        if not np.all(np.isfinite(Z)):
+            n_bad = int((~np.isfinite(np.asarray(Z))).sum())
+            raise CastleDataError(
+                f"UMAP input contains {n_bad} non-finite value(s). Latent rows "
+                f"with NaN/Inf features are excluded from clustering (cluster -1); "
+                f"a non-finite input here means data reached UMAP unfiltered."
+            )
+
         if not isinstance(configs, list):
             configs = [configs]
 
@@ -429,6 +442,19 @@ class LocalLatent:
             base_seed = secrets.randbits(32)
             _logger.info("UMAP master seed drawn: %d", base_seed)
 
+        # P1-2: per-feature standardization of the RAW features before stage 0.
+        # Default ON (set ``"standardize": false`` in the stage-0 config to
+        # disable, e.g. to reproduce a pre-standardization layout). Only stage 0
+        # sees the raw high-dim DINOv3 features; later stages run on low-dim UMAP
+        # output where z-scoring is not meaningful, so we standardize Z once here.
+        standardize = bool(configs[0].get('standardize', True)) if configs else True
+        if standardize:
+            from castle.utils.numeric_safe import safe_zscore
+            Z = safe_zscore(Z)
+            _logger.info(
+                "UMAP: standardized %d features (z-score) before stage 0.", Z.shape[1]
+            )
+
         resolved_seeds: List[int] = []
         resolved_configs: List[dict] = []
         total_stages = len(configs)
@@ -436,6 +462,10 @@ class LocalLatent:
             seed, source = _resolve_umap_seed(raw_cfg, base_seed, i)
             stage_cfg = dict(raw_cfg)
             stage_cfg['random_state'] = seed
+            if i == 0:
+                # Record whether standardization was applied so the saved session
+                # / umap_log is reproducible.
+                stage_cfg.setdefault('standardize', standardize)
             resolved_configs.append(stage_cfg)
             resolved_seeds.append(seed)
 

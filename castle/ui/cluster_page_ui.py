@@ -45,7 +45,8 @@ umap_config_template = '''[
         "n_neighbors": 100,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 5000
+        "n_epochs": 5000,
+        "standardize": true
     }
 ]'''
 

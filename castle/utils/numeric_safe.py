@@ -41,11 +41,13 @@ def safe_zscore(
 
     Returns:
         Z-scored array, same shape as ``x``. Constant features map to
-        ``0``.
+        ``0``. NaN handling: the mean/std are computed with ``nanmean`` /
+        ``nanstd`` so a stray NaN in one row does not turn the whole feature
+        column into NaN (only the NaN entries themselves stay NaN).
     """
     arr = np.asarray(x)
-    mean = arr.mean(axis=axis, keepdims=True)
-    std = arr.std(axis=axis, keepdims=True)
+    mean = np.nanmean(arr, axis=axis, keepdims=True)
+    std = np.nanstd(arr, axis=axis, keepdims=True)
     return (arr - mean) / (std + eps)
 
 
@@ -65,9 +67,10 @@ def safe_minmax(
 
     Returns:
         Min-max scaled array in ``[0, 1]``, same shape as ``x``.
-        Constant features map to ``0``.
+        Constant features map to ``0``. Min/max use ``nanmin`` / ``nanmax``
+        so a stray NaN does not collapse the whole column to NaN.
     """
     arr = np.asarray(x)
-    mi = arr.min(axis=axis, keepdims=True)
-    mx = arr.max(axis=axis, keepdims=True)
+    mi = np.nanmin(arr, axis=axis, keepdims=True)
+    mx = np.nanmax(arr, axis=axis, keepdims=True)
     return (arr - mi) / (mx - mi + eps)

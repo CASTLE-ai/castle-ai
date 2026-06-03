@@ -58,8 +58,13 @@ def pairwise_distance(
             unavailable; ``'cpu'`` forces scipy.
 
     Returns:
-        Distance matrix of shape ``(N, M)``, dtype ``float32`` on the
-        CUDA path and matches scipy on CPU.
+        Distance matrix of shape ``(N, M)``. The output dtype matches the
+        input dtype on BOTH backends (``float64`` in → ``float64`` out,
+        otherwise ``float32``). This makes the CUDA and CPU paths
+        device-consistent: with ``float64`` inputs both compute in
+        ``float64``, so e.g. ``comparison.energy_distance_test`` yields the
+        same p-value on GPU and CPU (the old code computed CUDA in ``float32``
+        but CPU in scipy's ``float64``, drifting permutation p-values).
 
     Raises:
         RuntimeError: ``device='cuda'`` requested but CUDA unavailable.
@@ -73,16 +78,24 @@ def pairwise_distance(
             f"Feature dim mismatch: A.shape[1]={A.shape[1]} vs B.shape[1]={B.shape[1]}."
         )
 
+    # Preserve input precision so the CUDA and CPU paths agree: float64 inputs
+    # compute in float64 on both, instead of CUDA silently downcasting to
+    # float32 (which made cross-device permutation p-values disagree).
+    out_dtype = np.float64 if np.dtype(A.dtype) == np.float64 else np.float32
+
     backend = _resolve_device(device)
     if backend == "cuda":
         import torch
 
-        a_t = torch.as_tensor(A, dtype=torch.float32, device="cuda")
-        b_t = torch.as_tensor(B, dtype=torch.float32, device="cuda")
+        torch_dtype = torch.float64 if out_dtype == np.float64 else torch.float32
+        a_t = torch.as_tensor(A, dtype=torch_dtype, device="cuda")
+        b_t = torch.as_tensor(B, dtype=torch_dtype, device="cuda")
         with torch.inference_mode():
             d = torch.cdist(a_t, b_t)
         return d.cpu().numpy()
 
     from scipy.spatial.distance import cdist
 
-    return cdist(A, B)
+    # scipy.cdist always returns float64 regardless of input dtype; cast back to
+    # the input dtype so the contract ("output dtype == input dtype") holds.
+    return cdist(A, B).astype(out_dtype, copy=False)

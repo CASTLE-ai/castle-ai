@@ -141,7 +141,10 @@ class UMAPReducer:
                 ``fit_transform`` instead.
             device: Compute device. Resolves which UMAP class to use.
         """
-        self.cfg = {k: v for k, v in cfg.items() if k != 'random_state'}
+        # Drop keys that are not UMAP constructor kwargs: ``random_state`` is
+        # threaded through ``fit_transform``; ``standardize`` is consumed by
+        # ``LocalLatent.build_embedding`` (applied to the raw features once).
+        self.cfg = {k: v for k, v in cfg.items() if k not in ('random_state', 'standardize')}
         # CPU path: auto-inject n_jobs so pynndescent (the k-NN builder) can
         # use multiple cores. umap-learn's SGD stays single-threaded (numba
         # loop), so the seed still controls the optimisation deterministically.

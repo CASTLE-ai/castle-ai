@@ -245,7 +245,17 @@ class ClusteringSession:
         id_csv_path = os.path.join(cluster_path, 'id.csv')
         df1.to_csv(id_csv_path, index=False)
         
-        # Generate per-video time_series CSVs
+        # Generate per-video time_series CSVs.
+        # Invariant: the per-frame expansion below assumes time_window frames per
+        # bin == aggregator bin_size. They are coupled by construction today
+        # (Latent(latents, bin_size)); guard so a future divergence fails loud
+        # rather than silently mis-aligning frame↔label (cf. P0-3).
+        if self.latents.time_window != self.aggregator.bin_size:
+            raise CastleDataError(
+                f"time_window ({self.latents.time_window}) != aggregator bin_size "
+                f"({self.aggregator.bin_size}); refusing to write mis-aligned "
+                f"time_series CSVs."
+            )
         ts_paths = []
         cum = 0
         for vn, v in self.aggregator.videos_meta:
@@ -1126,6 +1136,12 @@ def submit_local_to_global(
     id_csv_path = os.path.join(cluster_path, 'id.csv')
     df1.to_csv(id_csv_path, index=False)
 
+    # Invariant guard (see submit()): time_window frames per bin == bin_size.
+    if latents.time_window != aggregator.bin_size:
+        raise CastleDataError(
+            f"time_window ({latents.time_window}) != aggregator bin_size "
+            f"({aggregator.bin_size}); refusing to write mis-aligned time_series CSVs."
+        )
     df2_paths: List[str] = []
     cum = 0
     for vn, v in aggregator.videos_meta:

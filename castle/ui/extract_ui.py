@@ -156,6 +156,8 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False),  # 12 auto_batch_btn
         gr.update(value="", visible=False),  # 13 mem_warning
         gr.update(visible=False, interactive=False),  # 14 extract_cancel_btn
+        gr.update(visible=False),  # 15 hdr_model
+        gr.update(visible=False),  # 16 hdr_source
     ])
 
     if not storage_path or not project_name:
@@ -199,6 +201,8 @@ def init_select_video_list(storage_path, project_name):
             updates[12] = gr.update(visible=True)  # auto_batch_btn
             # mem_warning (13) stays hidden until reactive check triggers
             updates[14] = gr.update(visible=True, interactive=False)  # extract_cancel_btn
+            updates[15] = gr.update(visible=True)  # hdr_model
+            updates[16] = gr.update(visible=True)  # hdr_source
         else:
             gr.Warning(
                 "No videos found in this project. Please add videos in the "
@@ -435,97 +439,100 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     )
     ui["session_status"] = gr.Markdown(value="", visible=False)
 
+    # ── Model ──────────────────────────────────────────────────────────
+    ui['hdr_model'] = gr.Markdown("### Model", visible=False)
     with gr.Row():
-        with gr.Column(scale=3):
-            with gr.Row():
-                ui['select_model'] = gr.Dropdown(
-                    label="Visual Model",
-                    choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
-                    value="dinov3_vitb16",
-                    visible=False,
-                    scale=2,
-                )
-                ui['select_roi_id'] = gr.Number(
-                    label="ROI ID",
-                    value=1,
-                    precision=0,
-                    visible=False,
-                    scale=1,
-                )
-            with gr.Row():
-                ui['batch_size'] = gr.Textbox(
-                    label="Batch Size",
-                    value="32",
-                    visible=False,
-                    scale=2,
-                )
-                ui['auto_batch_btn'] = gr.Button("Auto Batch Size", size="sm", visible=False, scale=1)
-            with gr.Row():
-                ui['select_video'] = gr.Dropdown(
-                    label="Target Video",
-                    value=None,
-                    visible=False,
-                    scale=2,
-                )
-                ui['video_count'] = gr.Number(
-                    label="Project Video Count",
-                    value=0,
-                    interactive=False,
-                    visible=False,
-                    scale=1,
-                )
-            with gr.Row():
-                ui['skip_existing'] = gr.Checkbox(
-                    label="Skip existing files",
-                    value=True,
-                    visible=False,
-                )
-                ui['remove_background_switch'] = gr.Checkbox(
-                    label="Remove Background",
-                    value=False,
-                    visible=False,
-                )
+        ui['select_model'] = gr.Dropdown(
+            label="Visual Model",
+            choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
+            value="dinov3_vitb16",
+            visible=False,
+            scale=3,
+        )
+        ui['select_roi_id'] = gr.Number(
+            label="ROI ID",
+            value=1,
+            precision=0,
+            visible=False,
+            scale=1,
+        )
+    with gr.Row(equal_height=True):
+        ui['batch_size'] = gr.Textbox(
+            label="Batch Size",
+            value="32",
+            visible=False,
+            scale=3,
+        )
+        ui['auto_batch_btn'] = gr.Button("Auto Batch Size", size="sm", visible=False, scale=1)
 
-        with gr.Column(scale=2):
-            with gr.Accordion("Advanced Extraction Options", open=False, visible=False) as adv_accordion:
-                ui['eliminate_rotation_asymmetry'] = gr.Checkbox(
-                    label="Eliminate Rotation Asymmetry",
-                    value=False,
-                    info=(
-                        "Extract 7-angle rotation latent after the main extraction. "
-                        "Averages rotation to reduce orientation bias in the latent space."
-                    ),
-                )
-                ui['era_roi_id'] = gr.Number(
-                    label="Reference ROI ID",
-                    value=2,
-                    info="ROI ID used to determine body orientation for rotation alignment.",
-                )
-                ui['era_kit_warning'] = gr.Markdown(value="", visible=False)
-                ui['pooling_method'] = gr.Radio(
-                    choices=['weighted_average', 'multiscale'],
-                    value='weighted_average',
-                    label='Pooling Method',
-                    info='weighted_average: single vector; multiscale: spatial pyramid pooling.',
-                )
-                ui['pooling_scales'] = gr.CheckboxGroup(
-                    choices=['1', '2', '4', '8'],
-                    value=['1', '2', '4'],
-                    label='Multiscale Grid Sizes',
-                    info='Only used when Pooling Method is multiscale.',
-                )
-                ui['feature_layers'] = gr.Textbox(
-                    value='',
-                    label='Feature Layers',
-                    info='Comma-separated layer indices to concatenate (e.g. "3,7,11"). Empty = last layer only.',
-                    placeholder='Leave empty for default (last layer)',
-                )
-            ui['adv_accordion'] = adv_accordion
+    # ── Source & Options ───────────────────────────────────────────────
+    ui['hdr_source'] = gr.Markdown("### Source & Options", visible=False)
+    with gr.Row():
+        ui['select_video'] = gr.Dropdown(
+            label="Target Video",
+            value=None,
+            visible=False,
+            scale=3,
+        )
+        ui['video_count'] = gr.Number(
+            label="Videos in project",
+            value=0,
+            interactive=False,
+            visible=False,
+            scale=1,
+        )
+    with gr.Row():
+        ui['skip_existing'] = gr.Checkbox(
+            label="Skip existing files",
+            value=True,
+            visible=False,
+        )
+        ui['remove_background_switch'] = gr.Checkbox(
+            label="Remove Background",
+            value=False,
+            visible=False,
+        )
+
+    # Advanced — full width so opening it expands downward (no side void).
+    with gr.Accordion("Advanced Extraction Options", open=False, visible=False) as adv_accordion:
+        ui['eliminate_rotation_asymmetry'] = gr.Checkbox(
+            label="Eliminate Rotation Asymmetry",
+            value=False,
+            info=(
+                "Extract 7-angle rotation latent after the main extraction. "
+                "Averages rotation to reduce orientation bias in the latent space."
+            ),
+        )
+        ui['era_roi_id'] = gr.Number(
+            label="Reference ROI ID",
+            value=2,
+            info="ROI ID used to determine body orientation for rotation alignment.",
+        )
+        ui['era_kit_warning'] = gr.Markdown(value="", visible=False)
+        ui['pooling_method'] = gr.Radio(
+            choices=['weighted_average', 'multiscale'],
+            value='weighted_average',
+            label='Pooling Method',
+            info='weighted_average: single vector; multiscale: spatial pyramid pooling.',
+        )
+        ui['pooling_scales'] = gr.CheckboxGroup(
+            choices=['1', '2', '4', '8'],
+            value=['1', '2', '4'],
+            label='Multiscale Grid Sizes',
+            info='Only used when Pooling Method is multiscale.',
+        )
+        ui['feature_layers'] = gr.Textbox(
+            value='',
+            label='Feature Layers',
+            info='Comma-separated layer indices to concatenate (e.g. "3,7,11"). Empty = last layer only.',
+            placeholder='Leave empty for default (last layer)',
+        )
+    ui['adv_accordion'] = adv_accordion
 
     ui['mem_warning'] = gr.HTML(value="", visible=False)
     with gr.Row():
-        ui['extract_btn'] = gr.Button("Extract", visible=False, variant="primary")
-        ui['extract_cancel_btn'] = gr.Button("Cancel", visible=False, interactive=False)
+        ui['extract_btn'] = gr.Button("Extract", visible=False, variant="primary", scale=4)
+        ui['extract_cancel_btn'] = gr.Button("Cancel", visible=False, interactive=False, scale=1)
         # TODO(2-D): implement extract_crop_video handler before re-enabling this
         # button.  Kept declared and permanently invisible so any external
         # reference (CLI, MCP) does not break.  Removed from
@@ -560,6 +567,8 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['auto_batch_btn'],            # 12
         ui['mem_warning'],               # 13
         ui['extract_cancel_btn'],        # 14
+        ui['hdr_model'],                 # 15
+        ui['hdr_source'],                # 16
     ]
 
     # ------------------------------------------------------------------

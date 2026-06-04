@@ -15,7 +15,9 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Iterator, Optional
 
-logger = logging.getLogger(__name__)
+from castle.core.logging_config import setup_logger
+
+logger = setup_logger(__name__)
 
 
 def _threaded_iter(producer, maxsize: int = 16) -> Iterator:
@@ -120,6 +122,7 @@ def preprocess_stabilized_camera(
         extract_body_head_centroids,
         extract_orientations_from_masks,
     )
+    from castle.core._centroid_worker import PreprocessCancelled
     from castle.core.preprocess_session import (
         find_or_create_session,
         get_session_dir,
@@ -240,6 +243,7 @@ def preprocess_stabilized_camera(
             progress_callback=progress_callback,
             progress_start=0.12,
             progress_end=0.80,
+            cancel_event=cancel_event,
         )
         _t_encode = time.perf_counter() - _t_encode_start
 
@@ -252,6 +256,8 @@ def preprocess_stabilized_camera(
             for i, key in enumerate(keys):
                 if not key.isdigit():
                     continue
+                if cancel_event is not None and cancel_event.is_set() and i % 500 == 0:
+                    raise PreprocessCancelled()
                 frame_idx = int(key)
                 orig_mask = f_in[key][:]
                 transformed = cam.generate_mask(orig_mask, frame_idx)
@@ -260,6 +266,8 @@ def preprocess_stabilized_camera(
                 if progress_callback and i % 500 == 0:
                     frac = 0.80 + 0.18 * i / max(len(keys), 1)
                     progress_callback(frac, f"Mask {i}/{len(keys)}")
+                if i and i % 5000 == 0:
+                    logger.info("mask_transform: %d/%d masks", i, len(keys))
         _t_mask = time.perf_counter() - _t_mask_start
 
         logger.info(
@@ -310,6 +318,7 @@ def preprocess_center_crop(
     crop_height: int,
     skip_existing: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event=None,
 ) -> Dict[str, object]:
     """Crop and centre video frames around a tracked ROI and save as a session.
 
@@ -343,6 +352,7 @@ def preprocess_center_crop(
     import av  # type: ignore
     import h5py
 
+    from castle.core._centroid_worker import PreprocessCancelled
     from castle.core.data import Preprocess
     from castle.core.preprocess_session import (
         find_or_create_session,
@@ -447,6 +457,8 @@ def preprocess_center_crop(
 
             try:
                 for frame_idx, cropped_frame, cropped_mask in _threaded_iter(_produce):
+                    if cancel_event is not None and cancel_event.is_set() and frame_idx % 30 == 0:
+                        raise PreprocessCancelled()
                     out_frame = av.VideoFrame.from_ndarray(cropped_frame, format="bgr24")
                     for packet in out_stream.encode(out_frame):
                         out_container.mux(packet)
@@ -508,9 +520,12 @@ def _encode_stabilized_video(
     progress_callback: Optional[Callable] = None,
     progress_start: float = 0.0,
     progress_end: float = 1.0,
+    cancel_event=None,
 ) -> None:
     """Encode KIT-stabilised frames to an H.264 MP4 via PyAV."""
     import av  # type: ignore
+
+    from castle.core._centroid_worker import PreprocessCancelled
 
     limit = min(max_frames, n_frames) if max_frames is not None else n_frames
 
@@ -537,12 +552,16 @@ def _encode_stabilized_video(
     ok = False
     try:
         for i, result in _threaded_iter(_produce):
+            if cancel_event is not None and cancel_event.is_set() and i % 30 == 0:
+                raise PreprocessCancelled()
             out_frame = av.VideoFrame.from_ndarray(result, format="bgr24")
             for packet in out_stream.encode(out_frame):
                 out_container.mux(packet)
             if progress_callback and i % 30 == 0:
                 frac = progress_start + (progress_end - progress_start) * i / limit
                 progress_callback(frac, f"Frame {i}/{limit}")
+            if i and i % 2000 == 0:
+                logger.info("encode_stabilized: %d/%d frames", i, limit)
         for packet in out_stream.encode():
             out_container.mux(packet)
         ok = True

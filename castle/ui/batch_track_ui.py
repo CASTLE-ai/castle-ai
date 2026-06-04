@@ -204,69 +204,22 @@ def generate_mix_video_for_video(storage_path: str, project_name: str, video_nam
 _TRACK_BTN_IDLE = "Start Tracking"
 _CANCEL_BTN_IDLE = "Cancel Tracking"
 
+# Progress bar / ETA / cancel helpers are shared with the Pre-process tab.
+# Keep the historical ``_``-prefixed names as thin aliases so call sites here and
+# the existing unit tests (which reference ``bt._request_cancel`` etc.) are
+# unchanged — behaviour is byte-identical.
+from castle.ui.progress_ui import (  # noqa: E402
+    fmt_dur, status_md, init_cancel_event, request_cancel,
+    PROGRESS_BAR_WIDTH, ETA_MIN_FRAC, ETA_MIN_ELAPSED,
+)
 
-def _init_cancel_event() -> threading.Event:
-    """Fresh per-run cancel flag, stored in gr.State before the work generator runs."""
-    return threading.Event()
-
-
-def _request_cancel(cancel_event):
-    """Cancel handler: set the flag and immediately relabel the button.
-
-    Immediate feedback. ``track_videos`` stops launching new videos and the
-    in-flight video aborts within ~one frame-batch. The work generator's final
-    yield restores the button's idle label/state.
-    """
-    if cancel_event is not None:
-        cancel_event.set()
-    return gr.update(value="Canceling (stopping current video)…", interactive=False)
-
-
-def _fmt_dur(seconds: float) -> str:
-    """h/m/s duration, hours-aware (so a long run reads '2h05m', not '125:00')."""
-    sec = int(max(0, seconds))
-    h, rem = divmod(sec, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h}h{m:02d}m"
-    return f"{m}:{s:02d}"
-
-
-_PROGRESS_BAR_WIDTH = 24
-# ETA is meaningless when extrapolated from a tiny fraction (e.g. 0.03% → "55h"),
-# so withhold it until there's a real sample: ≥2% done OR ≥20s elapsed.
-_ETA_MIN_FRAC = 0.02
-_ETA_MIN_ELAPSED = 20.0
-
-
-def _status_md(frames_done: float, total_frames: int, vids_done: int,
-               vids_total: int, t0: float, cancelling: bool) -> str:
-    """Markdown for the dedicated status component: a unicode progress bar +
-    ``frames / videos / elapsed / ETA``. Rendered in its own box (not the log
-    textbox) so it never overlaps the log. The bar advances per frame-batch.
-
-    ETA is withheld until enough progress accrues (see ``_ETA_MIN_*``) — early
-    extrapolation from ~0% produces absurd numbers — and is hours-aware.
-    """
-    elapsed = time.time() - t0
-    if total_frames > 0:
-        frac = min(1.0, frames_done / total_frames)
-        lead = f"**{int(frames_done):,} / {total_frames:,}** frames · "
-    else:  # frame counts unavailable → video-granular fallback
-        frac = min(1.0, vids_done / vids_total) if vids_total else 0.0
-        lead = ""
-
-    if frac > 0 and (frac >= _ETA_MIN_FRAC or elapsed >= _ETA_MIN_ELAPSED):
-        eta_str = "~" + _fmt_dur(elapsed * (1 - frac) / frac)
-    else:
-        eta_str = "estimating…"
-
-    filled = int(round(frac * _PROGRESS_BAR_WIDTH))
-    bar = "█" * filled + "░" * (_PROGRESS_BAR_WIDTH - filled)
-    prefix = "🛑 Cancelling… " if cancelling else ""
-    return (f"{prefix}{lead}**{vids_done}/{vids_total}** videos · "
-            f"elapsed {_fmt_dur(elapsed)} · ETA {eta_str}\n\n"
-            f"`{bar}` {frac * 100:.1f}%")
+_fmt_dur = fmt_dur
+_status_md = status_md
+_init_cancel_event = init_cancel_event
+_request_cancel = request_cancel
+_PROGRESS_BAR_WIDTH = PROGRESS_BAR_WIDTH
+_ETA_MIN_FRAC = ETA_MIN_FRAC
+_ETA_MIN_ELAPSED = ETA_MIN_ELAPSED
 
 
 def track_all_videos(

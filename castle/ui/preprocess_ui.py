@@ -9,16 +9,26 @@ castle.core.preprocess_session.  No business logic lives in this module.
 from __future__ import annotations
 
 import logging
-from typing import Any, List
+import threading
+import time
+from pathlib import Path
+from typing import Any, Dict, List
 
 import gradio as gr
 
 from castle.utils.video_manager import get_project_videos
+from castle.utils.video_io import ReadArray
 from castle.ui.video_select import (
     build_video_selector, wire_video_selector, resolve_selected,
 )
+from castle.ui.progress_ui import (
+    status_md, init_cancel_event, request_cancel,
+)
 
 logger = logging.getLogger(__name__)
+
+_RUN_BTN_IDLE = "▶ Run Pre-process"
+_CANCEL_BTN_IDLE = "Cancel"
 
 
 # ---------------------------------------------------------------------------
@@ -516,118 +526,213 @@ def _run_preprocess(
     crop_w: Any,
     crop_h: Any,
     skip_existing: bool,
-    progress: gr.Progress = gr.Progress(track_tqdm=True),
-) -> str:
-    """Run pre-processing for one or all videos and return a progress log."""
+    cancel_event=None,
+):
+    """Run pre-processing for the selected videos (generator → live UI).
+
+    Mirrors the Batch Tracking tab: runs the per-video loop on a background
+    thread and **polls** every ~0.5 s, yielding
+    ``(log, run_btn, cancel_btn, status_md)``. The frame-granular bar is rendered
+    into its own ``preprocess_status`` Markdown (Gradio's overlay is disabled via
+    ``show_progress="hidden"``) so it never overlaps the log. The bar advances per
+    frame-batch across all selected videos. A set ``cancel_event`` aborts the
+    in-flight video mid-loop (partial output discarded). Button states are owned
+    here: first yield → running, final yield → reset (success/error/cancel).
+    """
+    # First yield: running state. Run disabled, Cancel enabled.
+    yield (
+        "",
+        gr.update(interactive=False),
+        gr.update(value=_CANCEL_BTN_IDLE, interactive=True),
+        "🚀 Pre-processing starting…",
+    )
+
+    messages: List[str] = []
+    video_frac: Dict[str, float] = {}
+    video_total_frames: Dict[str, int] = {}
+    frac_lock = threading.Lock()
+    completed = {"n": 0}
+    success = {"n": 0}
+
+    # --- Validation ---
+    abort = None
+    video_list: List[str] = []
+    project_path = None
     if not storage_path or not project_name:
-        gr.Warning("No project open. Please create or open a project in the 'Project' tab first.")
-        return "No project selected."
+        abort = "No project open. Please create or open a project in the 'Project' tab first."
+    elif not selected_videos:
+        abort = "No videos selected — tick at least one video to process."
+    else:
+        from castle.core.project import get_project_config
+        project_path, config = get_project_config(storage_path, project_name)
+        video_list = resolve_selected(config.get("source", []), selected_videos)
+        if not video_list:
+            abort = "None of the selected videos are in this project."
+        elif method == "KIT":
+            if not ant_roi or not post_roi:
+                abort = "Please select both Anterior and Posterior ROI IDs."
+            elif int(ant_roi) == int(post_roi):
+                abort = "Anterior and Posterior ROI IDs must be different."
+        elif not center_roi_id:
+            abort = "Please select a ROI ID."
 
-    if not selected_videos:
-        gr.Warning("No videos selected — tick at least one video to process.")
-        return "No videos selected."
+    if abort:
+        gr.Warning(abort)
+        yield (
+            f"⛔ {abort}",
+            gr.update(value=_RUN_BTN_IDLE, interactive=True),
+            gr.update(value=_CANCEL_BTN_IDLE, interactive=False),
+            "",
+        )
+        return
 
-    from pathlib import Path
-    from castle.core.project import get_project_config
-    project_path, config = get_project_config(storage_path, project_name)
-    video_list = resolve_selected(config.get("source", []), selected_videos)
-    if not video_list:
-        gr.Warning("None of the selected videos are in this project.")
-        return "No videos selected."
+    # Pre-count frames for the frame-granular bar (metadata only — fast).
+    total_frames = 0
+    for v in video_list:
+        try:
+            with ReadArray(str(Path(project_path) / "sources" / v)) as _r:
+                n = len(_r)
+        except Exception as exc:  # noqa: BLE001 — fall back to video-granular
+            logger.warning("Could not read frame count for %s: %s", v, exc)
+            n = 0
+        video_total_frames[v] = n
+        total_frames += n
+    if total_frames > 0:
+        messages.append(f"Total frames to process: {total_frames:,}")
 
-    log_lines: list[str] = []
+    def _make_cb(vname: str):
+        def _cb(frac: float, desc: str = "") -> None:
+            with frac_lock:
+                video_frac[vname] = max(0.0, min(1.0, frac))
+        return _cb
 
-    if method == "KIT":
-        if not ant_roi or not post_roi:
-            gr.Warning("Please select both Anterior and Posterior ROI IDs.")
-            return "ROI IDs not selected."
-        if int(ant_roi) == int(post_roi):
-            gr.Warning("Anterior and Posterior ROI IDs must be different.")
-            return "anterior_roi_id == posterior_roi_id."
+    worker_error: Dict[str, Any] = {}
+    done = threading.Event()
 
-        from castle.service.preprocessing_service import preprocess_stabilized_camera
-        kit_params = {
-            "anterior_roi_id": int(ant_roi),
-            "posterior_roi_id": int(post_roi),
-            "fc": float(fc or 0.25),
-            "order": int(order or 2),
-            "margin": int(margin or 75),
-            "min_crop": int(min_crop or 300),
-            "output_size": int(output_size or 592),
-        }
+    def _run():
+        try:
+            from castle.core.stabilized_camera import PreprocessCancelled
+            from castle.service.preprocessing_service import (
+                preprocess_stabilized_camera, preprocess_center_crop,
+            )
+            kit_params = None
+            if method == "KIT":
+                kit_params = {
+                    "anterior_roi_id": int(ant_roi),
+                    "posterior_roi_id": int(post_roi),
+                    "fc": float(fc or 0.25),
+                    "order": int(order or 2),
+                    "margin": int(margin or 75),
+                    "min_crop": int(min_crop or 300),
+                    "output_size": int(output_size or 592),
+                }
+            for i, vname in enumerate(video_list):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                messages.append(f"[{i + 1}/{len(video_list)}] {vname}…")
+                src = str(Path(project_path) / "sources" / vname)
+                err = (_check_crop_bounds(method, src, min_crop, None, None)
+                       if method == "KIT"
+                       else _check_crop_bounds(method, src, None, crop_w, crop_h))
+                if err:
+                    messages.append(f"  ⛔ Skipped — {err}")
+                    with frac_lock:
+                        video_frac[vname] = 1.0
+                    completed["n"] += 1
+                    continue
+                try:
+                    if method == "KIT":
+                        result = preprocess_stabilized_camera(
+                            storage_path=storage_path, project_name=project_name,
+                            video_name=vname, kit_params=kit_params,
+                            skip_existing=skip_existing,
+                            progress_callback=_make_cb(vname),
+                            cancel_event=cancel_event,
+                        )
+                        diag = result.get("diagnostics", {})
+                        sid = result.get("session_id", "")
+                        if diag:
+                            messages.append(
+                                f"  ✅ Done  session={sid}"
+                                f"  frames={result.get('n_frames', '?')}"
+                                f"  hp_rms={diag.get('hp_residual_rms', 0):.1f}px"
+                                f"  @min_crop={diag.get('pct_at_min_crop', 0):.1f}%"
+                            )
+                        else:
+                            messages.append(f"  ✅ Skipped (already exists)  session={sid}")
+                    else:
+                        result = preprocess_center_crop(
+                            storage_path=storage_path, project_name=project_name,
+                            video_name=vname, roi_id=int(center_roi_id),
+                            crop_width=int(crop_w or 300), crop_height=int(crop_h or 300),
+                            skip_existing=skip_existing,
+                            progress_callback=_make_cb(vname),
+                            cancel_event=cancel_event,
+                        )
+                        messages.append(
+                            f"  ✅ Done  session={result.get('session_id', '')}"
+                            f"  frames={result.get('n_frames', '?')}"
+                        )
+                    success["n"] += 1
+                except PreprocessCancelled:
+                    messages.append(f"  🛑 Cancelled mid-video (partial output discarded): {vname}")
+                    with frac_lock:
+                        video_frac[vname] = 1.0
+                    completed["n"] += 1
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("%s preprocess failed for %s", method, vname)
+                    messages.append(f"  ❌ Error: {exc}")
+                with frac_lock:
+                    video_frac[vname] = 1.0
+                completed["n"] += 1
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Pre-process crashed")
+            worker_error["e"] = e
+        finally:
+            done.set()
 
-        for i, vname in enumerate(video_list):
-            log_lines.append(f"[{i + 1}/{len(video_list)}] {vname}…")
-            src = str(Path(project_path) / "sources" / vname)
-            err = _check_crop_bounds(method, src, min_crop, None, None)
-            if err:
-                log_lines.append(f"  ⛔ Skipped — {err}")
-                continue
+    worker = threading.Thread(target=_run, daemon=True, name="preprocess")
+    t0 = time.time()
+    worker.start()
 
-            def _cb(frac: float, desc: str = "") -> None:
-                progress(frac, desc=f"{vname}: {desc}" if desc else vname)
+    # Poll loop: status bar every ~0.5 s; log textbox only on new lines.
+    last_msg_count = 0
+    try:
+        while not done.wait(timeout=0.5):
+            cancelling = cancel_event is not None and cancel_event.is_set()
+            with frac_lock:
+                frames_done = sum(video_frac.get(v, 0.0) * video_total_frames.get(v, 0)
+                                  for v in video_total_frames)
+            status = status_md(frames_done, total_frames, completed["n"],
+                               len(video_list), t0, cancelling)
+            if len(messages) != last_msg_count:
+                last_msg_count = len(messages)
+                log_update = "\n".join(messages[-14:])
+            else:
+                log_update = gr.update()
+            yield (log_update, gr.update(), gr.update(), status)
+    except GeneratorExit:
+        if cancel_event is not None:
+            cancel_event.set()
+        raise
 
-            try:
-                result = preprocess_stabilized_camera(
-                    storage_path=storage_path,
-                    project_name=project_name,
-                    video_name=vname,
-                    kit_params=kit_params,
-                    skip_existing=skip_existing,
-                    progress_callback=_cb,
-                )
-                diag = result.get("diagnostics", {})
-                sid = result.get("session_id", "")
-                if diag:
-                    log_lines.append(
-                        f"  ✅ Done  session={sid}"
-                        f"  frames={result.get('n_frames', '?')}"
-                        f"  hp_rms={diag.get('hp_residual_rms', 0):.1f}px"
-                        f"  @min_crop={diag.get('pct_at_min_crop', 0):.1f}%"
-                    )
-                else:
-                    log_lines.append(f"  ✅ Skipped (already exists)  session={sid}")
-            except Exception as exc:
-                logger.exception("KIT preprocess failed for %s", vname)
-                log_lines.append(f"  ❌ Error: {exc}")
+    worker.join()
+    if "e" in worker_error:
+        messages.append(f"\n❌ Pre-process crashed: {worker_error['e']}")
 
-    else:  # CenterROI
-        if not center_roi_id:
-            gr.Warning("Please select a ROI ID.")
-            return "ROI ID not selected."
+    cancelled = cancel_event is not None and cancel_event.is_set()
+    head = "🛑 Pre-process cancelled" if cancelled else "🎉 Pre-process completed!"
+    messages.append(f"\n{head}  {success['n']}/{len(video_list)} videos processed")
+    final_status = ("🛑 Cancelled." if cancelled
+                    else f"✅ Done — {success['n']}/{len(video_list)} videos.")
 
-        from castle.service.preprocessing_service import preprocess_center_crop
-
-        for i, vname in enumerate(video_list):
-            log_lines.append(f"[{i + 1}/{len(video_list)}] {vname}…")
-            src = str(Path(project_path) / "sources" / vname)
-            err = _check_crop_bounds(method, src, None, crop_w, crop_h)
-            if err:
-                log_lines.append(f"  ⛔ Skipped — {err}")
-                continue
-
-            def _cb(frac: float, desc: str = "") -> None:
-                progress(frac, desc=f"{vname}: {desc}" if desc else vname)
-
-            try:
-                result = preprocess_center_crop(
-                    storage_path=storage_path,
-                    project_name=project_name,
-                    video_name=vname,
-                    roi_id=int(center_roi_id),
-                    crop_width=int(crop_w or 300),
-                    crop_height=int(crop_h or 300),
-                    skip_existing=skip_existing,
-                    progress_callback=_cb,
-                )
-                log_lines.append(
-                    f"  ✅ Done  session={result.get('session_id', '')}  frames={result.get('n_frames', '?')}"
-                )
-            except Exception as exc:
-                logger.exception("CenterROI preprocess failed for %s", vname)
-                log_lines.append(f"  ❌ Error: {exc}")
-
-    return "\n".join(log_lines)
+    yield (
+        "\n".join(messages),
+        gr.update(value=_RUN_BTN_IDLE, interactive=True),
+        gr.update(value=_CANCEL_BTN_IDLE, interactive=False),
+        final_status,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +881,11 @@ def create_preprocess_ui(
         with gr.Row():
             ui["run_btn"] = gr.Button("▶ Run Pre-process", variant="primary", scale=4)
             ui["run_cancel_btn"] = gr.Button("Cancel", variant="secondary", interactive=False, scale=1)
+        # Live frame-granular progress bar in its own component (never overlaps the
+        # log textbox; rendered by us → Gradio's overlay disabled on the click).
+        ui["preprocess_status"] = gr.Markdown(value="")
+        # Per-run cancel flag, created fresh before the work generator runs.
+        ui["cancel_event"] = gr.State(None)
         ui["log_text"] = gr.Textbox(
             label="Log",
             value="",
@@ -957,19 +1067,13 @@ def create_preprocess_ui(
         queue=False,
     )
 
-    # Run Pre-process — disable during run, enable Cancel
-    def _before_preprocess():
-        return gr.update(interactive=False), gr.update(interactive=True)
-
-    def _after_preprocess():
-        return gr.update(interactive=True), gr.update(interactive=False)
-
-    _run_click = ui["run_btn"].click(
-        fn=_before_preprocess,
-        outputs=[ui["run_btn"], ui["run_cancel_btn"]],
+    # Run Pre-process — generator owns the button states (running → reset),
+    # preceded by a step that creates a fresh cancel flag (mirrors batch tracking).
+    _run_gen = ui["run_btn"].click(
+        fn=init_cancel_event,
+        outputs=ui["cancel_event"],
         queue=False,
-    )
-    _run_gen = _run_click.then(
+    ).then(
         fn=_run_preprocess,
         inputs=[
             storage_path, project_name, ui["video_select"]["group"],
@@ -977,28 +1081,26 @@ def create_preprocess_ui(
             ui["anterior_roi_id"], ui["posterior_roi_id"],
             ui["fc"], ui["order"], ui["margin"], ui["min_crop"], ui["output_size"],
             ui["center_roi_id"], ui["crop_width"], ui["crop_height"],
-            ui["skip_existing"],
+            ui["skip_existing"], ui["cancel_event"],
         ],
-        outputs=[ui["log_text"]],
+        outputs=[ui["log_text"], ui["run_btn"], ui["run_cancel_btn"],
+                 ui["preprocess_status"]],
+        show_progress="hidden",  # we render our own bar in preprocess_status
     )
-    (
-        _run_gen
-        .then(
-            fn=_list_sessions_dropdown,
-            inputs=[storage_path, project_name],
-            outputs=[ui["sessions_dropdown"]],
-        )
-        .then(
-            fn=_after_preprocess,
-            outputs=[ui["run_btn"], ui["run_cancel_btn"]],
-            queue=False,
-        )
+    _run_gen.then(
+        fn=_list_sessions_dropdown,
+        inputs=[storage_path, project_name],
+        outputs=[ui["sessions_dropdown"]],
     )
 
+    # Cancel: set the flag + immediate relabel; the generator's final yield
+    # restores the idle label. queue=False so it runs while the generator owns
+    # the queue. NO cancels=[…] — an abrupt cancel would skip the reset yield;
+    # the event-based cancel aborts the in-flight video cleanly.
     ui["run_cancel_btn"].click(
-        fn=_after_preprocess,
-        outputs=[ui["run_btn"], ui["run_cancel_btn"]],
-        cancels=[_run_gen],
+        fn=request_cancel,
+        inputs=ui["cancel_event"],
+        outputs=ui["run_cancel_btn"],
         queue=False,
     )
 

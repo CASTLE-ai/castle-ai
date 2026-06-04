@@ -41,8 +41,9 @@ import numpy as np
 import scipy.signal
 
 from castle.core._centroid_worker import PreprocessCancelled, centroid_chunk_worker
+from castle.core.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # Parallel centroid extraction tuning (Phase A). Overridable via env.
 _CENTROID_WORKER_CAP = 8          # never spawn more workers than this
@@ -634,6 +635,11 @@ def extract_body_head_centroids(
                 stop = start + body_chunk.shape[0]
                 body[start:stop] = body_chunk
                 head[start:stop] = head_chunk
+            if done:
+                logger.info(
+                    "extract_body_head_centroids: %d/%d chunks done (%d pending)",
+                    len(bounds) - len(pending), len(bounds), len(pending),
+                )
             if progress_callback:
                 frames_done = sum(progress_dict.values())
                 progress_callback(

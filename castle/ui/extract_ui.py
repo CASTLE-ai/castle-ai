@@ -246,7 +246,10 @@ def init_select_video_list(storage_path, project_name):
 # Main Action Handlers
 # ---------------------------
 
-@handle_assertion_error
+# NOTE: no @handle_assertion_error here — this is a generator; the decorator would
+# wrap the call and return the generator object (Gradio then sees 1 value, not the
+# yielded tuples). Validation errors are surfaced via gr.Warning + a graceful final
+# yield inside the body instead.
 def ui_extract_roi_latent(
     storage_path: str,
     project_name: str,

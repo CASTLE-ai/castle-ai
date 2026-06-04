@@ -28,14 +28,26 @@ DINOv3
 from __future__ import annotations
 
 import logging
+import math
+import multiprocessing
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
 import scipy.signal
 
+from castle.core._centroid_worker import PreprocessCancelled, centroid_chunk_worker
+
 logger = logging.getLogger(__name__)
+
+# Parallel centroid extraction tuning (Phase A). Overridable via env.
+_CENTROID_WORKER_CAP = 8          # never spawn more workers than this
+_CENTROID_MIN_PARALLEL = 2000     # below this frame count, run serial (pool overhead wins)
+_CHUNKS_PER_WORKER = 3            # over-chunk for load balance (missing-frame chunks are cheap)
 
 
 class StabilizedCamera:
@@ -443,6 +455,221 @@ class StabilizedCamera:
 # ---------------------------------------------------------------------------
 
 
+def _interp_nan_inplace(positions: np.ndarray, n_frames: int, roi_label: str) -> None:
+    """Linearly interpolate NaN frames of an (n,2) centroid array, in place.
+
+    Raises ``ValueError`` (naming ``roi_label``) if no valid frame exists at all.
+    This is the GLOBAL interpolation step — run only after all parallel chunks
+    have been reassembled, so chunk-edge NaNs see neighbours from adjacent chunks.
+    """
+    valid = np.where(~np.isnan(positions[:, 0]))[0]
+    if len(valid) == 0:
+        raise ValueError(f"No valid centroids found for {roi_label}")
+    for col in range(2):
+        nan_mask = np.isnan(positions[:, col])
+        if nan_mask.any():
+            positions[:, col] = np.interp(
+                np.arange(n_frames), valid, positions[valid, col],
+            )
+
+
+def _get_mp_context():
+    """Multiprocessing context for the centroid pool. Prefer ``forkserver`` then
+    ``spawn`` — NOT plain ``fork``: the orchestrator runs from a background
+    thread (the UI poll pattern), and forking a multithreaded process can copy
+    held locks (``H5IO._lock``, the logging lock) into the child → deadlock."""
+    for method in ("forkserver", "spawn"):
+        try:
+            return multiprocessing.get_context(method)
+        except ValueError:
+            continue
+    return multiprocessing.get_context()
+
+
+def _resolve_centroid_workers(n_frames: int) -> int:
+    """Worker count for centroid extraction. ``CASTLE_CENTROID_WORKERS`` overrides
+    (``"1"`` forces serial); otherwise ``os.cpu_count()`` capped at
+    ``_CENTROID_WORKER_CAP``. Returns 1 (→ serial) for short clips."""
+    if n_frames < _CENTROID_MIN_PARALLEL:
+        return 1
+    raw = os.environ.get("CASTLE_CENTROID_WORKERS", "").strip()
+    cpu = os.cpu_count() or 1
+    if raw:
+        try:
+            n = int(raw)
+        except ValueError:
+            n = cpu
+    else:
+        n = cpu
+    return max(1, min(n, cpu, _CENTROID_WORKER_CAP))
+
+
+def _extract_body_head_serial(
+    mask_h5_path: str,
+    body_roi_id: int,
+    head_roi_id: int,
+    n_frames: int,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event=None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Single-process fused sweep: read each mask once, compute body+head
+    centroids. Fallback path (small clips / workers==1 / pool unavailable)."""
+    body = np.full((n_frames, 2), np.nan, dtype=np.float64)
+    head = np.full((n_frames, 2), np.nan, dtype=np.float64)
+    body_roi_id, head_roi_id = int(body_roi_id), int(head_roi_id)
+
+    from castle.utils.h5_io import H5IO
+
+    _last_report = 0.0
+    with H5IO(mask_h5_path, read_only=True) as h5:
+        for i in range(n_frames):
+            if cancel_event is not None and cancel_event.is_set():
+                raise PreprocessCancelled()
+            if not h5.has_mask(i):
+                continue
+            try:
+                mask = h5.read_mask(i)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("extract_centroids: cannot read frame %d (%s)", i, exc)
+                continue
+            b = _largest_cc_centroid((mask == body_roi_id).astype(np.uint8))
+            if b is not None:
+                body[i, 0], body[i, 1] = b
+            hd = _largest_cc_centroid((mask == head_roi_id).astype(np.uint8))
+            if hd is not None:
+                head[i, 0], head[i, 1] = hd
+            if progress_callback and (i % 200 == 0):
+                now = time.time()
+                if now - _last_report >= 0.3:
+                    _last_report = now
+                    progress_callback(i / max(n_frames, 1), f"Centroids {i}/{n_frames}")
+
+    _interp_nan_inplace(body, n_frames, f"roi_id={body_roi_id} (body)")
+    _interp_nan_inplace(head, n_frames, f"roi_id={head_roi_id} (head)")
+    if progress_callback:
+        progress_callback(1.0, f"Centroids {n_frames}/{n_frames}")
+    return body, head
+
+
+def _largest_cc_centroid(binary: np.ndarray):
+    """Centroid [x, y] of the largest connected component, or None."""
+    if binary.sum() == 0:
+        return None
+    num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(
+        binary, connectivity=8, ltype=cv2.CV_32S
+    )
+    if num_labels <= 1:
+        return None
+    areas = [stats[j, cv2.CC_STAT_AREA] for j in range(1, num_labels)]
+    best = int(np.argmax(areas)) + 1
+    return centroids[best, 0], centroids[best, 1]
+
+
+def extract_body_head_centroids(
+    mask_h5_path: str,
+    body_roi_id: int,
+    head_roi_id: int,
+    n_frames: int,
+    *,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event=None,
+    max_workers: Optional[int] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Fused + parallel centroid extraction for KIT pre-process.
+
+    Reads each mask ONCE and computes both the body and head ROI centroids
+    (replacing the legacy two-sweep pattern). Frames are split into contiguous
+    chunks processed on a ``ProcessPoolExecutor``; each worker opens its own
+    read-only HDF5 handle. Returns ``(body_pos, head_pos)``, each ``(n,2)``
+    float64 with NaN frames globally interpolated.
+
+    Falls back to a single-process fused sweep for short clips, when
+    ``CASTLE_CENTROID_WORKERS=1``, or if the pool cannot be constructed.
+    A set ``cancel_event`` (``threading.Event``) aborts with ``PreprocessCancelled``.
+    """
+    workers = max_workers if max_workers is not None else _resolve_centroid_workers(n_frames)
+    if workers <= 1:
+        return _extract_body_head_serial(
+            mask_h5_path, body_roi_id, head_roi_id, n_frames,
+            progress_callback=progress_callback, cancel_event=cancel_event,
+        )
+
+    # Contiguous chunks; over-chunk for load balance.
+    n_chunks = min(n_frames, workers * _CHUNKS_PER_WORKER)
+    chunk_size = max(1, math.ceil(n_frames / n_chunks))
+    bounds = [(s, min(s + chunk_size, n_frames)) for s in range(0, n_frames, chunk_size)]
+
+    body = np.full((n_frames, 2), np.nan, dtype=np.float64)
+    head = np.full((n_frames, 2), np.nan, dtype=np.float64)
+
+    ctx = _get_mp_context()
+    manager = None
+    executor = None
+    try:
+        manager = ctx.Manager()
+        progress_dict = manager.dict()
+        mp_cancel = manager.Event()
+        executor = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+        logger.info(
+            "extract_body_head_centroids: %d frames, %d workers, %d chunks (%s)",
+            n_frames, workers, len(bounds), ctx.get_start_method(),
+        )
+        futures = {
+            executor.submit(
+                centroid_chunk_worker,
+                (mask_h5_path, int(body_roi_id), int(head_roi_id), s, e,
+                 progress_dict, mp_cancel),
+            ): (s, e)
+            for (s, e) in bounds
+        }
+        pending = set(futures)
+        while pending:
+            if cancel_event is not None and cancel_event.is_set():
+                mp_cancel.set()
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise PreprocessCancelled()
+            done, pending = wait(pending, timeout=0.4, return_when=FIRST_COMPLETED)
+            for fut in done:
+                start, body_chunk, head_chunk = fut.result()
+                stop = start + body_chunk.shape[0]
+                body[start:stop] = body_chunk
+                head[start:stop] = head_chunk
+            if progress_callback:
+                frames_done = sum(progress_dict.values())
+                progress_callback(
+                    min(1.0, frames_done / max(n_frames, 1)),
+                    f"Centroids {frames_done}/{n_frames}",
+                )
+    except PreprocessCancelled:
+        raise
+    except Exception as exc:  # noqa: BLE001 — pool unavailable / worker crash → serial fallback
+        logger.warning(
+            "extract_body_head_centroids: parallel path failed (%s); falling back to serial",
+            exc,
+        )
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+        if manager is not None:
+            manager.shutdown()
+            manager = None
+            executor = None
+        return _extract_body_head_serial(
+            mask_h5_path, body_roi_id, head_roi_id, n_frames,
+            progress_callback=progress_callback, cancel_event=cancel_event,
+        )
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=True)
+        if manager is not None:
+            manager.shutdown()
+
+    _interp_nan_inplace(body, n_frames, f"roi_id={int(body_roi_id)} (body)")
+    _interp_nan_inplace(head, n_frames, f"roi_id={int(head_roi_id)} (head)")
+    if progress_callback:
+        progress_callback(1.0, f"Centroids {n_frames}/{n_frames}")
+    return body, head
+
+
 def extract_centroids_from_masks(
     mask_h5_path: str,
     roi_id: int,
@@ -533,6 +760,7 @@ def extract_orientations_from_masks(
     head_roi_id: int,
     n_frames: int,
     body_pos: Optional[np.ndarray] = None,
+    head_pos: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Compute unwrapped orientation angles from body→head vector.
 
@@ -563,7 +791,10 @@ def extract_orientations_from_masks(
     """
     if body_pos is None:
         body_pos = extract_centroids_from_masks(mask_h5_path, body_roi_id, n_frames)
-    head_pos = extract_centroids_from_masks(mask_h5_path, head_roi_id, n_frames)
+    # ``head_pos`` may be supplied by the fused extractor to skip a second full
+    # H5 sweep; otherwise read it here (legacy behaviour).
+    if head_pos is None:
+        head_pos = extract_centroids_from_masks(mask_h5_path, head_roi_id, n_frames)
 
     dx = head_pos[:, 0] - body_pos[:, 0]
     dy = head_pos[:, 1] - body_pos[:, 1]

@@ -84,6 +84,7 @@ def preprocess_stabilized_camera(
     kit_params: dict,
     skip_existing: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event=None,
 ) -> Dict[str, object]:
     """Run KIT stabilized-camera preprocessing and save output into a session directory.
 
@@ -116,7 +117,7 @@ def preprocess_stabilized_camera(
     """
     from castle.core.stabilized_camera import (
         StabilizedCamera,
-        extract_centroids_from_masks,
+        extract_body_head_centroids,
         extract_orientations_from_masks,
     )
     from castle.core.preprocess_session import (
@@ -188,15 +189,22 @@ def preprocess_stabilized_camera(
         progress_callback(0.0, "Extracting centroids…")
 
     _t_centroid_start = time.perf_counter()
-    positions = extract_centroids_from_masks(mask_h5_path, body_roi_id, n_frames)
+    # Fused + parallel: read each mask ONCE, compute body AND head centroids
+    # across a process pool (replaces the legacy two serial sweeps). Maps the
+    # extractor's 0..1 fraction into the pipeline's 0.00→0.10 band.
+    def _centroid_cb(frac: float, desc: str = "") -> None:
+        if progress_callback:
+            progress_callback(0.10 * max(0.0, min(1.0, frac)), desc or "Extracting centroids…")
 
-    if progress_callback:
-        progress_callback(0.05, "Extracting orientations…")
+    positions, head_positions = extract_body_head_centroids(
+        mask_h5_path, body_roi_id, head_roi_id, n_frames,
+        progress_callback=_centroid_cb, cancel_event=cancel_event,
+    )
 
-    # Reuse the body centroids we just computed (avoids a second full H5 sweep
-    # + connected-components pass over the body ROI inside extract_orientations).
+    # Both centroid arrays already computed → no extra H5 sweep here.
     angles = extract_orientations_from_masks(
-        mask_h5_path, body_roi_id, head_roi_id, n_frames, body_pos=positions,
+        mask_h5_path, body_roi_id, head_roi_id, n_frames,
+        body_pos=positions, head_pos=head_positions,
     )
     _t_centroid = time.perf_counter() - _t_centroid_start
 

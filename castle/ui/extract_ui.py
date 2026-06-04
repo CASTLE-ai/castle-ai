@@ -164,6 +164,7 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False),  # 16 hdr_source
         gr.update(visible=False),  # 17 video_select btn_row
         [],                        # 18 video_select all_state (raw value)
+        gr.update(visible=False),  # 19 video_select accordion (list container)
     ])
 
     if not storage_path or not project_name:
@@ -198,6 +199,7 @@ def init_select_video_list(storage_path, project_name):
             updates[6] = gr.update(value=video_count_val, visible=True)  # video_count
             updates[17] = gr.update(visible=True)  # video_select btn_row
             updates[18] = list(choices)            # video_select all_state
+            updates[19] = gr.update(visible=True)  # video_select accordion
             updates[7] = gr.update(visible=True)   # skip_existing
             updates[8] = gr.update(visible=True)   # remove_background_switch
             updates[9] = gr.update(visible=True)   # adv_accordion
@@ -605,6 +607,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['hdr_source'],                # 16
         ui['video_select']['btn_row'],   # 17
         ui['video_select']['all_state'], # 18
+        ui['video_select']['accordion'], # 19
     ]
 
     # ------------------------------------------------------------------

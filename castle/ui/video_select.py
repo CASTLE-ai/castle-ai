@@ -21,20 +21,17 @@ def build_video_selector(label: str = "Videos to process",
                          visible: bool = False) -> Dict[str, Any]:
     """Create the selector components.
 
-    Returns a dict with: ``group`` (CheckboxGroup), ``btn_row`` (Row holding the
-    five quick buttons), ``btn_all/btn_none/btn_invert/btn_first/btn_second``, and
-    ``all_state`` (gr.State holding the full sorted video list, set on tab-select).
+    Layout: the quick-button row sits **above** a collapsible ``gr.Accordion``
+    that holds the (possibly long) checkbox list, so it can be folded away.
+
+    Returns a dict with: ``group`` (CheckboxGroup), ``accordion`` (the collapsible
+    container wrapping the list — toggle this for show/hide), ``btn_row`` (Row
+    holding the five quick buttons), ``btn_all/btn_none/btn_invert/btn_first/
+    btn_second``, and ``all_state`` (gr.State holding the full sorted video list,
+    set on tab-select).
     """
     sel: Dict[str, Any] = {}
-    sel["group"] = gr.CheckboxGroup(
-        choices=[],
-        value=[],
-        label=label,
-        info="Tick the videos to process on this machine. Split a project across "
-             "machines with First/Second half (deterministic, no overlap).",
-        interactive=True,
-        visible=visible,
-    )
+    # Quick buttons go ABOVE the list (act on whatever the list shows).
     with gr.Row(visible=visible) as btn_row:
         sel["btn_all"] = gr.Button("All", size="sm")
         sel["btn_none"] = gr.Button("None", size="sm")
@@ -42,6 +39,17 @@ def build_video_selector(label: str = "Videos to process",
         sel["btn_first"] = gr.Button("First half", size="sm")
         sel["btn_second"] = gr.Button("Second half", size="sm")
     sel["btn_row"] = btn_row
+    # The list itself lives in a collapsible accordion (default open).
+    with gr.Accordion(label, open=True, visible=visible) as accordion:
+        sel["group"] = gr.CheckboxGroup(
+            choices=[],
+            value=[],
+            show_label=False,  # the accordion header already names it
+            info="Tick the videos to process on this machine. Split a project "
+                 "across machines with First/Second half (deterministic, no overlap).",
+            interactive=True,
+        )
+    sel["accordion"] = accordion
     sel["all_state"] = gr.State([])
     return sel
 

@@ -201,7 +201,7 @@ def generate_mix_video_for_video(storage_path: str, project_name: str, video_nam
 
 
 
-_TRACK_BTN_IDLE = "Start Tracking All Videos"
+_TRACK_BTN_IDLE = "Start Tracking"
 _CANCEL_BTN_IDLE = "Cancel Tracking"
 
 
@@ -642,7 +642,7 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
                 ui["video_select"] = build_video_selector(label="Videos to track")
 
                 ui["track_all_btn"] = gr.Button(
-                    "Start Tracking All Videos",
+                    "Start Tracking",
                     variant="primary",
                     size="lg",
                     visible=False # 設置為預設不可見
@@ -757,6 +757,7 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
         ui["progress_text"],
         ui["video_select"]["group"],
         ui["video_select"]["btn_row"],
+        ui["video_select"]["accordion"],
     ]
 
     def show_batch_track_ui(project_name_val):

@@ -6,6 +6,7 @@ Delegates all logic to castle.service.extraction_service and castle.core.extract
 
 import logging
 import os
+import shutil
 import threading
 import time
 
@@ -25,7 +26,6 @@ from castle.core.extractor import (
 )
 from castle.core.gpu_pool import (
     available_cuda_devices, run_on_device_pool, deterministic_ctx_if_enabled,
-    host_ram_available_bytes,
 )
 from castle.core.environment import get_num_workers
 
@@ -391,21 +391,27 @@ def ui_extract_roi_latent(
     device_ids = available_cuda_devices() if use_multi_gpu else []
     use_pool = len(device_ids) >= 2 and total >= 2
 
-    # RAM guard: latent_slots holds one whole video's latents (fp32) in RAM until
-    # save; the video-level pool runs n_gpu concurrently. If that won't fit, drop to
-    # single-GPU rather than OOM.
+    # DISK guard: each video's latents now stream to a temp memmap on disk (RAM is
+    # ~one batch), and the pool runs n_gpu concurrently → n_gpu temp memmaps live at
+    # once on the latent dir's filesystem. If disk won't hold them, drop to single
+    # GPU rather than fill the disk. (Static dim from output_dim_for — no probe.)
     if use_pool:
-        base = 1024 if 'vitl' in select_model else (384 if 'vits' in select_model else 768)
-        dim = base * (sum(s * s for s in parsed_scales) if pooling_method == 'multiscale' else 1)
-        if parsed_layers:
-            dim *= max(1, len(parsed_layers))
+        from castle.core.models import output_dim_for
+        dim = output_dim_for(select_model, pooling_method,
+                             parsed_scales if pooling_method == 'multiscale' else None,
+                             parsed_layers)
         max_frames = max(video_total_frames.values() or [0])
-        per_video_bytes = max_frames * dim * 4  # fp32 in RAM (fp16 only shrinks the npz)
-        free = host_ram_available_bytes()
-        if free is not None and per_video_bytes * len(device_ids) > 0.8 * free:
+        per_video_bytes = max_frames * dim * 4  # fp32 memmap on disk
+        try:
+            free_disk = shutil.disk_usage(os.path.join(storage_path, project_name, 'latent')
+                                          if os.path.isdir(os.path.join(storage_path, project_name))
+                                          else storage_path).free
+        except Exception:  # noqa: BLE001
+            free_disk = None
+        if free_disk is not None and per_video_bytes * len(device_ids) > 0.85 * free_disk:
             messages.append(
-                f"  ⚠️ Low host RAM (~{free / 1e9:.1f} GB) for {len(device_ids)}-GPU extraction "
-                f"(~{per_video_bytes / 1e9:.1f} GB/video) — falling back to single GPU.")
+                f"  ⚠️ Low free disk (~{free_disk / 1e9:.1f} GB) for {len(device_ids)}-GPU "
+                f"extraction (~{per_video_bytes / 1e9:.1f} GB temp/video) — falling back to single GPU.")
             use_pool = False
             device_ids = device_ids[:1]
 

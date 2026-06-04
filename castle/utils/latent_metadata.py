@@ -99,11 +99,12 @@ def save_latent_with_metadata(
         if the directory is read-only the npz still succeeds and a
         warning is logged.
     """
+    import os
     latent_path = Path(latent_path)
-    if dtype is not None and latent_array.dtype != np.dtype(dtype):
-        latent_array = latent_array.astype(dtype)
+    is_memmap = isinstance(latent_array, np.memmap)
+    store_dtype = np.dtype(dtype) if dtype is not None else latent_array.dtype
     tags = dict(tags or {})
-    tags.setdefault("latent_dtype", str(latent_array.dtype))
+    tags.setdefault("latent_dtype", str(store_dtype))
     meta = _build_metadata(
         video_name=video_name,
         roi_id=roi_id,
@@ -113,11 +114,43 @@ def save_latent_with_metadata(
         tags=tags,
     )
     meta_json = json.dumps(meta, ensure_ascii=False)
-    np.savez_compressed(
-        latent_path,
-        latent=latent_array,
-        metadata=np.array([meta_json]),
-    )
+
+    if is_memmap:
+        # Large / memmap-backed latents: np.savez_compressed materializes the array
+        # into RAM (measured ~0.7× of its size), defeating the memmap. Use
+        # UNCOMPRESSED np.savez, which streams from the memmap in chunks (RAM-bounded).
+        # A dtype change (e.g. float16) is applied chunked into a temp memmap so the
+        # cast itself stays RAM-bounded too.
+        cast = None
+        cast_tmp = None
+        src = latent_array
+        if latent_array.dtype != store_dtype:
+            import tempfile
+            fd, cast_tmp = tempfile.mkstemp(dir=str(latent_path.parent), suffix=".cast.dat")
+            os.close(fd)
+            cast = np.memmap(cast_tmp, dtype=store_dtype, mode="w+", shape=latent_array.shape)
+            CH = 8192
+            for i in range(0, latent_array.shape[0], CH):
+                cast[i:i + CH] = latent_array[i:i + CH].astype(store_dtype)
+            cast.flush()
+            src = cast
+        try:
+            np.savez(latent_path, latent=src, metadata=np.array([meta_json]))
+        finally:
+            if cast is not None:
+                del cast
+                try:
+                    os.remove(cast_tmp)
+                except OSError:
+                    pass
+    else:
+        if dtype is not None and latent_array.dtype != np.dtype(dtype):
+            latent_array = latent_array.astype(dtype)
+        np.savez_compressed(
+            latent_path,
+            latent=latent_array,
+            metadata=np.array([meta_json]),
+        )
 
     sidecar = latent_path.with_suffix(latent_path.suffix + ".json")
     try:

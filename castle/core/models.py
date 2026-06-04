@@ -506,6 +506,17 @@ class DINOv3Encoder(VisualEncoder):
 
 
 
+def output_dim_for(model_name, pooling='weighted_average', scales=None, layers=None) -> int:
+    """Static latent feature dimension for a (model, pooling, scales, layers) combo —
+    no model load / probe. base embed dim × Σscale² (multiscale) × #feature-layers.
+    Used to size the extraction output buffer / estimate disk up front."""
+    base = 1024 if 'vitl' in model_name else (384 if 'vits' in model_name else 768)
+    dim = base * sum(int(s) * int(s) for s in scales) if (pooling == 'multiscale' and scales) else base
+    if layers:
+        dim *= max(1, len(layers))
+    return int(dim)
+
+
 # A-07: Model singleton cache — avoid reloading the same model.
 # Two concurrent threads (e.g. two Gradio sessions) calling get_visual_encoder
 # can both miss the membership check, both evict, both create — burning GPU

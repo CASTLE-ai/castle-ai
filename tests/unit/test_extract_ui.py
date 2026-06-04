@@ -23,7 +23,9 @@ class _FakeReader:
 def _patch_common(monkeypatch, sources):
     monkeypatch.setattr(eu, "get_project_config", lambda sp, pn: (None, {"source": list(sources)}))
     monkeypatch.setattr(eu, "ReadArray", lambda p: _FakeReader())
-    monkeypatch.setattr(eu, "host_ram_available_bytes", lambda: 10 ** 12)
+    # plenty of free disk so the multi-GPU disk guard never trips in tests
+    monkeypatch.setattr(eu.shutil, "disk_usage",
+                        lambda p: __import__("collections").namedtuple("du", "total used free")(0, 0, 10 ** 13))
     monkeypatch.setattr(eu, "get_num_workers", lambda t: 8)
     monkeypatch.setattr(eu, "deterministic_ctx_if_enabled", lambda: contextlib.nullcontext())
     monkeypatch.setattr(eu, "clear_device_encoder_cache", lambda: None)

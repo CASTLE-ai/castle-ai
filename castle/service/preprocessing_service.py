@@ -9,15 +9,116 @@ Session management is delegated to castle.core.preprocess_session.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
+import zlib
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Dict, Iterator, Optional
 
+from castle.core.cpu_pool import resolve_workers
 from castle.core.logging_config import setup_logger
 
 logger = setup_logger(__name__)
+
+_NVENC_OPTS = {"preset": "p5", "rc": "vbr", "cq": "19"}
+_X264_OPTS = {"crf": "18", "preset": "fast"}
+_encoder_probe_cache: Dict[str, bool] = {}
+
+
+def _probe_nvenc(fps: int) -> bool:
+    """One-time RUNTIME check that h264_nvenc actually encodes here (not just that
+    PyAV was built with it) — encodes a couple of black frames to a throwaway file."""
+    import av  # type: ignore
+    import numpy as np
+    import tempfile
+    out = tempfile.mktemp(suffix=".mp4")
+    # NVENC has a minimum frame size (≈145×49); probe at 256² — comfortably above
+    # it and even-dimensioned — so a small probe can't false-negative.
+    _D = 256
+    try:
+        c = av.open(out, mode="w")
+        s = c.add_stream("h264_nvenc", rate=int(fps) or 30)
+        s.width = _D; s.height = _D; s.pix_fmt = "yuv420p"; s.options = _NVENC_OPTS
+        blk = av.VideoFrame.from_ndarray(np.zeros((_D, _D, 3), np.uint8), format="bgr24")
+        for _ in range(2):
+            for pkt in s.encode(blk):
+                c.mux(pkt)
+        for pkt in s.encode():
+            c.mux(pkt)
+        c.close()
+        logger.info("preprocess encoder: h264_nvenc OK (GPU hardware encode)")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("preprocess encoder: h264_nvenc unavailable (%s) → libx264", e)
+        return False
+    finally:
+        try:
+            if os.path.exists(out):
+                os.remove(out)
+        except OSError:
+            pass
+
+
+def _select_video_encoder(fps: int) -> str:
+    """Codec name to attempt. ``CASTLE_PREPROCESS_ENCODER`` ∈ {auto,nvenc,x264};
+    'auto' probes NVENC once at runtime and caches the result."""
+    mode = os.environ.get("CASTLE_PREPROCESS_ENCODER", "auto").strip().lower()
+    if mode in ("x264", "libx264", "cpu"):
+        return "libx264"
+    if mode in ("nvenc", "h264_nvenc", "gpu"):
+        return "h264_nvenc"
+    if "nvenc_ok" not in _encoder_probe_cache:
+        _encoder_probe_cache["nvenc_ok"] = _probe_nvenc(fps)
+    return "h264_nvenc" if _encoder_probe_cache["nvenc_ok"] else "libx264"
+
+
+def _open_encoder(out_path: str, fps, w: int, h: int):
+    """Open an output container + H.264 stream, preferring NVENC with a RUNTIME
+    fallback to (threaded) libx264. Returns ``(container, stream, codec_name)``.
+
+    If NVENC's ``add_stream`` fails at the real open (driver mismatch, session
+    limit, unsupported option) the container is closed/removed and we retry with
+    libx264 — so a machine where NVENC merely compiles still completes on CPU.
+    """
+    import av  # type: ignore
+    chosen = _select_video_encoder(int(fps) if fps else 30)
+    candidates = [chosen] if chosen == "libx264" else [chosen, "libx264"]
+    last_exc = None
+    for codec in candidates:
+        container = None
+        try:
+            container = av.open(out_path, mode="w")
+            stream = container.add_stream(codec, rate=int(fps) or 30)
+            stream.width = int(w); stream.height = int(h); stream.pix_fmt = "yuv420p"
+            if codec == "h264_nvenc":
+                stream.options = dict(_NVENC_OPTS)
+            else:
+                stream.options = dict(_X264_OPTS)
+                try:  # let libx264 use its own internal threads
+                    stream.thread_type = "AUTO"
+                    stream.codec_context.thread_count = 0
+                except Exception:  # noqa: BLE001
+                    pass
+            logger.info("preprocess encode: using %s (%dx%d @ %sfps)", codec, w, h, int(fps) or 30)
+            return container, stream, codec
+        except Exception as e:  # noqa: BLE001 — runtime NVENC failure → next candidate
+            last_exc = e
+            logger.warning("preprocess encode: %s failed at open (%s)", codec, e)
+            try:
+                if container is not None:
+                    container.close()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                if os.path.exists(out_path):
+                    os.remove(out_path)
+            except OSError:
+                pass
+    raise RuntimeError(f"no usable video encoder (last error: {last_exc})")
 
 
 def _threaded_iter(producer, maxsize: int = 16) -> Iterator:
@@ -251,23 +352,63 @@ def preprocess_stabilized_camera(
             progress_callback(0.80, "Saving transformed masks…")
 
         _t_mask_start = time.perf_counter()
-        with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
-            keys = sorted(f_in.keys(), key=lambda x: int(x) if x.isdigit() else 0)
-            for i, key in enumerate(keys):
-                if not key.isdigit():
-                    continue
-                if cancel_event is not None and cancel_event.is_set() and i % 500 == 0:
-                    raise PreprocessCancelled()
-                frame_idx = int(key)
-                orig_mask = f_in[key][:]
-                transformed = cam.generate_mask(orig_mask, frame_idx)
-                h5_out.write_mask(frame_idx, transformed)
+        import cv2
+        mask_workers = resolve_workers("CASTLE_PREPROCESS_WARP_WORKERS")
+        _cv_threads = cv2.getNumThreads()
+        cv2.setNumThreads(1)  # warp runs in the pool; restore in finally below
+        try:
+            with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
+                keys = [k for k in sorted(f_in.keys(),
+                        key=lambda x: int(x) if x.isdigit() else 0) if k.isdigit()]
+                total_k = len(keys)
 
-                if progress_callback and i % 500 == 0:
-                    frac = 0.80 + 0.18 * i / max(len(keys), 1)
-                    progress_callback(frac, f"Mask {i}/{len(keys)}")
-                if i and i % 5000 == 0:
-                    logger.info("mask_transform: %d/%d masks", i, len(keys))
+                def _warp_compress(frame_idx, orig_mask):
+                    # warpAffine + zlib both release the GIL → real pool parallelism.
+                    t = cam.generate_mask(orig_mask, frame_idx)
+                    return frame_idx, zlib.compress(t.tobytes(), 3), t.shape
+
+                def _write(res):
+                    h5_out.write_mask_compressed(res[0], res[1], res[2])
+
+                if mask_workers <= 1:
+                    for i, key in enumerate(keys):
+                        if cancel_event is not None and cancel_event.is_set() and i % 500 == 0:
+                            raise PreprocessCancelled()
+                        _write(_warp_compress(int(key), f_in[key][:]))
+                        if progress_callback and i % 500 == 0:
+                            progress_callback(0.80 + 0.18 * i / max(total_k, 1), f"Mask {i}/{total_k}")
+                        if i and i % 5000 == 0:
+                            logger.info("mask_transform: %d/%d masks", i, total_k)
+                else:
+                    # Read serially on THIS thread (h5py handle isn't thread-safe; the
+                    # gunzip read releases the GIL anyway). The CPU-heavy warp + zlib
+                    # compress run in a BOUNDED thread pool so compression scales across
+                    # cores; this thread then writes the pre-compressed chunk (no
+                    # compression on the writer → no longer write-bound). Window bounded
+                    # → flat RSS. Order is irrelevant (masks are keyed by frame index).
+                    ex = ThreadPoolExecutor(max_workers=mask_workers)
+                    pending: "deque" = deque()
+                    written = 0
+                    try:
+                        for i, key in enumerate(keys):
+                            if cancel_event is not None and cancel_event.is_set() and i % 500 == 0:
+                                raise PreprocessCancelled()
+                            pending.append(ex.submit(_warp_compress, int(key), f_in[key][:]))
+                            if len(pending) >= mask_workers * 2:
+                                _write(pending.popleft().result())
+                                written += 1
+                                if progress_callback and written % 500 == 0:
+                                    progress_callback(0.80 + 0.18 * written / max(total_k, 1),
+                                                      f"Mask {written}/{total_k}")
+                                if written % 5000 == 0:
+                                    logger.info("mask_transform: %d/%d masks", written, total_k)
+                        while pending:
+                            _write(pending.popleft().result())
+                            written += 1
+                    finally:
+                        ex.shutdown(wait=True)
+        finally:
+            cv2.setNumThreads(_cv_threads)
         _t_mask = time.perf_counter() - _t_mask_start
 
         logger.info(
@@ -417,12 +558,12 @@ def preprocess_center_crop(
 
     in_container = av.open(source_path)
     in_stream = in_container.streams.video[0]
-    out_container = av.open(str(out_video_path), mode="w")
-    out_stream = out_container.add_stream("h264", rate=int(fps))
-    out_stream.width = int(crop_width)
-    out_stream.height = int(crop_height)
-    out_stream.pix_fmt = "yuv420p"
-    out_stream.options = {"crf": "18", "preset": "fast"}
+    try:
+        in_stream.thread_type = "AUTO"  # multi-threaded libav decode
+    except Exception:  # noqa: BLE001
+        pass
+    out_container, out_stream, _codec = _open_encoder(
+        str(out_video_path), fps, int(crop_width), int(crop_height))
 
     encode_failed = False
     try:
@@ -522,8 +663,10 @@ def _encode_stabilized_video(
     progress_end: float = 1.0,
     cancel_event=None,
 ) -> None:
-    """Encode KIT-stabilised frames to an H.264 MP4 via PyAV."""
+    """Encode KIT-stabilised frames to H.264 (NVENC if available, else threaded
+    libx264) via PyAV, with multi-threaded decode and pooled warpAffine."""
     import av  # type: ignore
+    import cv2
 
     from castle.core._centroid_worker import PreprocessCancelled
 
@@ -531,24 +674,55 @@ def _encode_stabilized_video(
 
     in_container = av.open(video_path)
     in_stream = in_container.streams.video[0]
-    out_container = av.open(out_path, mode="w")
-    out_stream = out_container.add_stream("h264", rate=int(fps))
-    out_stream.width = output_size
-    out_stream.height = output_size
-    out_stream.pix_fmt = "yuv420p"
-    out_stream.options = {"crf": "18", "preset": "fast"}
+    try:
+        in_stream.thread_type = "AUTO"  # multi-threaded libav decode
+    except Exception:  # noqa: BLE001
+        pass
+    out_container, out_stream, _codec = _open_encoder(out_path, fps, output_size, output_size)
+
+    workers = resolve_workers("CASTLE_PREPROCESS_WARP_WORKERS")
 
     def _produce():
-        # Decode + warpAffine on a background thread (both release the GIL),
-        # overlapping the libx264 encode below. Frames are yielded strictly in
-        # order, so the encoder sees the same sequence + settings as before →
-        # byte-identical output.
-        for i, pkt_frame in enumerate(in_container.decode(in_stream)):
-            if i >= limit:
-                break
-            img_bgr = pkt_frame.to_ndarray(format="bgr24")
-            yield i, cam.generate_frame(img_bgr, i)
+        # Decode in order (AUTO threads); run warpAffine in a BOUNDED thread pool
+        # (cv2 releases the GIL, ``cam`` is read-only), yielding in frame order so
+        # the encoder still sees a correct sequence. The window is bounded
+        # (~2×workers in flight) → flat RSS even over 200k+ frames.
+        decoder = enumerate(in_container.decode(in_stream))
+        if workers <= 1:
+            for i, pkt in decoder:
+                if i >= limit:
+                    break
+                yield i, cam.generate_frame(pkt.to_ndarray(format="bgr24"), i)
+            return
+        ex = ThreadPoolExecutor(max_workers=workers)
+        pending: "deque" = deque()
 
+        def _submit_one() -> bool:
+            for i, pkt in decoder:
+                if i >= limit:
+                    return False
+                img = pkt.to_ndarray(format="bgr24")
+                pending.append((i, ex.submit(cam.generate_frame, img, i)))
+                return True
+            return False
+
+        try:
+            for _ in range(workers * 2):
+                if not _submit_one():
+                    break
+            while pending:
+                i, fut = pending.popleft()
+                res = fut.result()
+                _submit_one()
+                yield i, res
+        finally:
+            ex.shutdown(wait=True)
+
+    # warpAffine is parallelised across the pool above; pin OpenCV's own internal
+    # threads to 1 for the duration (avoid nested oversubscription) and ALWAYS
+    # restore the global setting in finally so it can't leak to other modules.
+    _cv_threads = cv2.getNumThreads()
+    cv2.setNumThreads(1)
     ok = False
     try:
         for i, result in _threaded_iter(_produce):
@@ -566,6 +740,7 @@ def _encode_stabilized_video(
             out_container.mux(packet)
         ok = True
     finally:
+        cv2.setNumThreads(_cv_threads)  # restore global OpenCV threading
         out_container.close()
         in_container.close()
         # Don't leave a truncated MP4 that a later skip_existing could treat as

@@ -81,6 +81,32 @@ class H5IO:
                 raise ValueError(f"Without mask at frame {index}")
             return self.f[str(index)][:]
 
+    def write_mask_compressed(self, index, compressed_bytes, shape):
+        """Write a mask that the caller has ALREADY gzip-compressed.
+
+        Lets the CPU-heavy deflate run in parallel pool workers while this single
+        writer does only metadata + I/O (no compression) — the mask-transform
+        bottleneck. ``compressed_bytes`` must be a zlib/deflate stream produced by
+        e.g. ``zlib.compress(mask.tobytes(), 3)`` (matches the HDF5 gzip filter, so
+        the read path ``f[key][:]`` is byte-for-byte identical to a normal write).
+        ``shape`` is the mask's ``(H, W)``.
+        """
+        if self.read_only:
+            raise PermissionError(
+                f"H5IO opened read-only: cannot write_mask_compressed({index}) to {self.file_path}"
+            )
+        with self._lock:
+            self.check()
+            key = str(index)
+            if key in self.f:
+                del self.f[key]
+            dset = self.f.create_dataset(
+                key, shape=tuple(shape), dtype='uint8',
+                chunks=tuple(shape), compression="gzip", compression_opts=3,
+            )
+            # Offset is in dataset elements; the single chunk covers the whole array.
+            dset.id.write_direct_chunk((0,) * len(shape), compressed_bytes)
+
     def read_masks_batch(self, indices):
         """Read multiple masks under a single HDF5 lock acquisition.
 

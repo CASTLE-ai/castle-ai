@@ -41,12 +41,12 @@ import numpy as np
 import scipy.signal
 
 from castle.core._centroid_worker import PreprocessCancelled, centroid_chunk_worker
+from castle.core.cpu_pool import resolve_workers
 from castle.core.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
 # Parallel centroid extraction tuning (Phase A). Overridable via env.
-_CENTROID_WORKER_CAP = 8          # never spawn more workers than this
 _CENTROID_MIN_PARALLEL = 2000     # below this frame count, run serial (pool overhead wins)
 _CHUNKS_PER_WORKER = 3            # over-chunk for load balance (missing-frame chunks are cheap)
 
@@ -488,21 +488,12 @@ def _get_mp_context():
 
 
 def _resolve_centroid_workers(n_frames: int) -> int:
-    """Worker count for centroid extraction. ``CASTLE_CENTROID_WORKERS`` overrides
-    (``"1"`` forces serial); otherwise ``os.cpu_count()`` capped at
-    ``_CENTROID_WORKER_CAP``. Returns 1 (→ serial) for short clips."""
+    """Worker count for centroid extraction. Short clips run serial; otherwise the
+    shared policy (``cpu_count - reserved``, ``CASTLE_CENTROID_WORKERS`` overrides,
+    ``"1"`` forces serial) — no hardcoded cap, scales with the host."""
     if n_frames < _CENTROID_MIN_PARALLEL:
         return 1
-    raw = os.environ.get("CASTLE_CENTROID_WORKERS", "").strip()
-    cpu = os.cpu_count() or 1
-    if raw:
-        try:
-            n = int(raw)
-        except ValueError:
-            n = cpu
-    else:
-        n = cpu
-    return max(1, min(n, cpu, _CENTROID_WORKER_CAP))
+    return resolve_workers("CASTLE_CENTROID_WORKERS")
 
 
 def _extract_body_head_serial(

@@ -891,3 +891,112 @@ class SubtitleGenerator:
 
 ReadArray = VideoReader
 WriteArray = VideoWriter
+
+
+def encode_overlay_video(source_path, mask_h5_path, out_path, fps, overlay_fn,
+                         *, progress_callback=None, cancel_event=None):
+    """Render an overlay video (mask drawn on the source) — optimized encode path.
+
+    Mirrors the pre-process encode stage: ``thread_type="AUTO"`` decode, NVENC (with
+    runtime fallback to threaded libx264) encode, and the per-frame ``overlay_fn``
+    parallelised across a bounded in-order thread pool. **All I/O stays on the main
+    thread** — this loop decodes ``frame[i]`` and reads ``mask[i]`` from the H5 (its
+    lock would serialise pool workers), then submits only the pure-CPU
+    ``overlay_fn(frame_rgb, mask)`` to the pool. Frames are RGB (``rgb24``).
+
+    overlay_fn(frame_rgb, mask) -> rgb uint8 frame of the same size.
+    """
+    import cv2
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+
+    from castle.core._centroid_worker import PreprocessCancelled
+    from castle.core.cpu_pool import resolve_workers
+    from castle.core.video_encoder import open_encoder
+    from castle.utils.h5_io import H5IO
+
+    in_container = av.open(source_path)
+    in_stream = in_container.streams.video[0]
+    try:
+        in_stream.thread_type = "AUTO"
+    except Exception:  # noqa: BLE001
+        pass
+    w = int(in_stream.codec_context.width)
+    h = int(in_stream.codec_context.height)
+    if not fps:
+        try:
+            fps = float(in_stream.average_rate)
+        except Exception:  # noqa: BLE001
+            fps = 30.0
+
+    h5 = H5IO(mask_h5_path, read_only=True)
+    n_frames = len(h5)
+    out_container, out_stream, _codec = open_encoder(out_path, fps, w, h)
+    workers = resolve_workers("CASTLE_MIX_WORKERS")
+
+    def _ov(frame, mask):
+        return frame if mask is None else overlay_fn(frame, mask)
+
+    def _produce():
+        decoder = enumerate(in_container.decode(in_stream))
+        if workers <= 1:
+            for i, pkt in decoder:
+                if i >= n_frames:
+                    break
+                frame = pkt.to_rgb().to_ndarray()
+                mask = h5.read_mask(i) if h5.has_mask(i) else None
+                yield i, _ov(frame, mask)
+            return
+        ex = ThreadPoolExecutor(max_workers=workers)
+        pending = deque()
+
+        def _submit_one():
+            for i, pkt in decoder:
+                if i >= n_frames:
+                    return False
+                frame = pkt.to_rgb().to_ndarray()
+                mask = h5.read_mask(i) if h5.has_mask(i) else None
+                pending.append((i, ex.submit(_ov, frame, mask)))
+                return True
+            return False
+
+        try:
+            for _ in range(workers * 2):
+                if not _submit_one():
+                    break
+            while pending:
+                i, fut = pending.popleft()
+                res = fut.result()
+                _submit_one()
+                yield i, res
+        finally:
+            ex.shutdown(wait=True)
+
+    _cv_threads = cv2.getNumThreads()
+    cv2.setNumThreads(1)
+    ok = False
+    try:
+        for i, out_frame in _produce():
+            if cancel_event is not None and cancel_event.is_set() and i % 30 == 0:
+                raise PreprocessCancelled()
+            vf = av.VideoFrame.from_ndarray(np.ascontiguousarray(out_frame), format="rgb24")
+            for pkt in out_stream.encode(vf):
+                out_container.mux(pkt)
+            if progress_callback and i % 30 == 0:
+                progress_callback(i / max(n_frames, 1), f"Mix {i}/{n_frames}")
+            if i and i % 2000 == 0:
+                logger.info("encode_overlay: %d/%d frames", i, n_frames)
+        for pkt in out_stream.encode():
+            out_container.mux(pkt)
+        ok = True
+    finally:
+        cv2.setNumThreads(_cv_threads)
+        out_container.close()
+        in_container.close()
+        h5.close()
+        if not ok and os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+    return out_path

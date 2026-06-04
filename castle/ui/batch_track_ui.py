@@ -99,46 +99,38 @@ def get_project_videos(storage_path: str, project_name: str) -> List[str]:
     return []
 
 
-def generate_video_analysis(storage_path: str, project_name: str, video_name: str) -> Tuple[str, str]:
+def generate_video_analysis(storage_path: str, project_name: str, video_name: str,
+                            generate_csv: bool = True, generate_mix: bool = True,
+                            cancel_event=None) -> Tuple[str, str]:
     """
-    Generate CSV analysis and mix video for a single video.
-    
-    Args:
-        storage_path: Storage path
-        project_name: Project name  
-        video_name: Video name
-        
-    Returns:
-        Tuple of (csv_path, mix_video_path)
+    Generate CSV analysis and/or mix video for a single video.
+
+    Each output is independently optional. Returns (csv_path, mix_video_path);
+    a skipped output is "".
     """
     project_path = Path(storage_path) / project_name
     track_dir_path = project_path / "track" / video_name
     rois_results_path = track_dir_path / "mask_list.h5"
-    
+
     csv_path = ""
     mix_video_path = ""
-    
+
     if not rois_results_path.exists():
         return csv_path, mix_video_path
-    
+
     try:
-        # Load source video for mix video generation
-        source_video_path = project_path / "sources" / video_name
-        source_video = ReadArray(str(source_video_path))
-        
-        # Generate CSV analysis
-        csv_path = generate_csv_analysis(storage_path, project_name, video_name, source_video)
-        
-        # Generate mix video
-        mix_video_path = generate_mix_video_for_video(storage_path, project_name, video_name, source_video)
-        
+        if generate_csv:
+            csv_path = generate_csv_analysis(storage_path, project_name, video_name)
+        if generate_mix:
+            mix_video_path = generate_mix_video_for_video(
+                storage_path, project_name, video_name, cancel_event=cancel_event)
     except Exception as e:
         logger.error(f"Error generating analysis for {video_name}: {e}")
-    
+
     return csv_path, mix_video_path
 
 
-def generate_csv_analysis(storage_path: str, project_name: str, video_name: str, source_video) -> str:
+def generate_csv_analysis(storage_path: str, project_name: str, video_name: str, source_video=None) -> str:
     """Generate CSV kinematic analysis for a video.
     
     Uses shared compute_roi_info() and save_kinematic_csv() from analysis_utils.
@@ -167,34 +159,32 @@ def generate_csv_analysis(storage_path: str, project_name: str, video_name: str,
         return ""
 
 
-def generate_mix_video_for_video(storage_path: str, project_name: str, video_name: str, source_video) -> str:
-    """Generate mix video for a single video."""
+def generate_mix_video_for_video(storage_path: str, project_name: str, video_name: str,
+                                 cancel_event=None) -> str:
+    """Generate the mask-overlay mix video for one tracked video.
+
+    Delegates to the optimized ``encode_overlay_video`` pipeline (AUTO decode +
+    NVENC/threaded-x264 encode + pooled overlay). The source fps/size are read
+    from the source file by the pipeline.
+    """
+    from castle.utils.video_io import encode_overlay_video
+    from castle.utils.plot import generate_mix_image
+
     project_path = Path(storage_path) / project_name
     track_dir_path = project_path / "track" / video_name
     rois_results_path = track_dir_path / "mask_list.h5"
-    
+    source_video_path = project_path / "sources" / video_name
+
     if not rois_results_path.exists():
         return ""
-    
+
     try:
         video_name_wo_extension = video_name.split('.')[0]
         output_path = track_dir_path / f'{video_name_wo_extension}-mix.mp4'
-
-        output = WriteArray(str(output_path), fps=source_video.fps, crf=15)
-        rois_results = H5IO(str(rois_results_path), read_only=True)
-        try:
-            n_frames = len(rois_results)
-
-            for i in range(n_frames):
-                rois = rois_results[i]
-                frame = source_video[i]
-                out_frame = generate_mix_image(frame, rois)
-                output.append(out_frame)
-        finally:
-            rois_results.close()
-            output.close()
-        return str(output_path)
-
+        return encode_overlay_video(
+            str(source_video_path), str(rois_results_path), str(output_path),
+            None, generate_mix_image, cancel_event=cancel_event,
+        )
     except Exception as e:
         logger.error(f"Error generating mix video for {video_name}: {e}")
         return ""
@@ -228,6 +218,8 @@ def track_all_videos(
     model_aot: str = "r50_deaotl",
     skip_existing: bool = True,
     use_multi_gpu: bool = True,
+    generate_csv: bool = True,
+    generate_mix: bool = True,
     cancel_event=None,
     selected_videos=None,
 ):
@@ -342,16 +334,24 @@ def track_all_videos(
                 success_count["n"] += 1
                 messages.append(f"✅ Completed tracking for video {video_name}")
                 logger.info("Completed tracking for %s", video_name)
-                try:
-                    messages.append(f"Generating analysis files for {video_name}...")
-                    csv_path, mix_video_path = generate_video_analysis(storage_path, project_name, video_name)
-                    if csv_path:
-                        messages.append(f"  ✅ Generated CSV: {os.path.basename(csv_path)}")
-                    if mix_video_path:
-                        messages.append(f"  ✅ Generated mix video: {os.path.basename(mix_video_path)}")
-                except Exception as e:  # noqa: BLE001
-                    messages.append(f"  ⚠️  Warning: Failed to generate analysis files for {video_name}: {str(e)}")
-                    logger.warning("Analysis generation failed for %s: %s", video_name, e)
+                if generate_csv or generate_mix:
+                    try:
+                        parts = ([] if not generate_csv else ["CSV"]) + ([] if not generate_mix else ["mix video"])
+                        messages.append(f"Generating {' + '.join(parts)} for {video_name}...")
+                        csv_path, mix_video_path = generate_video_analysis(
+                            storage_path, project_name, video_name,
+                            generate_csv=generate_csv, generate_mix=generate_mix,
+                            cancel_event=cancel_event,
+                        )
+                        if csv_path:
+                            messages.append(f"  ✅ Generated CSV: {os.path.basename(csv_path)}")
+                        if mix_video_path:
+                            messages.append(f"  ✅ Generated mix video: {os.path.basename(mix_video_path)}")
+                    except Exception as e:  # noqa: BLE001
+                        messages.append(f"  ⚠️  Warning: Failed to generate analysis files for {video_name}: {str(e)}")
+                        logger.warning("Analysis generation failed for %s: %s", video_name, e)
+                else:
+                    messages.append("  ⏭️  Analysis skipped (tracking only)")
             elif status in ("Skipped", "Skip"):
                 messages.append(f"  Skipping existing video: {video_name}")
             elif status == "Cancel":
@@ -591,6 +591,20 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
                     visible=False # 設置為預設不可見
                 )
 
+                ui["generate_csv_checkbox"] = gr.Checkbox(
+                    label="Generate CSV analysis",
+                    value=True,
+                    info="On: write per-video kinematic CSV after tracking (fast). Off: skip it.",
+                    visible=False # 設置為預設不可見
+                )
+
+                ui["generate_mix_checkbox"] = gr.Checkbox(
+                    label="Generate mix video",
+                    value=True,
+                    info="On: render the mask-overlay video after tracking (slower; NVENC-accelerated). Off: tracking only.",
+                    visible=False # 設置為預設不可見
+                )
+
                 # Per-video selection (split a project across machines).
                 ui["video_select"] = build_video_selector(label="Videos to track")
 
@@ -674,6 +688,8 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
             ui["model_dropdown"],
             ui["skip_existing_checkbox"],
             ui["multi_gpu_toggle"],
+            ui["generate_csv_checkbox"],
+            ui["generate_mix_checkbox"],
             states["cancel_event"],
             ui["video_select"]["group"],
         ],
@@ -704,6 +720,8 @@ def create_batch_track_ui(storage_path: str, project_name: str, batch_tracking_t
         ui["gpu_indicator"],
         ui["multi_gpu_toggle"],
         ui["skip_existing_checkbox"],
+        ui["generate_csv_checkbox"],
+        ui["generate_mix_checkbox"],
         ui["track_all_btn"],
         ui["cancel_tracking_btn"],
         ui["batch_status"],

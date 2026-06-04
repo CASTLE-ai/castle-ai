@@ -80,23 +80,17 @@ def generate_mix_video(storage_path, project_name, source_video, progress=gr.Pro
     if not os.path.exists(rois_results_path):
         gr.Warning(f"Mask file not found: {rois_results_path}")
         return None
-    output = WriteArray(output_path, fps=source_video.fps, crf=15)
-    rois_results = H5IO(rois_results_path, read_only=True)
-    try:
-        n_frames = len(rois_results)
-        progress(0.0, desc=f"Rendering mix video (0/{n_frames})")
+    from castle.utils.video_io import encode_overlay_video
+    source_path = os.path.join(project_path, 'sources', video_name)
+    progress(0.0, desc="Rendering mix video…")
 
-        for i in range(n_frames):
-            rois = rois_results[i]
-            frame = source_video[i]
-            out_frame = generate_mix_image(frame, rois)
-            output.append(out_frame)
-            if i % 30 == 0 or i == n_frames - 1:
-                progress((i + 1) / n_frames, desc=f"Rendering mix video ({i + 1}/{n_frames})")
-    finally:
-        rois_results.close()
-        output.close()
-    return output_path
+    def _cb(frac, desc=""):
+        progress(frac, desc=desc or "Rendering mix video…")
+
+    return encode_overlay_video(
+        source_path, rois_results_path, output_path, source_video.fps,
+        generate_mix_image, progress_callback=_cb,
+    )
 
 
 def create_post_track_ui(storage_path, project_name, source_video):

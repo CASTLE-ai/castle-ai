@@ -128,6 +128,51 @@ def test_track_all_videos_crash_still_resets_buttons(monkeypatch, tmp_path):
     assert "crashed" in out[-1][0]              # error surfaced in the log
 
 
+def test_track_all_videos_mix_toggle_gates_analysis(monkeypatch, tmp_path):
+    # When generate_mix=False / generate_csv=False, _on_video_done must call
+    # generate_video_analysis with those flags (so mix/CSV are skipped).
+    monkeypatch.setattr(bt, "available_cuda_devices", lambda: [])
+    monkeypatch.setattr(bt, "get_project_videos", lambda sp, pn: ["a.mp4"])
+
+    captured = {}
+
+    def fake_analysis(storage, project, video, generate_csv=True, generate_mix=True, cancel_event=None):
+        captured["csv"] = generate_csv
+        captured["mix"] = generate_mix
+        return ("", "")
+
+    monkeypatch.setattr(bt, "generate_video_analysis", fake_analysis)
+
+    def fake_track_videos(storage, project, video_names, **kwargs):
+        # Drive the on_video_done callback so the analysis branch runs.
+        cb = kwargs.get("on_video_done")
+        for v in video_names:
+            if cb:
+                cb(v, "Done")
+        return {v: "Done" for v in video_names}
+
+    monkeypatch.setattr(bt, "track_videos", fake_track_videos)
+
+    # CSV on, mix off → generate_video_analysis called with those exact flags.
+    list(bt.track_all_videos(
+        str(tmp_path), "P", "r50_deaotl",
+        skip_existing=False, use_multi_gpu=False,
+        generate_csv=True, generate_mix=False,
+        cancel_event=None, selected_videos=["a.mp4"],
+    ))
+    assert captured == {"csv": True, "mix": False}
+
+    # Both off → analysis is skipped entirely (generate_video_analysis NOT called).
+    captured.clear()
+    list(bt.track_all_videos(
+        str(tmp_path), "P", "r50_deaotl",
+        skip_existing=False, use_multi_gpu=False,
+        generate_csv=False, generate_mix=False,
+        cancel_event=None, selected_videos=["a.mp4"],
+    ))
+    assert captured == {}
+
+
 def test_track_all_videos_empty_selection_is_graceful(monkeypatch, tmp_path):
     # No videos checked → don't call track_videos; surface a clear message.
     cap = {}

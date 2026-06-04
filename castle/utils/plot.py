@@ -10,21 +10,28 @@ _palette = [0,0,0]
 for hex_code in _palette_hex:
     r, g, b = int(hex_code[1:3], 16), int(hex_code[3:5], 16), int(hex_code[5:7], 16)
     _palette.extend([r, g, b])
-    
+
+# (256, 3) uint8 lookup table from the palette — lets colorize_mask be a single
+# vectorised numpy index instead of a PIL palette round-trip (faster, releases the
+# GIL, so it scales inside the mix-video overlay thread pool). Palette has 256
+# entries (256*3 ints); pad/truncate to exactly 256 rows.
+_lut = np.zeros((256, 3), dtype=np.uint8)
+_flat = np.array(_palette[:256 * 3], dtype=np.uint8)
+_lut[:len(_flat) // 3] = _flat[:(len(_flat) // 3) * 3].reshape(-1, 3)
+
 
 def colorize_mask(pred_mask):
-    save_mask = Image.fromarray(pred_mask.astype(np.uint8))
-    save_mask = save_mask.convert(mode='P')
-    save_mask.putpalette(_palette)
-    save_mask = save_mask.convert(mode='RGB')
-    return np.array(save_mask)
+    return _lut[pred_mask.astype(np.uint8)]
 
 def generate_mix_image(frame, mask, alpha=0.5):
-    mix = np.array(frame, dtype=np.float64)
-    binary_mask = (mask != 0)
-    foreground = mix * (1-alpha) + colorize_mask(mask).astype(np.float64) * alpha
-    mix[binary_mask] = foreground[binary_mask]
-    return mix.astype(np.uint8)
+    # Alpha-blend the colorised mask over the frame, but only where mask != 0.
+    # uint8 cv2.addWeighted (GIL-releasing) replaces the old float64 + PIL path.
+    colorized = _lut[mask.astype(np.uint8)]
+    blended = cv2.addWeighted(frame, 1.0 - alpha, colorized, alpha, 0.0)
+    out = frame.copy()
+    m = mask != 0
+    out[m] = blended[m]
+    return out
 
 def generate_mask_image(mask):
     return colorize_mask(mask).astype(np.uint8)

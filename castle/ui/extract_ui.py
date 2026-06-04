@@ -243,6 +243,7 @@ def ui_extract_roi_latent(
     pooling_method: str = 'weighted_average',
     pooling_scales_list: list = None,
     feature_layers_str: str = '',
+    latent_dtype: str = 'float32',
     session_display: str = "(None — use raw source)",
     progress=gr.Progress(),
 ) -> str:
@@ -369,6 +370,7 @@ def ui_extract_roi_latent(
                 source_video_path=source_video_path,
                 mask_path_override=mask_path_override,
                 session_id=session_id,
+                latent_dtype=latent_dtype,
             )
             if path:
                 messages.append(f"  ✅ Saved: {os.path.basename(path)}")
@@ -563,6 +565,13 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             info='Comma-separated layer indices to concatenate (e.g. "3,7,11"). Empty = last layer only.',
             placeholder='Leave empty for default (last layer)',
         )
+        ui['latent_precision'] = gr.Radio(
+            choices=['float32', 'float16'],
+            value='float32',
+            label='Latent Precision',
+            info='float16 halves the .npz size with negligible effect on clustering; '
+                 'float32 is full precision. The Behavior Microscope reads either.',
+        )
     ui['adv_accordion'] = adv_accordion
 
     ui['mem_warning'] = gr.HTML(value="", visible=False)
@@ -657,6 +666,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             ui['remove_background_switch'],
             ui['eliminate_rotation_asymmetry'], ui['era_roi_id'],
             ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],
+            ui['latent_precision'],
             ui['session_selector'],
         ],
         outputs=ui['latent_file_list'],

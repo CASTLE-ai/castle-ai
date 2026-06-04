@@ -386,7 +386,9 @@ class LocalLatent:
             device = 'cpu' if deterministic else self.device
             reducer_factory = lambda cfg: UMAPReducer(cfg, device=device)
 
-        Z = self.data
+        # UMAP backends (cuML / umap-learn) expect float32; cast defensively so a
+        # float16-stored latent works without a separate conversion step.
+        Z = np.ascontiguousarray(self.data, dtype=np.float32)
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
 

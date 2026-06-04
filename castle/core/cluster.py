@@ -153,7 +153,12 @@ def _aggregate_latents(
 
     feature_dim = chunks[0].shape[1]
     total_T = sum(c.shape[0] for c in chunks)
-    dtype = chunks[0].dtype
+    # Always aggregate as float32 regardless of each chunk's stored precision —
+    # extraction may save float16 (half the disk), and a project may even mix
+    # fp16/fp32 latents across videos (e.g. split across machines). Casting here
+    # makes UMAP/DBSCAN downstream precision-agnostic; the per-chunk assignment
+    # below upcasts into this float32 buffer.
+    dtype = np.float32
     total_bytes = total_T * feature_dim * np.dtype(dtype).itemsize
     threshold_bytes = _memmap_threshold_bytes()
 

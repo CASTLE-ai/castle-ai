@@ -67,6 +67,7 @@ def extract_latent(
     pooling_scales: Optional[list] = None,
     feature_layers: Optional[list] = None,
     session_id: Optional[str] = None,
+    latent_dtype: str = 'float32',
 ) -> str:
     """
     Extract latent features from a tracked video ROI.
@@ -141,7 +142,7 @@ def extract_latent(
                 pooling_method=pooling_method, pooling_scales=pooling_scales,
                 feature_layers=feature_layers,
                 source_video_path=svp, mask_path_override=mpo, session_id=session_id,
-                device=device, num_workers=per_worker,
+                device=device, num_workers=per_worker, latent_dtype=latent_dtype,
             )
 
         def _on_done(vname: str, res) -> None:
@@ -215,6 +216,7 @@ def extract_latent(
                     source_video_path=source_video_path,
                     mask_path_override=mask_path_override,
                     session_id=session_id,
+                    latent_dtype=latent_dtype,
                 )
                 if path:
                     paths.append(path)

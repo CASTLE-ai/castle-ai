@@ -322,6 +322,11 @@ def _latent_filename(video_name, roi_id, model_name, preprocess_config,
     return f'{base_name}_ROI_{roi_id}_{suffix}{pre_tag}.npz'
 
 
+def _resolve_latent_dtype(latent_dtype):
+    """Map a UI precision string to a numpy storage dtype (default float32)."""
+    return np.float16 if str(latent_dtype).lower() in ("float16", "fp16", "half") else np.float32
+
+
 # --- Core Function 1: Extract Latent ---
 def extract_roi_latent_from_video(
     storage_path: str,
@@ -344,6 +349,7 @@ def extract_roi_latent_from_video(
     max_batch_failure_rate: float = 0.05,
     device: Optional[str] = None,
     num_workers: Optional[int] = None,
+    latent_dtype: str = 'float32',
 ) -> str:
     """Extracts latent features from a specific video ROI.
 
@@ -526,6 +532,7 @@ def extract_roi_latent_from_video(
             "rotation": False,
             "failed_frame_ranges": failed_frame_ranges or None,
         },
+        dtype=_resolve_latent_dtype(latent_dtype),
     )
 
     if n_batches_failed:
@@ -985,6 +992,7 @@ def extract_roi_latent_from_video_2gpu(
     max_batch_failure_rate: float = 0.05,
     device_ids=(0, 1),
     min_frames_for_split: int = 2000,
+    latent_dtype: str = 'float32',
 ) -> str:
     """Extract one video's ROI latents by splitting frames across GPUs.
 
@@ -1131,6 +1139,7 @@ def extract_roi_latent_from_video_2gpu(
             "failed_frame_ranges": failed_frame_ranges or None,
             "multi_gpu_device_ids": list(device_ids),
         },
+        dtype=_resolve_latent_dtype(latent_dtype),
     )
 
     if n_batches_failed:

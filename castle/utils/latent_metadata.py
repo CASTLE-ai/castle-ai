@@ -74,6 +74,7 @@ def save_latent_with_metadata(
     model_name: str,
     seed: Optional[int] = None,
     tags: Optional[Dict[str, Any]] = None,
+    dtype: Optional[Any] = None,
 ) -> Path:
     """Save a latent npz with embedded + sidecar metadata.
 
@@ -86,6 +87,9 @@ def save_latent_with_metadata(
         seed: Master seed used for this extraction, if known.
         tags: Optional extra key/value metadata (pooling scales, feature
             layers, etc.). Must be JSON-serialisable.
+        dtype: Optional storage dtype (e.g. ``np.float16`` to halve the file).
+            Defaults to the array's own dtype (float32). The clustering loader
+            upcasts to float32 on read, so either precision is interchangeable.
 
     Returns:
         Path to the npz that was written.
@@ -96,6 +100,10 @@ def save_latent_with_metadata(
         warning is logged.
     """
     latent_path = Path(latent_path)
+    if dtype is not None and latent_array.dtype != np.dtype(dtype):
+        latent_array = latent_array.astype(dtype)
+    tags = dict(tags or {})
+    tags.setdefault("latent_dtype", str(latent_array.dtype))
     meta = _build_metadata(
         video_name=video_name,
         roi_id=roi_id,

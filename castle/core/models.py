@@ -242,8 +242,8 @@ class DINOv2Encoder(VisualEncoder):
         
         frames_t = F.interpolate(frames_t, size=(self.resolution, self.resolution), mode='bilinear', align_corners=False, antialias=True)
         frames_t = self.normalize(frames_t)
-        
-        return frames_t.to(self.device)
+
+        return frames_t.to(self.device, non_blocking=True)
 
     def extract_features(self, x, layers=None):
         """Extract features from specified layers.
@@ -277,7 +277,7 @@ class DINOv2Encoder(VisualEncoder):
 
          if not isinstance(mask_batch, torch.Tensor):
              mask_batch = torch.from_numpy(np.stack(mask_batch, axis=0))
-         masks_t = (mask_batch.to(self.device) == roi_id).to(dtype=torch.float32)
+         masks_t = (mask_batch.to(self.device, non_blocking=True) == roi_id).to(dtype=torch.float32)
          
          with torch.inference_mode():
              if 'cuda' in str(self.device):
@@ -401,12 +401,18 @@ class DINOv3Encoder(VisualEncoder):
         Returns a float tensor of shape [B, 3, 592, 592] on ``self.device``.
         """
         if isinstance(frame_list, torch.Tensor):
-            img_t = frame_list.permute(0, 3, 1, 2).float().div(255.0)
+            # Move the raw uint8 batch to the GPU FIRST (¼ the PCIe bytes of float32),
+            # then do div/255 + resize + normalize on-device — so this thread no longer
+            # does CPU float math serialized with the forward. non_blocking overlaps
+            # the copy with compute (the DataLoader uses pinned memory).
+            img_t = frame_list.to(self.device, non_blocking=True).permute(0, 3, 1, 2).float().div(255.0)
 
             B, C, H, W = img_t.shape
             target_size = self.image_size
 
-            if H == W:
+            if (H, W) == (target_size, target_size):
+                pass  # already at DINO input size (e.g. KIT 592²) — skip the no-op resample
+            elif H == W:
                 img_t = F.interpolate(img_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
             else:
                 scale = target_size / max(H, W)
@@ -421,7 +427,7 @@ class DINOv3Encoder(VisualEncoder):
                 img_t = F.interpolate(img_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
 
             img_t = TF.normalize(img_t, mean=self.mean, std=self.std)
-            return img_t.to(self.device)
+            return img_t
 
         processed = []
         for frame in frame_list:
@@ -487,7 +493,7 @@ class DINOv3Encoder(VisualEncoder):
 
         if not isinstance(mask_batch, torch.Tensor):
             mask_batch = torch.from_numpy(np.stack(mask_batch, axis=0))
-        masks_t = (mask_batch.to(self.device) == roi_id).to(dtype=torch.float32)
+        masks_t = (mask_batch.to(self.device, non_blocking=True) == roi_id).to(dtype=torch.float32)
 
         with torch.no_grad():
             feats = self.extract_features(x, layers=layers)

@@ -6,17 +6,31 @@ Delegates all logic to castle.service.extraction_service and castle.core.extract
 
 import logging
 import os
+import threading
 import time
 
 import gradio as gr
 from tqdm import tqdm
 
+from castle.ui.progress_ui import status_md, init_cancel_event, request_cancel
+from castle.utils.video_io import ReadArray
 from castle.core.data import Preprocess
 from castle.core.extractor import (
     extract_roi_latent_from_video,
+    extract_roi_latent_from_video_2gpu,
     extract_roi_latent_from_video_auto,
     extract_roi_rotation_latent_from_video,
+    clear_device_encoder_cache,
+    ExtractionCancelled,
 )
+from castle.core.gpu_pool import (
+    available_cuda_devices, run_on_device_pool, deterministic_ctx_if_enabled,
+    host_ram_available_bytes,
+)
+from castle.core.environment import get_num_workers
+
+_EXTRACT_BTN_IDLE = "Extract"
+_CANCEL_BTN_IDLE = "Cancel"
 from castle.utils.video_manager import get_project_config
 from castle.utils.h5_io import H5IO
 from castle.ui.video_select import (
@@ -165,6 +179,8 @@ def init_select_video_list(storage_path, project_name):
         gr.update(visible=False),  # 17 video_select btn_row
         [],                        # 18 video_select all_state (raw value)
         gr.update(visible=False),  # 19 video_select accordion (list container)
+        gr.update(visible=False),  # 20 extract_status (live bar)
+        gr.update(visible=False),  # 21 multi_gpu_toggle
     ])
 
     if not storage_path or not project_name:
@@ -200,6 +216,8 @@ def init_select_video_list(storage_path, project_name):
             updates[17] = gr.update(visible=True)  # video_select btn_row
             updates[18] = list(choices)            # video_select all_state
             updates[19] = gr.update(visible=True)  # video_select accordion
+            updates[20] = gr.update(visible=True)  # extract_status
+            updates[21] = gr.update(visible=True)  # multi_gpu_toggle
             updates[7] = gr.update(visible=True)   # skip_existing
             updates[8] = gr.update(visible=True)   # remove_background_switch
             updates[9] = gr.update(visible=True)   # adv_accordion
@@ -244,38 +262,72 @@ def ui_extract_roi_latent(
     pooling_scales_list: list = None,
     feature_layers_str: str = '',
     latent_dtype: str = 'float32',
+    use_multi_gpu: bool = False,
     session_display: str = "(None — use raw source)",
-    progress=gr.Progress(),
-) -> str:
+    cancel_event=None,
+):
+    """Extract latent features for the selected videos (generator → live UI).
 
-    messages = []
+    Mirrors the tracking/pre-process tabs: runs on a background thread, polls every
+    ~0.5 s, and yields ``(log, extract_btn, cancel_btn, status_md)`` with a
+    frame-granular unicode bar in a dedicated component. Multi-GPU (toggle): a
+    video-level pool across GPUs for ≥2 videos, else frame-split for a single video.
+    Cancel is batch-granular (the extractor aborts at its next batch).
+    """
+    # First yield: running state.
+    yield (
+        "",
+        gr.update(interactive=False),
+        gr.update(value=_CANCEL_BTN_IDLE, interactive=True),
+        "🚀 Extracting latents…",
+    )
+
+    messages: list = []
+    video_frac: dict = {}
+    video_total_frames: dict = {}
+    frac_lock = threading.Lock()
+    completed = {"n": 0}
+    success = {"n": 0}
+    failed: list = []
+
+    def _final(status_text):
+        return (
+            "\n".join(messages),
+            gr.update(value=_EXTRACT_BTN_IDLE, interactive=True),
+            gr.update(value=_CANCEL_BTN_IDLE, interactive=False),
+            status_text,
+        )
+
     preprocess_args = Preprocess(remove_background_switch=bool(remove_background_switch))
-
     parsed_scales = [int(s) for s in pooling_scales_list] if pooling_scales_list else [1, 2, 4]
     parsed_layers = None
     if feature_layers_str and feature_layers_str.strip():
         try:
             parsed_layers = [int(x.strip()) for x in feature_layers_str.split(',') if x.strip()]
         except ValueError:
-            raise ValueError(f"Invalid feature layers format: '{feature_layers_str}'.")
+            gr.Warning(f"Invalid feature layers format: '{feature_layers_str}'.")
+            yield _final("⛔ Invalid feature layers format.")
+            return
 
     session_id = _parse_session_id_from_display(session_display)
-
-    # Validate + normalise the ROI ID to an int (the gr.Number can still arrive as
-    # a float like 1.0; this also keeps the latent filename's _ROI_{id} an integer).
     try:
         select_roi = int(select_roi)
     except (TypeError, ValueError):
-        raise ValueError(f"ROI ID must be an integer (got {select_roi!r}).")
+        gr.Warning(f"ROI ID must be an integer (got {select_roi!r}).")
+        yield _final("⛔ ROI ID must be an integer.")
+        return
 
     _, config = get_project_config(storage_path, project_name)
     video_list = resolve_selected(config.get('source', []), selected_videos)
     if not video_list:
-        return "No videos selected — tick at least one video to extract."
+        gr.Warning("No videos selected — tick at least one video to extract.")
+        yield _final("No videos selected.")
+        return
 
     if session_id:
         messages.append(f"Using pre-process session: {session_display.split(' | ')[0]}")
 
+    # --- Pre-flight: drop videos that already have a latent file ---
     videos_to_process = []
     messages.append(f"Starting pre-flight check for {len(video_list)} videos...")
     for video_name in video_list:
@@ -283,18 +335,13 @@ def ui_extract_roi_latent(
         if preprocess_args.remove_background_switch:
             tags.append("rmbg")
         if pooling_method == 'multiscale' and parsed_scales:
-            scales_str = "x".join(str(s) for s in sorted(parsed_scales))
-            tags.append(f"spp{scales_str}")
+            tags.append("spp" + "x".join(str(s) for s in sorted(parsed_scales)))
         if parsed_layers:
-            layers_str = "x".join(str(lay) for lay in sorted(parsed_layers))
-            tags.append(f"L{layers_str}")
-
+            tags.append("L" + "x".join(str(lay) for lay in sorted(parsed_layers)))
         suffix = "_".join([select_model] + tags)
         pre_tag = f"_pre-{session_id}" if session_id else ""
         latent_filename = f'{os.path.splitext(video_name)[0]}_ROI_{select_roi}_{suffix}{pre_tag}.npz'
-        latent_dir = os.path.join(storage_path, project_name, 'latent', select_model)
-        output_path = os.path.join(latent_dir, latent_filename)
-
+        output_path = os.path.join(storage_path, project_name, 'latent', select_model, latent_filename)
         if skip_existing and os.path.exists(output_path):
             messages.append(f"  ⏩ Skipping existing: {video_name}")
             continue
@@ -302,167 +349,244 @@ def ui_extract_roi_latent(
 
     if not videos_to_process:
         messages.append("\n✅ All videos already have latent files. Nothing to extract.")
-        return "\n".join(messages)
+        yield _final("✅ Nothing to extract.")
+        return
 
-    total_to_process = len(videos_to_process)
-    messages.append(f"\nFound {total_to_process} new videos to process.")
+    total = len(videos_to_process)
+    messages.append(f"\nFound {total} new videos to process.")
 
-    # Overall ETA across all videos. `p` from the extractor is the *intra-video*
-    # fraction (resets to 0 each video → bar would jump backwards); fold it into a
-    # monotonic overall fraction so the bar advances smoothly and report ETA.
-    # t0 is stamped just before the loop — after the pre-flight skip-filter — so
-    # skipped videos (which `continue` before the loop) never enter the timing.
-    completed = {"n": 0}
-    t0 = time.time()
-
-    def update_progress(p, desc=None):
-        frac = max(0.0, min(1.0, float(p))) if p is not None else 0.0
-        overall = (completed["n"] + frac) / total_to_process
-        if overall <= 0:  # guard div-by-zero before computing ETA
-            progress(0.0, desc=desc)
-            return
-        overall = min(1.0, overall)
-        elapsed = time.time() - t0
-        eta = elapsed * (1 - overall) / overall
-        em, es = divmod(int(elapsed), 60)
-        rm, rs = divmod(int(eta), 60)
-        tail = f" · {desc}" if desc else ""
-        progress(
-            overall,
-            desc=(f"{completed['n']}/{total_to_process} · "
-                  f"elapsed {em}:{es:02d} · ETA ~{rm}:{rs:02d}{tail}"),
-        )
-
-    success_count = 0
-    failed_videos = []
-
-    for video_name in tqdm(videos_to_process, desc="Extracting Latents"):
-        # Resolve paths from session
-        source_video_path = None
-        mask_path_override = None
+    def _resolve_paths(vname):
+        """(source_path, mask_path) for a video — preprocessed paths if a session
+        is selected, else (None, None) so the extractor uses the raw source."""
         if session_id:
             from castle.core.preprocess_session import get_preprocessed_paths
-            try:
-                vpath, mpath = get_preprocessed_paths(storage_path, project_name, session_id, video_name)
-                source_video_path = str(vpath)
-                mask_path_override = str(mpath)
-            except FileNotFoundError as exc:
-                messages.append(f"  ❌ {video_name}: not preprocessed in session — {exc}")
-                failed_videos.append(video_name)
-                completed["n"] += 1  # keep the overall ETA fraction in step
-                continue
+            vpath, mpath = get_preprocessed_paths(storage_path, project_name, session_id, vname)
+            return str(vpath), str(mpath)
+        return None, None
 
+    # Pre-count frames for the frame-granular bar (best-effort; 0 → video-granular).
+    total_frames = 0
+    for v in videos_to_process:
         try:
-            messages.append(f"\nProcessing {video_name}...")
-            path = extract_roi_latent_from_video_auto(
-                storage_path=storage_path,
-                project_name=project_name,
-                video_name=video_name,
-                roi_id=int(select_roi),
-                model_name=select_model,
-                batch_size=int(batch_size),
-                preprocess_config=preprocess_args,
-                skip_existing=skip_existing,
-                progress_callback=update_progress,
-                pooling_method=pooling_method,
-                pooling_scales=parsed_scales if pooling_method == 'multiscale' else None,
-                feature_layers=parsed_layers,
-                source_video_path=source_video_path,
-                mask_path_override=mask_path_override,
-                session_id=session_id,
-                latent_dtype=latent_dtype,
-            )
-            if path:
-                messages.append(f"  ✅ Saved: {os.path.basename(path)}")
-                success_count += 1
-            else:
-                messages.append(f"  ⚠️ No path returned for {video_name}.")
-        except Exception as e:
-            failed_videos.append(video_name)
-            messages.append(f"  ❌ Error processing {video_name}: {e}")
+            svp, _ = _resolve_paths(v)
+            src = svp or os.path.join(storage_path, project_name, 'sources', v)
+            with ReadArray(src) as _r:
+                n = len(_r)
+        except Exception:  # noqa: BLE001
+            n = 0
+        video_total_frames[v] = n
+        total_frames += n
 
-        completed["n"] += 1  # one more video done → advance the overall ETA bar
+    def _make_cb(vname):
+        # Only writes the number under the lock — formatting happens in the poll thread.
+        def _cb(frac, desc=None, v=vname):
+            with frac_lock:
+                video_frac[v] = max(0.0, min(1.0, float(frac))) if frac is not None else 0.0
+        return _cb
 
-    summary_msg = f"\n\n🎉 Extraction Complete!\nSuccessfully processed {success_count}/{len(videos_to_process)} videos."
-    if failed_videos:
-        summary_msg += f"\n⚠️ Failed videos: {', '.join(failed_videos)}"
-        # Surface a toast too — a glanced-away user shouldn't mistake a partial
-        # run for success just because the final line still says "Complete".
-        gr.Warning(
-            f"{len(failed_videos)} video(s) failed during extraction: "
-            f"{', '.join(failed_videos)}. See the log for details."
+    # Resolve the GPU set from the toggle (explicit — independent of CASTLE_MULTI_GPU).
+    device_ids = available_cuda_devices() if use_multi_gpu else []
+    use_pool = len(device_ids) >= 2 and total >= 2
+
+    # RAM guard: latent_slots holds one whole video's latents (fp32) in RAM until
+    # save; the video-level pool runs n_gpu concurrently. If that won't fit, drop to
+    # single-GPU rather than OOM.
+    if use_pool:
+        base = 1024 if 'vitl' in select_model else (384 if 'vits' in select_model else 768)
+        dim = base * (sum(s * s for s in parsed_scales) if pooling_method == 'multiscale' else 1)
+        if parsed_layers:
+            dim *= max(1, len(parsed_layers))
+        max_frames = max(video_total_frames.values() or [0])
+        per_video_bytes = max_frames * dim * 4  # fp32 in RAM (fp16 only shrinks the npz)
+        free = host_ram_available_bytes()
+        if free is not None and per_video_bytes * len(device_ids) > 0.8 * free:
+            messages.append(
+                f"  ⚠️ Low host RAM (~{free / 1e9:.1f} GB) for {len(device_ids)}-GPU extraction "
+                f"(~{per_video_bytes / 1e9:.1f} GB/video) — falling back to single GPU.")
+            use_pool = False
+            device_ids = device_ids[:1]
+
+    worker_error: dict = {}
+    done = threading.Event()
+
+    def _extract(vname, device, num_workers=None):
+        svp, mpo = _resolve_paths(vname)
+        return extract_roi_latent_from_video(
+            storage_path=storage_path, project_name=project_name, video_name=vname,
+            roi_id=select_roi, model_name=select_model, batch_size=int(batch_size),
+            preprocess_config=preprocess_args, skip_existing=skip_existing,
+            progress_callback=_make_cb(vname),
+            pooling_method=pooling_method,
+            pooling_scales=parsed_scales if pooling_method == 'multiscale' else None,
+            feature_layers=parsed_layers,
+            source_video_path=svp, mask_path_override=mpo, session_id=session_id,
+            device=device, num_workers=num_workers, latent_dtype=latent_dtype,
+            cancel_event=cancel_event,
         )
-    messages.append(summary_msg)
 
-    # --- Eliminate Rotation Asymmetry (ERA) ---
-    if era_switch:
+    def _finish_video(vname, res):
+        completed["n"] += 1
+        with frac_lock:
+            video_frac[vname] = 1.0
+        if isinstance(res, BaseException):
+            if isinstance(res, ExtractionCancelled):
+                messages.append(f"  🛑 Cancelled: {vname}")
+            else:
+                failed.append(vname)
+                messages.append(f"  ❌ {vname}: {res}")
+        elif res:
+            success["n"] += 1
+            messages.append(f"  ✅ {vname}: {os.path.basename(res)}")
+        else:
+            failed.append(vname)
+            messages.append(f"  ⚠️ {vname}: no path returned")
+
+    def _run_era():
         import numpy as _np
         _era_roi_id = int(era_roi_id)
-        _first_video = videos_to_process[0] if videos_to_process else video_list[0]
-        _mask_path_check = os.path.join(storage_path, project_name, 'track', _first_video, 'mask_list.h5')
-        _tail_roi_ok = True
+        _first = videos_to_process[0]
+        _mp = os.path.join(storage_path, project_name, 'track', _first, 'mask_list.h5')
         try:
-            with H5IO(_mask_path_check, read_only=True) as _h5:
-                _guard_mask = _h5.read_mask(0)
-            if _guard_mask is not None:
-                _roi_ids = set(_np.unique(_guard_mask[_guard_mask > 0]).tolist())
-                if _era_roi_id not in _roi_ids or len(_roi_ids) < 2:
-                    _tail_roi_ok = False
-                    messages.append(
-                        f"\n⚠️ ERA skipped: Reference ROI (ID {_era_roi_id}) not found "
-                        f"(detected: {sorted(_roi_ids) or 'none'})."
-                    )
-        except Exception as _e:
+            with H5IO(_mp, read_only=True) as _h5:
+                _gm = _h5.read_mask(0)
+            _ids = set(_np.unique(_gm[_gm > 0]).tolist()) if _gm is not None else set()
+            if _era_roi_id not in _ids or len(_ids) < 2:
+                messages.append(f"\n⚠️ ERA skipped: reference ROI (ID {_era_roi_id}) not found "
+                                f"(detected: {sorted(_ids) or 'none'}).")
+                return
+        except Exception as _e:  # noqa: BLE001
             messages.append(f"\n⚠️ Could not validate ERA ROI ({_e}); proceeding.")
+        messages.append("\n--- Eliminate Rotation Asymmetry ---")
+        rs = 0
+        for vname in videos_to_process:
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            try:
+                svp, mpo = _resolve_paths(vname)
+                messages.append(f"ERA: {vname}...")
+                rpath = extract_roi_rotation_latent_from_video(
+                    storage_path=storage_path, project_name=project_name, video_name=vname,
+                    roi_id=select_roi, model_name=select_model, batch_size=int(batch_size),
+                    preprocess_config=preprocess_args, skip_existing=skip_existing,
+                    progress_callback=None,  # ERA frames aren't in the bar budget
+                    source_video_path=svp, mask_path_override=mpo, session_id=session_id,
+                )
+                if rpath:
+                    rs += 1
+                    messages.append(f"  ✅ {os.path.basename(rpath)}")
+            except Exception as e:  # noqa: BLE001
+                messages.append(f"  ❌ ERA error for {vname}: {e}")
+        messages.append(f"\n🎉 ERA complete: {rs}/{total} succeeded.")
 
-        if _tail_roi_ok:
-            messages.append("\n\n--- Eliminate Rotation Asymmetry ---")
-            rot_success = 0
-            rot_failed = []
-            for video_name in tqdm(videos_to_process, desc="ERA"):
-                # Resolve paths for ERA (use session video if selected)
-                era_source = None
-                era_mask = None
-                if session_id:
-                    from castle.core.preprocess_session import get_preprocessed_paths
-                    try:
-                        vpath, mpath = get_preprocessed_paths(storage_path, project_name, session_id, video_name)
-                        era_source = str(vpath)
-                        era_mask = str(mpath)
-                    except FileNotFoundError:
-                        pass
+    def _run():
+        try:
+            if use_pool:
+                n_gpu = len(device_ids)
+                per_gpu = max(1, get_num_workers('extraction') // n_gpu)
+                messages.append(f"🖥️ Multi-GPU: one video per GPU across {n_gpu} GPUs ({per_gpu} workers/GPU).")
 
-                try:
-                    messages.append(f"\nERA: {video_name}...")
-                    rpath = extract_roi_rotation_latent_from_video(
-                        storage_path=storage_path,
-                        project_name=project_name,
-                        video_name=video_name,
-                        roi_id=int(select_roi),
-                        model_name=select_model,
-                        batch_size=int(batch_size),
-                        preprocess_config=preprocess_args,
-                        skip_existing=skip_existing,
-                        progress_callback=update_progress,
-                        source_video_path=era_source,
-                        mask_path_override=era_mask,
-                        session_id=session_id,
+                def _worker(vname, device):
+                    return _extract(vname, device, num_workers=per_gpu)
+
+                with deterministic_ctx_if_enabled():
+                    pool_out = run_on_device_pool(
+                        videos_to_process, _worker, device_ids,
+                        on_done=lambda v, r: _finish_video(v, r), cancel_event=cancel_event,
                     )
-                    if rpath:
-                        messages.append(f"  ✅ {os.path.basename(rpath)}")
-                        rot_success += 1
-                    else:
-                        messages.append(f"  ⚠️ ERA returned no path for {video_name}.")
-                except Exception as e:
-                    rot_failed.append(video_name)
-                    messages.append(f"  ❌ ERA error for {video_name}: {e}")
+                # on_done already accounted every result; (pool_out kept for parity)
+                _ = pool_out
+                try:
+                    clear_device_encoder_cache()
+                except Exception:  # noqa: BLE001
+                    pass
+            elif len(device_ids) >= 2 and total == 1:
+                vname = videos_to_process[0]
+                messages.append(f"🖥️ Multi-GPU: frame-split {vname} across {len(device_ids)} GPUs.")
+                svp, mpo = _resolve_paths(vname)
+                try:
+                    rpath = extract_roi_latent_from_video_2gpu(
+                        storage_path=storage_path, project_name=project_name, video_name=vname,
+                        roi_id=select_roi, model_name=select_model, batch_size=int(batch_size),
+                        preprocess_config=preprocess_args, skip_existing=skip_existing,
+                        progress_callback=_make_cb(vname),
+                        pooling_method=pooling_method,
+                        pooling_scales=parsed_scales if pooling_method == 'multiscale' else None,
+                        feature_layers=parsed_layers,
+                        source_video_path=svp, mask_path_override=mpo, session_id=session_id,
+                        device_ids=device_ids, latent_dtype=latent_dtype, cancel_event=cancel_event,
+                    )
+                    _finish_video(vname, rpath)
+                except BaseException as e:  # noqa: BLE001
+                    _finish_video(vname, e)
+            else:
+                for vname in videos_to_process:
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
+                    messages.append(f"\nProcessing {vname}...")
+                    try:
+                        svp, mpo = _resolve_paths(vname)
+                        path = extract_roi_latent_from_video_auto(
+                            storage_path=storage_path, project_name=project_name, video_name=vname,
+                            roi_id=select_roi, model_name=select_model, batch_size=int(batch_size),
+                            preprocess_config=preprocess_args, skip_existing=skip_existing,
+                            progress_callback=_make_cb(vname),
+                            pooling_method=pooling_method,
+                            pooling_scales=parsed_scales if pooling_method == 'multiscale' else None,
+                            feature_layers=parsed_layers,
+                            source_video_path=svp, mask_path_override=mpo, session_id=session_id,
+                            latent_dtype=latent_dtype, cancel_event=cancel_event,
+                        )
+                        _finish_video(vname, path)
+                    except ExtractionCancelled as e:
+                        _finish_video(vname, e)
+                        break
+                    except BaseException as e:  # noqa: BLE001
+                        _finish_video(vname, e)
 
-            messages.append(
-                f"\n🎉 ERA Complete: {rot_success}/{len(videos_to_process)} succeeded."
-                + (f"\n⚠️ Failed: {', '.join(rot_failed)}" if rot_failed else "")
-            )
+            messages.append(f"\n🎉 Extraction done: {success['n']}/{total} videos.")
+            if failed:
+                messages.append(f"⚠️ Failed: {', '.join(failed)}")
 
-    return "\n".join(messages)
+            if era_switch and not (cancel_event is not None and cancel_event.is_set()):
+                _run_era()
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).exception("Extraction crashed")
+            worker_error["e"] = e
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=_run, daemon=True, name="extract")
+    t0 = time.time()
+    worker.start()
+
+    last_msg_count = 0
+    try:
+        while not done.wait(timeout=0.5):
+            cancelling = cancel_event is not None and cancel_event.is_set()
+            with frac_lock:
+                frames_done = sum(video_frac.get(v, 0.0) * video_total_frames.get(v, 0)
+                                  for v in video_total_frames)
+            status = status_md(frames_done, total_frames, completed["n"], total, t0, cancelling)
+            if len(messages) != last_msg_count:
+                last_msg_count = len(messages)
+                log_update = "\n".join(messages[-14:])
+            else:
+                log_update = gr.update()
+            yield (log_update, gr.update(), gr.update(), status)
+    except GeneratorExit:
+        if cancel_event is not None:
+            cancel_event.set()
+        raise
+
+    worker.join()
+    if "e" in worker_error:
+        messages.append(f"\n❌ Extraction crashed: {worker_error['e']}")
+    cancelled = cancel_event is not None and cancel_event.is_set()
+    if failed:
+        gr.Warning(f"{len(failed)} video(s) failed during extraction. See the log.")
+    final_status = ("🛑 Cancelled." if cancelled
+                    else f"✅ Done — {success['n']}/{total} videos.")
+    yield _final(final_status)
 
 
 # ---------------------------
@@ -575,6 +699,15 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     ui['adv_accordion'] = adv_accordion
 
     ui['mem_warning'] = gr.HTML(value="", visible=False)
+    _avail_gpus = available_cuda_devices()
+    ui['multi_gpu_toggle'] = gr.Checkbox(
+        label="Use multiple GPUs",
+        value=bool(_avail_gpus),
+        interactive=bool(_avail_gpus),
+        info="Spread videos across GPUs (one video per GPU); a single video is frame-split. "
+             "Close other GPU/heavy apps before a big batch.",
+        visible=False,
+    )
     with gr.Row():
         ui['extract_btn'] = gr.Button("Extract", visible=False, variant="primary", scale=4)
         ui['extract_cancel_btn'] = gr.Button("Cancel", visible=False, interactive=False, scale=1)
@@ -585,6 +718,9 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['extract_crop_video_btn'] = gr.Button(
             "Extract Crop Video", visible=False, interactive=False
         )
+    # Live frame-granular bar in its own component (never overlaps the log).
+    ui['extract_status'] = gr.Markdown(value="", visible=False)
+    ui['cancel_event'] = gr.State(None)
     ui['latent_file_list'] = gr.Textbox(
         label="Log Output",
         visible=False,
@@ -617,6 +753,8 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         ui['video_select']['btn_row'],   # 17
         ui['video_select']['all_state'], # 18
         ui['video_select']['accordion'], # 19
+        ui['extract_status'],            # 20
+        ui['multi_gpu_toggle'],          # 21
     ]
 
     # ------------------------------------------------------------------
@@ -647,18 +785,13 @@ def create_extract_ui(storage_path, project_name, extract_tab):
     )
 
     # Extract button — disable during run, enable Cancel
-    def _before_extract():
-        return gr.update(interactive=False), gr.update(interactive=True)
-
-    def _after_extract():
-        return gr.update(interactive=True), gr.update(interactive=False)
-
-    _extract_click = ui['extract_btn'].click(
-        fn=_before_extract,
-        outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
+    # Generator owns the button states (running → reset); a fresh cancel flag is
+    # created first. Mirrors the tracking/pre-process tabs.
+    ui['extract_btn'].click(
+        fn=init_cancel_event,
+        outputs=ui['cancel_event'],
         queue=False,
-    )
-    _extract_gen = _extract_click.then(
+    ).then(
         fn=ui_extract_roi_latent,
         inputs=[
             storage_path, project_name, ui['select_model'], ui['select_roi_id'],
@@ -666,21 +799,20 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             ui['remove_background_switch'],
             ui['eliminate_rotation_asymmetry'], ui['era_roi_id'],
             ui['pooling_method'], ui['pooling_scales'], ui['feature_layers'],
-            ui['latent_precision'],
-            ui['session_selector'],
+            ui['latent_precision'], ui['multi_gpu_toggle'],
+            ui['session_selector'], ui['cancel_event'],
         ],
-        outputs=ui['latent_file_list'],
-    )
-    _extract_gen.then(
-        fn=_after_extract,
-        outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
-        queue=False,
+        outputs=[ui['latent_file_list'], ui['extract_btn'], ui['extract_cancel_btn'],
+                 ui['extract_status']],
+        show_progress="hidden",  # we render our own bar in extract_status
     )
 
+    # Cancel: set the flag + immediate relabel; the generator's final yield resets
+    # buttons. No cancels=[…] — the event aborts the in-flight video at its next batch.
     ui['extract_cancel_btn'].click(
-        fn=_after_extract,
-        outputs=[ui['extract_btn'], ui['extract_cancel_btn']],
-        cancels=[_extract_gen],
+        fn=request_cancel,
+        inputs=ui['cancel_event'],
+        outputs=ui['extract_cancel_btn'],
         queue=False,
     )
 

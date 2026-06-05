@@ -43,9 +43,11 @@ def centroid_chunk_worker(args):
     Parameters
     ----------
     args : tuple
-        ``(mask_h5_path, body_roi_id, head_roi_id, start, stop, mp_cancel)``
-        where ``mp_cancel`` is a ``ctx.Event()`` (OS semaphore, no Manager)
-        polled per frame for cooperative cancellation.
+        ``(mask_h5_path, body_roi_id, head_roi_id, start, stop)``. No
+        synchronization primitive is passed in — an Event/Condition is
+        unpicklable to a pool worker (submit pickles its args), which is why the
+        old per-frame cancel check was removed; the orchestrator cancels pending
+        chunks via ``shutdown(cancel_futures=True)`` instead.
 
     Returns
     -------
@@ -58,7 +60,7 @@ def centroid_chunk_worker(args):
 
     from castle.utils.h5_io import H5IO
 
-    (mask_h5_path, body_roi_id, head_roi_id, start, stop, mp_cancel) = args
+    (mask_h5_path, body_roi_id, head_roi_id, start, stop) = args
 
     body_roi_id = int(body_roi_id)
     head_roi_id = int(head_roi_id)
@@ -68,8 +70,6 @@ def centroid_chunk_worker(args):
 
     with H5IO(mask_h5_path, read_only=True) as h5:
         for j in range(n):
-            if mp_cancel is not None and mp_cancel.is_set():
-                raise PreprocessCancelled()
             i = start + j
             if h5.has_mask(i):
                 try:

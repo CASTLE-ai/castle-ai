@@ -647,12 +647,15 @@ def extract_body_head_centroids(
     ctx = _get_mp_context()
     executor = None
     try:
-        # ctx.Event() uses an OS-level semaphore — picklable + shared across
-        # forkserver/spawn workers without a Manager server process.  The old
-        # Manager()-based dict/event caused the "unexpected EOF" crash on
-        # high-core-count EPYC/Xeon servers where 60+ workers overwhelmed the
-        # Manager's socket IPC.
-        mp_cancel = ctx.Event()
+        # Do NOT share any synchronization primitive with the workers: a
+        # multiprocessing Event/Condition can only be inherited via fork, but
+        # ProcessPoolExecutor.submit() PICKLES its args under every start method,
+        # and ctx.Event() is unpicklable ("Condition objects should only be
+        # shared between processes through inheritance"). Passing one made every
+        # submit raise → the whole pool silently fell back to serial (the prior
+        # "OS-level semaphore is picklable" comment was wrong). Cancellation is
+        # handled at the orchestrator level below via shutdown(cancel_futures=True),
+        # which cancels pending chunks; an in-flight chunk is bounded so it ends fast.
         executor = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
         _LIVE_POOLS.add(executor)
         logger.info(
@@ -662,14 +665,13 @@ def extract_body_head_centroids(
         futures = {
             executor.submit(
                 centroid_chunk_worker,
-                (mask_h5_path, int(body_roi_id), int(head_roi_id), s, e, mp_cancel),
+                (mask_h5_path, int(body_roi_id), int(head_roi_id), s, e),
             ): (s, e)
             for (s, e) in bounds
         }
         pending = set(futures)
         while pending:
             if cancel_event is not None and cancel_event.is_set():
-                mp_cancel.set()
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise PreprocessCancelled()
             done, pending = wait(pending, timeout=0.4, return_when=FIRST_COMPLETED)

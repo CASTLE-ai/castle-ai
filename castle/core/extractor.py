@@ -258,8 +258,15 @@ def _run_extraction_loop(
         else:
             pending_fail.append((frame_start, n_rows))
 
+    # Hold the DataLoader iterator in a named local and drop it in `finally` so
+    # worker processes are torn down deterministically on EVERY exit path
+    # (return / cancel / error). persistent_workers=False means the iterator
+    # shuts its workers down once its last ref is gone; relying on GC timing
+    # alone can orphan workers on Ctrl+C. (We avoid the private
+    # it._shutdown_workers() — its signature drifts across torch versions.)
+    it = iter(loader)
     try:
-        for i, (frames, masks) in enumerate(loader):
+        for i, (frames, masks) in enumerate(it):
             # Batch-granular cancel: abort within ~one batch (a single big video can
             # run for tens of minutes). The .npz is saved only after this loop, so a
             # raise here leaves no partial output.
@@ -357,6 +364,8 @@ def _run_extraction_loop(
             except OSError:
                 pass
         raise
+    finally:
+        it = None
 
 
 def _latent_filename(video_name, roi_id, model_name, preprocess_config,
@@ -599,6 +608,11 @@ def extract_roi_latent_from_video(
                 "feature_layers": list(feature_layers) if feature_layers else None,
                 "rotation": False,
                 "failed_frame_ranges": failed_frame_ranges or None,
+                "remove_background": bool(preprocess_config.remove_background_switch),
+                "preprocess_session_id": session_id,
+                "device": str(device) if device else None,
+                "batch_size": int(batch_size),
+                # seed: untracked — extraction is deterministic (fixed weights, no RNG)
             },
             dtype=_resolve_latent_dtype(latent_dtype),
         )
@@ -958,7 +972,12 @@ def extract_roi_rotation_latent_from_video(
             video_name=video_name,
             roi_id=int(roi_id),
             model_name=model_name,
-            tags={"rotation": True, "failed_frame_ranges": failed_frame_ranges or None},
+            tags={
+                "rotation": True,
+                "failed_frame_ranges": failed_frame_ranges or None,
+                "remove_background": bool(preprocess_config.remove_background_switch),
+                "preprocess_session_id": session_id,
+            },
         )
 
         # Update Config — atomic RMW per 3-F.
@@ -1150,6 +1169,39 @@ def extract_roi_latent_from_video_2gpu(
     results: dict = {}
     errors: dict = {}
 
+    # Live cross-GPU progress: each GPU thread reports its within-range fraction
+    # and we combine them into an overall video fraction. Without this the bar
+    # sits at the single 2% tick below for the entire (long) multi-GPU run, which
+    # looks like a hang even though both GPUs are busy (the "stuck at frame 4315"
+    # report = 0.02 * video_len, the one tick that ever fired).
+    _prog_lock = threading.Lock()
+    _prog_done: dict = {}
+    _prog_log = {"step": 0}   # last terminal-logged 5% step
+
+    def _make_progress_cb(slot: int, range_len: int):
+        # Always return a callback (even when no UI progress_callback is set) so
+        # the multi-GPU run is observable from the terminal too — the inner loops
+        # were silent before, which made a long-but-healthy run look hung.
+        def _cb(frac, desc=None):
+            with _prog_lock:
+                _prog_done[slot] = frac * range_len
+                total_done = sum(_prog_done.values())
+                pct = int(100 * total_done / max(video_len, 1))
+                do_log = pct >= _prog_log["step"] + 5
+                if do_log:
+                    _prog_log["step"] = pct - (pct % 5)
+            if do_log:
+                logger.info(
+                    "Multi-GPU extraction %s: ~%d%% (%d/%d frames across GPUs %s)",
+                    video_name, pct, int(total_done), video_len, list(device_ids),
+                )
+            if progress_callback:
+                progress_callback(
+                    min(0.99, total_done / max(video_len, 1)),
+                    desc=f"Extracting {video_name} on {n_dev} GPUs",
+                )
+        return _cb
+
     def _worker(slot: int, dev_id: int, fr):
         start, end = fr
         try:
@@ -1167,7 +1219,8 @@ def extract_roi_latent_from_video_2gpu(
                 roi_id=roi_id, pooling_method=pooling_method, pooling_scales=pooling_scales,
                 feature_layers=feature_layers, on_frame_error=on_frame_error,
                 max_batch_failure_rate=max_batch_failure_rate,
-                video_name=f"{video_name}[{start}:{end}]", progress_callback=None,
+                video_name=f"{video_name}[{start}:{end}]",
+                progress_callback=_make_progress_cb(slot, end - start),
                 cancel_event=cancel_event, out_dir=os.path.dirname(latent_path),
             )
             results[slot] = (arr, fails, n_failed, tmp)
@@ -1236,6 +1289,9 @@ def extract_roi_latent_from_video_2gpu(
                 "rotation": False,
                 "failed_frame_ranges": failed_frame_ranges or None,
                 "multi_gpu_device_ids": list(device_ids),
+                "remove_background": bool(preprocess_config.remove_background_switch),
+                "preprocess_session_id": session_id,
+                "batch_size": int(batch_size),
             },
             dtype=_resolve_latent_dtype(latent_dtype),
         )

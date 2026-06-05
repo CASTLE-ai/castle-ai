@@ -203,8 +203,8 @@ def init_select_video_list(storage_path, project_name):
                     f"{m['session_name']} | {m['method']} | {len(m.get('videos', []))} videos"
                     for m in metas
                 ]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Could not list preprocess sessions for %s: %s", project_name, e)
 
             updates[0] = gr.update(choices=session_choices, value=session_choices[0], visible=True)  # session_selector
             updates[1] = gr.update(value="", visible=False)  # session_status — hidden when using raw source

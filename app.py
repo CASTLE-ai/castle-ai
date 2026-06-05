@@ -1,6 +1,7 @@
 import os
 os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 import platform
+import atexit
 from argparse import ArgumentParser
 import gradio as gr
 from castle.ui import create_ui
@@ -26,6 +27,36 @@ app = create_ui(OS_SYS, args.root)
 # server (uvicorn/gunicorn) instead of run directly.
 app.queue(max_size=20)
 
+
+def _castle_shutdown():
+    """Best-effort resource reclamation on exit / Ctrl+C.
+
+    CASTLE is one long-lived Gradio server; work runs on daemon threads whose
+    *child processes* (centroid ProcessPools) and CUDA context are NOT reaped
+    deterministically when the server stops. This hook force-terminates any
+    live preprocessing pool and releases CUDA caches so a Ctrl+C doesn't leave
+    orphaned workers holding RAM/VRAM/file-handles. Idempotent; never raises.
+    """
+    try:
+        from castle.core.stabilized_camera import shutdown_live_pools
+        shutdown_live_pools()
+    except Exception:
+        pass
+    try:
+        from castle.core.extractor import clear_device_encoder_cache
+        clear_device_encoder_cache()
+    except Exception:
+        pass
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+atexit.register(_castle_shutdown)
+
 if __name__ == '__main__':
     # Set allowed_paths to resolve Colab path permission issues
     allowed_paths = []
@@ -40,11 +71,18 @@ if __name__ == '__main__':
     if args.root:
         allowed_paths.append(args.root)
     
-    app.launch(
-        server_name='0.0.0.0',
-        share=COLAB_GPU or args.share,
-        allowed_paths=allowed_paths if allowed_paths else None,
-        theme=gr.themes.Soft(),
-        js=CASTLE_JS,
-        css=CASTLE_CSS,
-    )
+    try:
+        app.launch(
+            server_name='0.0.0.0',
+            share=COLAB_GPU or args.share,
+            allowed_paths=allowed_paths if allowed_paths else None,
+            theme=gr.themes.Soft(),
+            js=CASTLE_JS,
+            css=CASTLE_CSS,
+        )
+    except KeyboardInterrupt:
+        # uvicorn re-raises SIGINT as KeyboardInterrupt; swallow so cleanup runs
+        # quietly instead of dumping a traceback on a normal Ctrl+C.
+        pass
+    finally:
+        _castle_shutdown()

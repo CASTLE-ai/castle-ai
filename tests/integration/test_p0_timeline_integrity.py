@@ -62,3 +62,11 @@ def test_failed_middle_batch_becomes_nan_placeholder(dummy_project, monkeypatch)
 
     meta = load_latent_metadata(out_path)
     assert meta["tags"]["failed_frame_ranges"] == [[10, 20]]
+
+    # Extract-config provenance is recorded in the sidecar (so a latent is
+    # self-describing: was background removed? which preprocess session? etc.).
+    tags = meta["tags"]
+    assert "remove_background" in tags and isinstance(tags["remove_background"], bool)
+    assert tags["preprocess_session_id"] is None  # raw source, no session
+    assert tags["device"] is None                 # single-GPU default path
+    assert tags["batch_size"] == 10

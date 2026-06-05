@@ -39,12 +39,41 @@ from typing import Callable, Dict, Optional, Tuple
 import cv2
 import numpy as np
 import scipy.signal
+import weakref
 
 from castle.core._centroid_worker import PreprocessCancelled, centroid_chunk_worker
 from castle.core.cpu_pool import resolve_workers
 from castle.core.logging_config import setup_logger
 
 logger = setup_logger(__name__)
+
+# Registry of live centroid ProcessPoolExecutors so a top-level atexit hook
+# (app.py) can force-terminate them on Ctrl+C. The normal shutdown(wait=True)
+# teardown can hang waiting on non-daemon worker processes that are themselves
+# being torn down; those workers hold mask-h5 read handles, so orphaning them
+# leaks file descriptors and keeps RAM resident. WeakSet so completed pools are
+# collected automatically.
+_LIVE_POOLS: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def shutdown_live_pools() -> None:
+    """Force-terminate any centroid ProcessPoolExecutor still alive at exit.
+
+    Best-effort: cancels queued futures, then SIGTERMs any worker still running.
+    Safe to call multiple times (atexit + the launch() finally both call it).
+    """
+    for ex in list(_LIVE_POOLS):
+        try:
+            ex.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+        for proc in list(getattr(ex, "_processes", {}).values()):
+            try:
+                if proc.is_alive():
+                    proc.terminate()
+            except Exception:
+                pass
+
 
 # Parallel centroid extraction tuning (Phase A). Overridable via env.
 _CENTROID_MIN_PARALLEL = 2000     # below this frame count, run serial (pool overhead wins)
@@ -617,6 +646,7 @@ def extract_body_head_centroids(
         # Manager's socket IPC.
         mp_cancel = ctx.Event()
         executor = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+        _LIVE_POOLS.add(executor)
         logger.info(
             "extract_body_head_centroids: %d frames, %d workers, %d chunks (%s)",
             n_frames, workers, len(bounds), ctx.get_start_method(),

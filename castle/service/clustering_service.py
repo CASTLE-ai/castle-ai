@@ -256,13 +256,25 @@ class ClusteringSession:
                 f"({self.aggregator.bin_size}); refusing to write mis-aligned "
                 f"time_series CSVs."
             )
+        # Per-bin exclusion reason persisted alongside the label (contract C-1,
+        # docs/behavior_data_contract.md). nonfinite_latent vs dbscan_noise are
+        # distinguished from the latent data. tracking_loss (3) is added in PR2
+        # once empty masks become NaN; manual_exclude (4) when a UI hook exists.
+        from castle.core.ethogram import derive_exclude_reason
+        reason_bins = derive_exclude_reason(self.latents.cluster, self.latents.data)
+
         ts_paths = []
         cum = 0
         for vn, v in self.aggregator.videos_meta:
             video_cluster = self.latents.cluster[cum:cum + vn]
+            video_reason = reason_bins[cum:cum + vn]
             video_frames = np.repeat(video_cluster, self.latents.time_window)
-            df2 = pd.DataFrame({'behavior': video_frames})
-            
+            video_reason_frames = np.repeat(video_reason, self.latents.time_window)
+            df2 = pd.DataFrame({
+                'behavior': video_frames,
+                'exclude_reason': video_reason_frames,
+            })
+
             video_basename = os.path.basename(v).split('.')[0]
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
             df2.to_csv(ts_path, index=False)

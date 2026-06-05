@@ -99,7 +99,8 @@ def test_invariant_coverage_and_reason_counts(golden_project):
 
     result = analyze_ethogram(golden_project)
     assert result["n_excluded_frames"] == 1          # the single -1
-    assert result["valid_frame_fraction"] == pytest.approx(8 / 9)
+    # output is rounded to 4 decimals for JSON, so compare with abs tolerance
+    assert result["valid_frame_fraction"] == pytest.approx(8 / 9, abs=1e-4)
     counts = result["excluded_reason_counts"]
     assert sum(counts.values()) == result["n_excluded_frames"]
     assert counts.get("dbscan_noise") == 1

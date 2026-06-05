@@ -87,3 +87,30 @@ def test_compute_video_ethogram_missing_csv_raises(tmp_path):
     proj = _write_project(tmp_path, {"A": [0, 1, 0]})
     with pytest.raises(FileNotFoundError):
         compute_video_ethogram(proj, "does_not_exist", fps=30.0)
+
+
+def test_compute_video_ethogram_reads_exclude_reason(tmp_path):
+    """compute_video_ethogram threads a persisted exclude_reason column into
+    excluded_reason_counts (PR1 Stage 1.5)."""
+    import pandas as pd
+    from castle.service.ethogram_service import compute_video_ethogram
+
+    proj = tmp_path / "proj"
+    (proj / "cluster").mkdir(parents=True)
+    pd.DataFrame(
+        {"behavior": [0, 0, -1, -1, 1], "exclude_reason": [0, 0, 1, 2, 0]}
+    ).to_csv(proj / "cluster" / "time_series_A.csv", index=False)
+
+    etho = compute_video_ethogram(str(proj), "A", fps=10.0)
+    assert etho.excluded_reason_counts == {"dbscan_noise": 1, "nonfinite_latent": 1}
+    assert etho.n_unlabeled == 2
+    assert etho.n_valid_frames == 3
+
+
+def test_compute_video_ethogram_legacy_csv_without_reason(tmp_path):
+    """A legacy CSV (no exclude_reason column) buckets -1 as 'unknown'."""
+    proj = _write_project(tmp_path, {"A": [0, 0, -1, 1, 1]})
+    from castle.service.ethogram_service import compute_video_ethogram
+
+    etho = compute_video_ethogram(str(proj), "A", fps=10.0)
+    assert etho.excluded_reason_counts == {"unknown": 1}

@@ -60,6 +60,33 @@ def excluded_reason_counts(
     return counts
 
 
+def derive_exclude_reason(
+    cluster_labels: np.ndarray,
+    latent_data: np.ndarray,
+) -> np.ndarray:
+    """Derive a per-row ``exclude_reason`` enum from labels + latent data.
+
+    A ``-1`` row is bucketed by inspecting the latent it came from: a
+    non-finite (NaN/Inf) latent row → ``nonfinite_latent`` (2), otherwise it is
+    DBSCAN/HDBSCAN ``dbscan_noise`` (1). Valid rows (``cluster_id >= 0``) → 0.
+    ``tracking_loss`` (3) and ``manual_exclude`` (4) are set elsewhere.
+
+    Args:
+        cluster_labels: 1-D per-row labels (-1 == excluded).
+        latent_data: 2-D latent matrix aligned row-for-row with the labels.
+
+    Returns:
+        ``int8`` array of reason enums, same length as ``cluster_labels``.
+    """
+    labels = np.asarray(cluster_labels)
+    finite = np.isfinite(np.asarray(latent_data)).all(axis=1)
+    reason = np.zeros(len(labels), dtype=np.int8)
+    noise = labels == -1
+    reason[noise & ~finite] = 2  # nonfinite_latent
+    reason[noise & finite] = 1   # dbscan_noise
+    return reason
+
+
 @dataclass
 class BoutInfo:
     """Single behavioral bout (consecutive frames of same cluster)."""

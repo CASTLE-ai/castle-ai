@@ -415,6 +415,26 @@ class TestCoverageAndReasons:
         eth = compute_ethogram(labels, fps=10.0)  # no exclude_reason
         assert eth.excluded_reason_counts == {"unknown": 2}
 
+    def test_derive_exclude_reason_from_latent(self):
+        """A -1 row with a non-finite latent → nonfinite_latent(2); a finite -1
+        row → dbscan_noise(1); valid rows → 0."""
+        from castle.core.ethogram import derive_exclude_reason
+
+        labels = np.array([0, -1, 1, -1])
+        data = np.array([[1.0, 2.0], [np.nan, 1.0], [0.5, 0.5], [3.0, 4.0]])
+        reason = derive_exclude_reason(labels, data)
+        np.testing.assert_array_equal(reason, [0, 2, 0, 1])
+
+    def test_derive_then_count_roundtrip(self):
+        """derive_exclude_reason feeds excluded_reason_counts consistently."""
+        from castle.core.ethogram import derive_exclude_reason
+
+        labels = np.array([0, -1, -1, 1, 1])
+        data = np.array([[1.0], [np.inf], [2.0], [3.0], [4.0]])  # row1 Inf, row2 finite
+        reason = derive_exclude_reason(labels, data)
+        eth = compute_ethogram(labels, fps=10.0, exclude_reason=reason)
+        assert eth.excluded_reason_counts == {"nonfinite_latent": 1, "dbscan_noise": 1}
+
     def test_stationarity_jsd_ok_for_ergodic_chain(self):
         labels = np.array([0, 1, 2, 0, 2, 1, 0, 1, 2, 0, 2, 1, 0, 1, 2])
         tm = compute_ethogram(labels, fps=10.0).transition_matrix

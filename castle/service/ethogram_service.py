@@ -54,17 +54,31 @@ def _load_cluster_data(project_path: str) -> dict:
         )
 
     all_labels = []
+    all_reasons = []
+    any_missing_reason = False
     for ts_file in ts_files:
         ts_path = os.path.join(cluster_dir, ts_file)
-        with open(ts_path, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                all_labels.append(int(row["behavior"]))
+        labels_f, reason_f = _read_time_series(ts_path)
+        all_labels.append(labels_f)
+        if reason_f is None:
+            any_missing_reason = True
+        else:
+            all_reasons.append(reason_f)
 
-    labels = np.array(all_labels, dtype=np.int32)
+    labels = (
+        np.concatenate(all_labels) if all_labels else np.array([], dtype=np.int32)
+    )
+    # Only expose a reason array if every video carried the column; otherwise
+    # the ethogram falls back to bucketing -1 frames as "unknown".
+    exclude_reason = (
+        np.concatenate(all_reasons)
+        if (all_reasons and not any_missing_reason)
+        else None
+    )
 
     return {
         "labels": labels,
+        "exclude_reason": exclude_reason,
         "cluster_names": cluster_names,
         "cluster_meta": cluster_meta,
         "fps": None,  # caller should supply; we don't have it in CSV
@@ -91,12 +105,30 @@ def _resolve_project_path(project_path: str) -> str:
 
 def _read_behavior_csv(ts_path: str) -> np.ndarray:
     """Read a per-frame ``behavior`` column from a time_series CSV."""
+    labels, _ = _read_time_series(ts_path)
+    return labels
+
+
+def _read_time_series(ts_path: str):
+    """Read ``behavior`` (+ optional ``exclude_reason``) from a time_series CSV.
+
+    Returns ``(labels, exclude_reason)``. ``exclude_reason`` is ``None`` for
+    legacy CSVs that predate the column (the ethogram then buckets every -1 as
+    ``"unknown"``).
+    """
     labels = []
+    reasons = []
+    has_reason = False
     with open(ts_path, "r") as f:
         reader = csv.DictReader(f)
+        has_reason = reader.fieldnames is not None and "exclude_reason" in reader.fieldnames
         for row in reader:
             labels.append(int(row["behavior"]))
-    return np.array(labels, dtype=np.int32)
+            if has_reason:
+                reasons.append(int(row["exclude_reason"]))
+    labels_arr = np.array(labels, dtype=np.int32)
+    reason_arr = np.array(reasons, dtype=np.int8) if has_reason else None
+    return labels_arr, reason_arr
 
 
 def _list_video_time_series(project_path: str):
@@ -176,15 +208,20 @@ def compute_video_ethogram(
             "Run clustering and submit first."
         )
 
-    labels = _read_behavior_csv(ts_path)
+    labels, exclude_reason = _read_time_series(ts_path)
     if smooth:
         from castle.core.temporal_smooth import smooth_labels
         labels = smooth_labels(
             labels, method="both", window=smooth_window, min_bout_frames=min_bout_frames,
         )
+        # Smoothing is gap-preserving (the -1 set is invariant), so
+        # exclude_reason stays aligned with the smoothed labels.
 
     effective_fps = fps if fps is not None else _video_fps(project_path, video_name)
-    return compute_ethogram(labels, fps=effective_fps, cluster_names=cluster_names or {})
+    return compute_ethogram(
+        labels, fps=effective_fps, cluster_names=cluster_names or {},
+        exclude_reason=exclude_reason,
+    )
 
 
 def _ethogram_to_dict(ethogram) -> dict:
@@ -283,6 +320,7 @@ def analyze_ethogram(
         labels,
         fps=effective_fps,
         cluster_names=data["cluster_names"],
+        exclude_reason=data.get("exclude_reason"),
     )
     result = _ethogram_to_dict(ethogram)
     result["status"] = "success"

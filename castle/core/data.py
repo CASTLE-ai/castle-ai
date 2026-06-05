@@ -229,3 +229,27 @@ class VideoDataset(Dataset):
             pm = np.zeros((h, w), dtype=np.uint8)
 
         return pf, pm
+
+    def close(self) -> None:
+        """Explicitly release the video and mask file handles.
+
+        Called by DataLoader workers on shutdown so h5py / cv2 file descriptors
+        are released before the worker process exits, rather than relying on GC
+        timing (which can cause h5py.File.close() to hang on network filesystems
+        during worker teardown).
+        """
+        if self.reader is not None:
+            try:
+                self.reader.close()
+            except Exception:
+                pass
+            self.reader = None
+        if self.tracker is not None:
+            try:
+                self.tracker.close()
+            except Exception:
+                pass
+            self.tracker = None
+
+    def __del__(self) -> None:
+        self.close()

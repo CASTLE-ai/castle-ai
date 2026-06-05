@@ -142,11 +142,14 @@ def _build_extractor_loader_kwargs(batch_size: int, num_workers: int, pin_memory
         num_workers=num_workers,
         pin_memory=pin_memory,
     )
-    # Deeper prefetch + persistent workers keep the GPU fed (raised from 4 → 6).
-    # These apply whenever we have worker processes, independent of the seed gen.
+    # prefetch_factor=2 (PyTorch default) keeps the GPU fed without exhausting
+    # pinned memory on servers with many workers × large video frames.
+    # persistent_workers intentionally omitted: we create one DataLoader per
+    # video (single-pass), so workers are never reused across calls.  Keeping
+    # them "persistent" only adds cleanup complexity and risks a hang when
+    # h5py.File.close() is slow (e.g. on NFS) during worker teardown.
     if num_workers > 0:
-        kwargs["persistent_workers"] = True
-        kwargs["prefetch_factor"] = 6
+        kwargs["prefetch_factor"] = 2
     gen = make_torch_generator()
     if gen is not None:
         kwargs["generator"] = gen
@@ -255,89 +258,105 @@ def _run_extraction_loop(
         else:
             pending_fail.append((frame_start, n_rows))
 
-    for i, (frames, masks) in enumerate(loader):
-        # Batch-granular cancel: abort within ~one batch (a single big video can
-        # run for tens of minutes). The .npz is saved only after this loop, so a
-        # raise here leaves no partial output.
-        if cancel_event is not None and cancel_event.is_set():
-            raise ExtractionCancelled(f"extraction cancelled during {video_name}")
-        n_rows = int(frames.shape[0])
-        frame_start = rows_seen
-        rows_seen += n_rows
-        try:
-            if hasattr(observer, 'extract_tensor_batch'):
-                 latent_batch = observer.extract_tensor_batch(
-                     frames, masks, roi_id,
-                     pooling=pooling_method,
-                     scales=pooling_scales,
-                     layers=feature_layers,
-                 )
-            else:
-                 latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
+    try:
+        for i, (frames, masks) in enumerate(loader):
+            # Batch-granular cancel: abort within ~one batch (a single big video can
+            # run for tens of minutes). The .npz is saved only after this loop, so a
+            # raise here leaves no partial output.
+            if cancel_event is not None and cancel_event.is_set():
+                raise ExtractionCancelled(f"extraction cancelled during {video_name}")
+            n_rows = int(frames.shape[0])
+            frame_start = rows_seen
+            rows_seen += n_rows
+            try:
+                if hasattr(observer, 'extract_tensor_batch'):
+                     latent_batch = observer.extract_tensor_batch(
+                         frames, masks, roi_id,
+                         pooling=pooling_method,
+                         scales=pooling_scales,
+                         layers=feature_layers,
+                     )
+                else:
+                     latent_batch = observer.extract_batch_latent(frames, masks, roi_id)
 
-            if out is None:
-                # First success → know the feature dim → allocate the buffer once
-                # (memmap on disk if large) and flush any deferred-failure NaN rows.
-                expected_dim = latent_batch.shape[1]
-                out, out_tmp = _alloc_latent_out(total_rows, expected_dim, out_dir)
-                for fs, nr in pending_fail:
-                    out[fs:fs + nr] = np.nan
-                pending_fail = []
-            elif latent_batch.shape[1] != expected_dim:
-                # BUG-05: a model swap mid-extraction must fail loudly.
-                raise ExtractionError(
-                    f"Inconsistent feature dim for {video_name}: batch {i} has "
-                    f"{latent_batch.shape[1]}, expected {expected_dim} "
-                    f"(model swap mid-extraction?)."
+                if out is None:
+                    # First success → know the feature dim → allocate the buffer once
+                    # (memmap on disk if large) and flush any deferred-failure NaN rows.
+                    expected_dim = latent_batch.shape[1]
+                    out, out_tmp = _alloc_latent_out(total_rows, expected_dim, out_dir)
+                    for fs, nr in pending_fail:
+                        out[fs:fs + nr] = np.nan
+                    pending_fail = []
+                elif latent_batch.shape[1] != expected_dim:
+                    # BUG-05: a model swap mid-extraction must fail loudly.
+                    raise ExtractionError(
+                        f"Inconsistent feature dim for {video_name}: batch {i} has "
+                        f"{latent_batch.shape[1]}, expected {expected_dim} "
+                        f"(model swap mid-extraction?)."
+                    )
+                out[frame_start:frame_start + n_rows] = latent_batch
+
+            except (ROINotFoundError, PreprocessingError) as e:
+                # Strict path re-raises; tolerant path keeps the timeline aligned.
+                n_batches_failed += 1
+                if on_frame_error == "raise" or n_batches_failed > abs_failure_threshold:
+                    raise
+                if first_batch_error is None:
+                    first_batch_error = repr(e)
+                logger.warning(
+                    "Batch %d/%d for %s failed (%s); inserting %d NaN placeholder "
+                    "frame(s) to preserve the timeline.",
+                    i + 1, total_batches, video_name, e, n_rows,
                 )
-            out[frame_start:frame_start + n_rows] = latent_batch
-
-        except (ROINotFoundError, PreprocessingError) as e:
-            # Strict path re-raises; tolerant path keeps the timeline aligned.
-            n_batches_failed += 1
-            if on_frame_error == "raise" or n_batches_failed > abs_failure_threshold:
+                _record_failure(n_rows, frame_start)
+            except ExtractionError:
                 raise
-            if first_batch_error is None:
-                first_batch_error = repr(e)
-            logger.warning(
-                "Batch %d/%d for %s failed (%s); inserting %d NaN placeholder "
-                "frame(s) to preserve the timeline.",
-                i + 1, total_batches, video_name, e, n_rows,
-            )
-            _record_failure(n_rows, frame_start)
-        except ExtractionError:
-            raise
-        except Exception as e:
-            n_batches_failed += 1
-            if first_batch_error is None:
-                first_batch_error = repr(e)
-            logger.error(
-                "Batch %d/%d failed for %s: %s",
-                i + 1, total_batches, video_name, e,
-            )
-            if n_batches_failed > abs_failure_threshold:
-                raise ExtractionError(
-                    f"Aborting {video_name}: {n_batches_failed}/{i + 1} batches "
-                    f"failed (threshold {abs_failure_threshold} of "
-                    f"{total_batches}, max_rate={max_batch_failure_rate:.0%}). "
-                    f"Cause: {first_batch_error}."
-                ) from e
-            logger.warning(
-                "Batch %d/%d for %s tolerated after error; inserting %d NaN "
-                "placeholder frame(s) to preserve the timeline.",
-                i + 1, total_batches, video_name, n_rows,
-            )
-            _record_failure(n_rows, frame_start)
+            except Exception as e:
+                n_batches_failed += 1
+                if first_batch_error is None:
+                    first_batch_error = repr(e)
+                logger.error(
+                    "Batch %d/%d failed for %s: %s",
+                    i + 1, total_batches, video_name, e,
+                )
+                if n_batches_failed > abs_failure_threshold:
+                    raise ExtractionError(
+                        f"Aborting {video_name}: {n_batches_failed}/{i + 1} batches "
+                        f"failed (threshold {abs_failure_threshold} of "
+                        f"{total_batches}, max_rate={max_batch_failure_rate:.0%}). "
+                        f"Cause: {first_batch_error}."
+                    ) from e
+                logger.warning(
+                    "Batch %d/%d for %s tolerated after error; inserting %d NaN "
+                    "placeholder frame(s) to preserve the timeline.",
+                    i + 1, total_batches, video_name, n_rows,
+                )
+                _record_failure(n_rows, frame_start)
 
-        if progress_callback:
-            progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name}")
+            if progress_callback:
+                progress_callback((i + 1) / total_batches, desc=f"Extracting {video_name}")
 
-    if out is None:
-        raise ExtractionError(
-            f"All {total_batches} batches failed for {video_name}. "
-            f"No latent file written."
-        )
-    return out, failed_frame_ranges, n_batches_failed, out_tmp
+        if out is None:
+            raise ExtractionError(
+                f"All {total_batches} batches failed for {video_name}. "
+                f"No latent file written."
+            )
+        return out, failed_frame_ranges, n_batches_failed, out_tmp
+
+    except BaseException:
+        # Any exception (cancel, OOM, GPU error, …): clean up the temp memmap
+        # file here because the caller will never receive out_tmp via the normal
+        # return value — without this the .latents.dat file is stranded on disk.
+        if out_tmp is not None:
+            try:
+                del out
+            except Exception:
+                pass
+            try:
+                os.remove(out_tmp)
+            except OSError:
+                pass
+        raise
 
 
 def _latent_filename(video_name, roi_id, model_name, preprocess_config,

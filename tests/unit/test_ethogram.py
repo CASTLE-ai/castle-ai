@@ -368,3 +368,66 @@ class TestEdgeCases:
         assert len(eth.bouts) == 2
         assert eth.transition_matrix.n_transitions == 1
         assert eth.temporal_coherence == 0.0
+
+
+# ---------------------------------------------------------------------------
+# PR1 Stage 1.2: coverage / frequency_valid_only / stationarity_jsd / reasons
+# (docs/behavior_data_contract.md C-1, C-3, C-5, C-7)
+# ---------------------------------------------------------------------------
+
+class TestCoverageAndReasons:
+    def test_frequency_valid_only_sums_to_one_with_gaps(self):
+        """frequency_valid_only excludes -1 from the denominator → sums to 1."""
+        labels = np.array([0, 0, 0, -1, -1, 1, 1, 1, 1, 1])  # 3 valid:0, 5 valid:1, 2 gap
+        eth = compute_ethogram(labels, fps=10.0)
+        total = sum(bs.frequency_valid_only for bs in eth.bout_stats.values())
+        assert total == pytest.approx(1.0)
+        # legacy frequency uses ALL frames (incl gaps) and does NOT sum to 1
+        legacy = sum(bs.frequency for bs in eth.bout_stats.values())
+        assert legacy == pytest.approx(0.8)  # 8 labeled / 10 total
+        assert eth.bout_stats[0].frequency_valid_only == pytest.approx(3 / 8)
+        assert eth.bout_stats[1].frequency_valid_only == pytest.approx(5 / 8)
+
+    def test_frequency_valid_only_equals_legacy_without_gaps(self):
+        """With no -1 frames the two frequency definitions coincide."""
+        labels = np.array([0, 0, 0, 1, 1, 0, 0, 0, 0, 1])
+        eth = compute_ethogram(labels, fps=10.0)
+        for bs in eth.bout_stats.values():
+            assert bs.frequency_valid_only == pytest.approx(bs.frequency)
+
+    def test_coverage_fields(self):
+        labels = np.array([0, 0, -1, 1, 1])
+        eth = compute_ethogram(labels, fps=10.0)
+        assert eth.n_valid_frames == 4
+        assert eth.n_unlabeled == 1
+        assert eth.valid_frame_fraction == pytest.approx(0.8)
+        assert eth.schema_version == "2.0"
+
+    def test_excluded_reason_counts_with_reasons(self):
+        labels = np.array([0, 0, -1, -1, 1])
+        reasons = np.array([0, 0, 1, 2, 0])  # dbscan_noise, nonfinite_latent
+        eth = compute_ethogram(labels, fps=10.0, exclude_reason=reasons)
+        assert eth.excluded_reason_counts == {"dbscan_noise": 1, "nonfinite_latent": 1}
+        assert sum(eth.excluded_reason_counts.values()) == eth.n_unlabeled
+
+    def test_excluded_reason_counts_unknown_when_absent(self):
+        labels = np.array([0, 0, -1, -1, 1])
+        eth = compute_ethogram(labels, fps=10.0)  # no exclude_reason
+        assert eth.excluded_reason_counts == {"unknown": 2}
+
+    def test_stationarity_jsd_ok_for_ergodic_chain(self):
+        labels = np.array([0, 1, 2, 0, 2, 1, 0, 1, 2, 0, 2, 1, 0, 1, 2])
+        tm = compute_ethogram(labels, fps=10.0).transition_matrix
+        assert tm.stationarity_status == "ok"
+        assert 0.0 <= tm.stationarity_jsd <= 1.0
+        # legacy cosine field is still populated (deprecated)
+        assert np.isfinite(tm.stationarity)
+
+    def test_stationarity_not_identifiable_returns_nan(self):
+        """A cluster that appears only at the terminal frame is never a
+        transition source (zero-sum row) → π undefined → NaN + status, not a
+        fabricated number."""
+        labels = np.array([0, 1, 0, 1, 0, 1, 2])  # cluster 2 only at the end
+        tm = compute_ethogram(labels, fps=10.0).transition_matrix
+        assert tm.stationarity_status == "not_identifiable_reducible_chain"
+        assert np.isnan(tm.stationarity_jsd)

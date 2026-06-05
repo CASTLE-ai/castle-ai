@@ -191,11 +191,16 @@ def _ethogram_to_dict(ethogram) -> dict:
     """Serialise an :class:`Ethogram` to a JSON-safe dict."""
     tm = ethogram.transition_matrix
     return {
+        "schema_version": ethogram.schema_version,
         "n_frames": ethogram.n_frames,
         "fps": ethogram.fps,
         "n_clusters": ethogram.n_clusters,
         "n_unlabeled": ethogram.n_unlabeled,
         "unlabeled_fraction": round(ethogram.unlabeled_fraction, 4),
+        "n_valid_frames": ethogram.n_valid_frames,
+        "n_excluded_frames": ethogram.n_unlabeled,
+        "valid_frame_fraction": round(ethogram.valid_frame_fraction, 4),
+        "excluded_reason_counts": dict(ethogram.excluded_reason_counts),
         "cluster_names": ethogram.cluster_names,
         "temporal_coherence": round(ethogram.temporal_coherence, 4),
         "transition_matrix": {
@@ -205,14 +210,17 @@ def _ethogram_to_dict(ethogram) -> dict:
             "cluster_names": tm.cluster_names,
             "n_transitions": tm.n_transitions,
             "entropy": round(tm.entropy, 4),
-            "stationarity": round(tm.stationarity, 4),
+            "stationarity": round(tm.stationarity, 4),  # deprecated (cosine)
+            "stationarity_jsd": _round_or_none(tm.stationarity_jsd, 4),
+            "stationarity_status": tm.stationarity_status,
         },
         "bout_stats": {
             str(cid): {
                 "cluster_name": bs.cluster_name,
                 "n_bouts": bs.n_bouts,
                 "total_frames": bs.total_frames,
-                "frequency": round(bs.frequency, 4),
+                "frequency": round(bs.frequency, 4),  # deprecated (/ all frames)
+                "frequency_valid_only": round(bs.frequency_valid_only, 4),
                 "mean_duration_s": round(bs.mean_duration_s, 4),
                 "median_duration_s": round(bs.median_duration_s, 4),
                 "std_duration_s": round(bs.std_duration_s, 4),
@@ -225,6 +233,11 @@ def _ethogram_to_dict(ethogram) -> dict:
         },
         "n_bouts_total": len(ethogram.bouts),
     }
+
+
+def _round_or_none(x: float, ndigits: int):
+    """Round a float, but preserve NaN as None for JSON-safety."""
+    return round(x, ndigits) if x is not None and np.isfinite(x) else None
 
 
 # ------------------------------------------------------------------ #

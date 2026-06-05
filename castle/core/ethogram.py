@@ -6,8 +6,58 @@ and temporal coherence metrics.
 """
 
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+
+# Output schema version (see docs/behavior_data_contract.md). Bumped to 2.0
+# when coverage / exclude_reason fields and the frequency_valid_only /
+# stationarity_jsd metrics were added alongside the deprecated legacy keys.
+ETHOGRAM_SCHEMA_VERSION = "2.0"
+
+# Per-frame exclusion reasons (docs/behavior_data_contract.md C-1). The value
+# 0 ("valid") is a real label; any other value means the frame is excluded
+# from ethogram statistics (cluster_id == -1).
+EXCLUDE_REASON_NAMES: Dict[int, str] = {
+    0: "valid",
+    1: "dbscan_noise",
+    2: "nonfinite_latent",
+    3: "tracking_loss",
+    4: "manual_exclude",
+}
+
+
+def excluded_reason_counts(
+    cluster_labels: np.ndarray,
+    exclude_reason: Optional[np.ndarray] = None,
+) -> Dict[str, int]:
+    """Count excluded (-1) frames by their reason.
+
+    Args:
+        cluster_labels: per-frame labels (-1 == excluded).
+        exclude_reason: optional per-frame reason enum (same length). When
+            ``None`` (no reason column persisted) every excluded frame is
+            bucketed as ``"unknown"``.
+
+    Returns:
+        ``{reason_name: count}`` over excluded frames, summing to the number of
+        ``-1`` frames.
+    """
+    labels = np.asarray(cluster_labels)
+    excluded = labels == -1
+    n_excluded = int(np.sum(excluded))
+    if n_excluded == 0:
+        return {}
+    if exclude_reason is None:
+        return {"unknown": n_excluded}
+
+    reason = np.asarray(exclude_reason)
+    counts: Dict[str, int] = {}
+    for value in reason[excluded]:
+        v = int(value)
+        # An excluded frame tagged 0 ("valid") is an inconsistency → unknown.
+        name = EXCLUDE_REASON_NAMES.get(v, "unknown") if v != 0 else "unknown"
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 @dataclass
@@ -27,7 +77,10 @@ class BoutStatistics:
     cluster_name: str
     n_bouts: int
     total_frames: int
-    frequency: float            # fraction of total time
+    frequency: float            # DEPRECATED: cluster frames / ALL frames (incl
+                                # -1 gaps). Does not sum to 1 under exclusions;
+                                # kept for backward compatibility. Prefer
+                                # frequency_valid_only.
     mean_duration_s: float
     median_duration_s: float
     std_duration_s: float
@@ -35,6 +88,8 @@ class BoutStatistics:
     min_duration_s: float
     max_duration_s: float
     mean_inter_bout_interval_s: float  # mean time between bouts of same type
+    # cluster frames / valid (non -1) frames; per-cluster values sum to 1.
+    frequency_valid_only: float = 0.0
 
 
 @dataclass
@@ -46,7 +101,15 @@ class TransitionMatrix:
     cluster_names: List[str]
     n_transitions: int
     entropy: float              # transition entropy (behavioral complexity)
-    stationarity: float         # how stationary the Markov chain is
+    stationarity: float         # DEPRECATED: cosine similarity (not a valid
+                                # distribution distance); kept for backward
+                                # compatibility. Prefer stationarity_jsd.
+    # 1 - Jensen-Shannon divergence^2 between the stationary distribution and
+    # the observed distribution. NaN when the chain is reducible / the
+    # stationary distribution is not uniquely identifiable.
+    stationarity_jsd: float = float("nan")
+    # "ok" | "not_identifiable_reducible_chain" | "trivial"
+    stationarity_status: str = "ok"
 
 
 @dataclass
@@ -70,6 +133,14 @@ class Ethogram:
     temporal_coherence: float
     n_unlabeled: int = 0            # frames with cluster id -1 (noise/dropped)
     unlabeled_fraction: float = 0.0  # n_unlabeled / n_frames
+    # Coverage (docs/behavior_data_contract.md C-1). n_valid_frames ==
+    # n_frames - n_unlabeled; valid_frame_fraction is its complement of
+    # unlabeled_fraction. excluded_reason_counts buckets the -1 frames by
+    # exclude_reason (or {"unknown": n} when no reason data was supplied).
+    n_valid_frames: int = 0
+    valid_frame_fraction: float = 1.0
+    excluded_reason_counts: Dict[str, int] = field(default_factory=dict)
+    schema_version: str = ETHOGRAM_SCHEMA_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +213,9 @@ def compute_bout_statistics(
         cluster_names = {}
 
     total_frames = len(cluster_labels)
+    # Valid frames exclude -1 gaps; used for frequency_valid_only so that
+    # per-cluster frequencies sum to 1 (behavioral-budget convention).
+    n_valid_frames = int(np.sum(np.asarray(cluster_labels) != -1))
     # Group bouts by cluster
     from collections import defaultdict
     grouped: Dict[int, List[BoutInfo]] = defaultdict(list)
@@ -176,6 +250,9 @@ def compute_bout_statistics(
             n_bouts=n_bouts,
             total_frames=total_cluster_frames,
             frequency=total_cluster_frames / total_frames if total_frames > 0 else 0.0,
+            frequency_valid_only=(
+                total_cluster_frames / n_valid_frames if n_valid_frames > 0 else 0.0
+            ),
             mean_duration_s=mean_d,
             median_duration_s=float(np.median(durations)),
             std_duration_s=std_d,
@@ -239,9 +316,11 @@ def compute_transition_matrix(
     flat_p = flat_p[flat_p > 0]
     entropy = float(-np.sum(flat_p * np.log2(flat_p))) if len(flat_p) > 0 else 0.0
 
-    # Stationarity: compute stationary distribution from eigenvector and
-    # compare to observed frequencies.  Returns 1 - Jensen-Shannon divergence.
-    stationarity = _compute_stationarity(prob, cluster_labels, unique_ids, id_to_idx)
+    # Stationarity: legacy cosine score (deprecated) + JSD-based score with an
+    # explicit identifiability status (see docs/behavior_data_contract.md C-5).
+    stationarity, stationarity_jsd, stationarity_status = _compute_stationarity(
+        prob, cluster_labels, unique_ids, id_to_idx
+    )
 
     return TransitionMatrix(
         matrix=prob,
@@ -251,7 +330,70 @@ def compute_transition_matrix(
         n_transitions=n_transitions,
         entropy=entropy,
         stationarity=stationarity,
+        stationarity_jsd=stationarity_jsd,
+        stationarity_status=stationarity_status,
     )
+
+
+def _stationary_distribution(full_prob: np.ndarray) -> Tuple[Optional[np.ndarray], str]:
+    """Find the unique stationary distribution π of a row-stochastic matrix.
+
+    Returns ``(pi, status)``. ``pi`` is ``None`` (never fabricated) when the
+    chain is reducible / π is not uniquely identifiable: a zero-sum row
+    (absorbing or never-sourced state), a non-simple eigenvalue 1
+    (reducible/periodic), or a complex / non-single-signed dominant eigenvector.
+    """
+    row_sums = full_prob.sum(axis=1)
+    # A zero-sum row means that state is never a transition source → the matrix
+    # is not row-stochastic and π is undefined (reducible / absorbing).
+    if np.any(row_sums <= 0):
+        return None, "not_identifiable_reducible_chain"
+    try:
+        eigenvalues, eigenvectors = np.linalg.eig(full_prob.T)
+    except np.linalg.LinAlgError:
+        return None, "not_identifiable_reducible_chain"
+    near_one = np.where(np.abs(eigenvalues - 1.0) < 1e-8)[0]
+    # Reducible / periodic chains carry eigenvalue 1 with multiplicity > 1.
+    if len(near_one) != 1:
+        return None, "not_identifiable_reducible_chain"
+    vec = eigenvectors[:, near_one[0]]
+    if np.max(np.abs(vec.imag)) > 1e-8:
+        return None, "not_identifiable_reducible_chain"
+    pi = vec.real
+    # A valid stationary vector is single-signed; flip an all-negative one.
+    if np.all(pi <= 1e-12):
+        pi = -pi
+    if np.any(pi < -1e-8):
+        return None, "not_identifiable_reducible_chain"
+    pi = np.clip(pi, 0.0, None)
+    total = pi.sum()
+    if total <= 0:
+        return None, "not_identifiable_reducible_chain"
+    return pi / total, "ok"
+
+
+def _legacy_cosine_stationarity(full_prob: np.ndarray, observed: np.ndarray) -> float:
+    """DEPRECATED cosine-similarity stationarity.
+
+    Preserved bit-for-bit from the original implementation so legacy outputs
+    stay reproducible. Cosine is not a valid distribution distance — prefer the
+    JSD-based score.
+    """
+    try:
+        eigenvalues, eigenvectors = np.linalg.eig(full_prob.T)
+        idx = np.argmin(np.abs(eigenvalues - 1.0))
+        pi = np.abs(np.real(eigenvectors[:, idx]))
+        if pi.sum() > 0:
+            pi = pi / pi.sum()
+        else:
+            return 0.0
+    except np.linalg.LinAlgError:
+        return 0.0
+    norm_pi = float(np.linalg.norm(pi))
+    norm_obs = float(np.linalg.norm(observed))
+    if norm_pi > 0 and norm_obs > 0:
+        return float(np.dot(pi, observed) / (norm_pi * norm_obs))
+    return 0.0
 
 
 def _compute_stationarity(
@@ -259,18 +401,26 @@ def _compute_stationarity(
     cluster_labels: np.ndarray,
     unique_ids: List[int],
     id_to_idx: Dict[int, int],
-) -> float:
-    """Compute stationarity score (1 = perfectly stationary).
+) -> Tuple[float, float, str]:
+    """Stationarity of the behavioral Markov chain.
 
-    We find the stationary distribution π of the transition matrix and
-    compare it to the observed empirical distribution using cosine similarity.
+    Returns ``(stationarity_cosine, stationarity_jsd, status)``:
+
+    - ``stationarity_cosine`` — DEPRECATED cosine similarity (kept for backward
+      compatibility; not a valid distribution distance).
+    - ``stationarity_jsd`` — ``1 - JSD(π, observed)^2`` in ``[0, 1]``; ``NaN``
+      when the chain is reducible / π is not uniquely identifiable.
+    - ``status`` — ``"trivial"`` (≤1 state), ``"ok"``, or
+      ``"not_identifiable_reducible_chain"``.
+
+    A proxy for how close the sequence is to a stationary Markov process; not a
+    guarantee of true stationarity.
     """
     K = prob.shape[0]
     if K <= 1:
-        return 1.0
+        return 1.0, 1.0, "trivial"
 
-    # Build full transition matrix including self-transitions for eigen
-    # analysis.  Skip any pair touching -1 (not in id_to_idx — unlabeled).
+    # Full transition matrix (with self-transitions), excluding any -1 pair.
     full_counts = np.zeros((K, K), dtype=np.float64)
     if len(cluster_labels) > 1:
         for p, c in zip(cluster_labels[:-1], cluster_labels[1:]):
@@ -283,33 +433,25 @@ def _compute_stationarity(
     nonzero = row_sums > 0
     full_prob[nonzero] = full_counts[nonzero] / row_sums[nonzero, np.newaxis]
 
-    try:
-        eigenvalues, eigenvectors = np.linalg.eig(full_prob.T)
-        # Find eigenvector for eigenvalue closest to 1
-        idx = np.argmin(np.abs(eigenvalues - 1.0))
-        pi = np.real(eigenvectors[:, idx])
-        pi = np.abs(pi)
-        if pi.sum() > 0:
-            pi /= pi.sum()
-        else:
-            return 0.0
-    except np.linalg.LinAlgError:
-        return 0.0
-
-    # Empirical distribution
+    # Observed empirical distribution over labeled frames.
     observed = np.zeros(K)
     for cid in unique_ids:
         observed[id_to_idx[cid]] = np.sum(cluster_labels == cid)
     if observed.sum() > 0:
         observed /= observed.sum()
 
-    # Cosine similarity between pi and observed
-    dot = np.dot(pi, observed)
-    norm_pi = np.linalg.norm(pi)
-    norm_obs = np.linalg.norm(observed)
-    if norm_pi > 0 and norm_obs > 0:
-        return float(dot / (norm_pi * norm_obs))
-    return 0.0
+    cosine = _legacy_cosine_stationarity(full_prob, observed)
+
+    pi, status = _stationary_distribution(full_prob)
+    if pi is None:
+        return cosine, float("nan"), status
+
+    from scipy.spatial.distance import jensenshannon
+
+    jsd_distance = float(jensenshannon(pi, observed, base=2))
+    if not np.isfinite(jsd_distance):
+        return cosine, float("nan"), "not_identifiable_reducible_chain"
+    return cosine, 1.0 - jsd_distance ** 2, status
 
 
 def compute_temporal_coherence(cluster_labels: np.ndarray, window: int = 1) -> float:
@@ -346,6 +488,7 @@ def compute_ethogram(
     cluster_labels: np.ndarray,
     fps: float = 30.0,
     cluster_names: Optional[Dict[int, str]] = None,
+    exclude_reason: Optional[np.ndarray] = None,
 ) -> Ethogram:
     """Compute a complete ethogram from cluster labels.
 
@@ -356,6 +499,9 @@ def compute_ethogram(
         cluster_labels: 1-D integer array of per-frame cluster assignments.
         fps: Frames per second.
         cluster_names: Optional id→name mapping.
+        exclude_reason: Optional per-frame exclusion-reason enum (same length;
+            see :data:`EXCLUDE_REASON_NAMES`). When ``None`` every ``-1`` frame
+            is bucketed as ``"unknown"`` in ``excluded_reason_counts``.
 
     Returns:
         :class:`Ethogram` dataclass.
@@ -371,6 +517,9 @@ def compute_ethogram(
     n_clusters = len(unique_ids)
     n_unlabeled = int(np.sum(labels == -1))
     unlabeled_fraction = (n_unlabeled / n_frames) if n_frames > 0 else 0.0
+    n_valid_frames = n_frames - n_unlabeled
+    valid_frame_fraction = (n_valid_frames / n_frames) if n_frames > 0 else 1.0
+    reason_counts = excluded_reason_counts(labels, exclude_reason)
 
     # Fill in any missing names
     names = {cid: cluster_names.get(cid, f"cluster_{cid}") for cid in unique_ids}
@@ -392,4 +541,8 @@ def compute_ethogram(
         temporal_coherence=tc,
         n_unlabeled=n_unlabeled,
         unlabeled_fraction=unlabeled_fraction,
+        n_valid_frames=n_valid_frames,
+        valid_frame_fraction=valid_frame_fraction,
+        excluded_reason_counts=reason_counts,
+        schema_version=ETHOGRAM_SCHEMA_VERSION,
     )

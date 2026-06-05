@@ -2,8 +2,7 @@
 castle/service/export_service.py
 Shared file-collection helpers for project data export.
 
-These functions are used by both the Gradio UI (castle/ui/export_ui.py)
-and the PyQt desktop UI (castle/desktop/widgets/export_panel.py) to
+These functions are used by the Gradio UI (castle/ui/export_ui.py) to
 collect (source_path, archive_name) tuples for packaging into a ZIP
 archive.
 

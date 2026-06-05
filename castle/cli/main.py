@@ -158,19 +158,5 @@ def info_alias(
     project_cmd.info(project, storage)
 
 
-@app.command("gui")
-def gui(
-    storage: str = typer.Option("projects/", "--storage", "-s", help="Storage directory path"),
-    project: str = typer.Option(None, "--project", "-p", help="Project name to open"),
-):
-    """Launch the Desktop GUI."""
-    import subprocess
-    import sys
-    cmd = [sys.executable, "-m", "castle.desktop", "--storage", storage]
-    if project:
-        cmd += ["--project", project]
-    subprocess.Popen(cmd)
-
-
 if __name__ == "__main__":
     app()

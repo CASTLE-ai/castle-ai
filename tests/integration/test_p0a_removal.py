@@ -1,13 +1,13 @@
 """Integration tests verifying that the Quick Start Wizard has been removed.
 
-These tests guard against accidental reintroduction of the wizard modules
-(`castle/ui/wizard_ui.py` and `castle/desktop/widgets/wizard_panel.py`) that
-were removed as part of P0-A on 2026-05-16. The removal aligns CASTLE with
-its human-in-the-loop design philosophy by eliminating any "one-click" entry
-point that bypasses the Behavior Microscope clustering workflow.
+These tests guard against accidental reintroduction of the wizard module
+(`castle/ui/wizard_ui.py`) that was removed as part of P0-A on 2026-05-16. The
+removal aligns CASTLE with its human-in-the-loop design philosophy by
+eliminating any "one-click" entry point that bypasses the Behavior Microscope
+clustering workflow.
 
 Each test uses subprocess grep or module attribute inspection so they run
-without launching Gradio / PyQt and complete in under a second.
+without launching Gradio and complete in under a second.
 """
 
 from __future__ import annotations
@@ -48,13 +48,6 @@ def test_wizard_ui_file_does_not_exist() -> None:
     )
 
 
-def test_wizard_panel_file_does_not_exist() -> None:
-    """The PyQt wizard widget file should not exist."""
-    assert not (CASTLE_DIR / "desktop" / "widgets" / "wizard_panel.py").exists(), (
-        "castle/desktop/widgets/wizard_panel.py was supposed to be removed by P0-A"
-    )
-
-
 def test_main_ui_module_does_not_import_wizard() -> None:
     """`castle.ui.main_ui` must no longer import WizardUI."""
     pytest.importorskip("gradio")
@@ -62,14 +55,4 @@ def test_main_ui_module_does_not_import_wizard() -> None:
 
     assert not hasattr(main_ui, "WizardUI"), (
         "castle.ui.main_ui still exposes WizardUI symbol"
-    )
-
-
-def test_main_window_module_does_not_import_wizard() -> None:
-    """`castle.desktop.main_window` must no longer import WizardPanel."""
-    pytest.importorskip("PyQt6")
-    import castle.desktop.main_window as mw
-
-    assert not hasattr(mw, "WizardPanel"), (
-        "castle.desktop.main_window still exposes WizardPanel symbol"
     )

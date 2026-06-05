@@ -1,1 +1,0 @@
-"""CASTLE Desktop reusable components."""

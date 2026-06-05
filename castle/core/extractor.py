@@ -888,7 +888,13 @@ def extract_roi_rotation_latent_from_video(
     # Timeline-preserving slots (see extract_roi_latent_from_video): a tolerated
     # batch failure becomes a NaN placeholder of the right row count rather than
     # being dropped, so row index == frame index is never violated.
-    latent_slots: list = []
+    # Preallocate the output buffer (disk memmap when large) and write each
+    # batch in place — avoids holding every batch in a list plus the ~2x peak
+    # at np.concatenate, which OOM'd long rotation videos (no memmap fallback
+    # existed here). Mirrors _run_extraction_loop.
+    latent_array, latent_tmp = _alloc_latent_out(
+        video_len, embed_dim, os.path.dirname(latent_path)
+    )
     failed_frame_ranges: list = []
     total_batches = len(loader)
     n_batches_failed = 0
@@ -920,7 +926,7 @@ def extract_roi_rotation_latent_from_video(
                 latent_reshaped = latent_batch.reshape(B, R, embed_dim)
                 latent_averaged = latent_reshaped.mean(axis=1)
 
-                latent_slots.append(latent_averaged)
+                latent_array[frame_start:frame_start + n_rows] = latent_averaged
             except (ROINotFoundError, PreprocessingError) as e:
                 n_batches_failed += 1
                 if on_frame_error == "raise" or n_batches_failed > abs_failure_threshold:
@@ -930,7 +936,7 @@ def extract_roi_rotation_latent_from_video(
                     "placeholder frame(s) to preserve the timeline.",
                     i + 1, total_batches, video_name, e, n_rows,
                 )
-                latent_slots.append(np.full((n_rows, embed_dim), np.nan, dtype=np.float32))
+                latent_array[frame_start:frame_start + n_rows] = np.nan
                 failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
             except Exception as e:
                 n_batches_failed += 1
@@ -953,17 +959,16 @@ def extract_roi_rotation_latent_from_video(
                     "%d NaN placeholder frame(s) to preserve the timeline.",
                     i + 1, total_batches, video_name, n_rows,
                 )
-                latent_slots.append(np.full((n_rows, embed_dim), np.nan, dtype=np.float32))
+                latent_array[frame_start:frame_start + n_rows] = np.nan
                 failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
 
         n_failed_frames_total = sum(end - start for start, end in failed_frame_ranges)
-        if not latent_slots or n_failed_frames_total >= rows_seen:
+        if rows_seen == 0 or n_failed_frames_total >= rows_seen:
             raise ExtractionError(
                 f"All {total_batches} rotation batches failed for {video_name}."
             )
 
-        # Concatenate final results
-        latent_array = np.concatenate(latent_slots, axis=0)
+        # latent_array is the preallocated buffer, already filled in place.
         # BUG-14: include metadata so loaders can stop relying on filename
         # parsing (rotation files don't carry model_name in the filename).
         save_latent_with_metadata(
@@ -1006,6 +1011,18 @@ def extract_roi_rotation_latent_from_video(
                     "Could not remove partial latent %s: %s", latent_path, cleanup_err,
                 )
         raise
+    finally:
+        # Release the memmap handle and delete its backing temp file
+        # (no-op for the in-RAM buffer; latent_tmp is None there).
+        try:
+            del latent_array
+        except Exception:
+            pass
+        if latent_tmp and os.path.exists(latent_tmp):
+            try:
+                os.remove(latent_tmp)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

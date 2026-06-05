@@ -61,6 +61,18 @@ def _validate_tracks(tracks: list[SubjectTrack]) -> tuple[int, int]:
     return n_frames, len(tracks)
 
 
+def _subject_validity(tracks: list[SubjectTrack], n_frames: int) -> np.ndarray:
+    """(n_subjects, N) bool: True where the subject has a real (non-interpolated)
+    detection. A track without ``valid_frames`` (or a length mismatch) is treated
+    as all-valid for backward compatibility."""
+    val = np.ones((len(tracks), n_frames), dtype=bool)
+    for s, t in enumerate(tracks):
+        vf = getattr(t, "valid_frames", None)
+        if vf is not None and len(vf) == n_frames:
+            val[s] = np.asarray(vf, dtype=bool)
+    return val
+
+
 # ---------------------------------------------------------------------------
 # Pairwise geometry
 # ---------------------------------------------------------------------------
@@ -88,10 +100,16 @@ def compute_pairwise_distance(
     # (n_subjects, N, 2)
     pos_stack = np.stack([t.positions for t in tracks], axis=0)
 
+    # Either subject interpolated at frame t → the pair distance is not a real
+    # observation; mark it NaN so proximity events / approach scores are not
+    # fabricated from tracking-loss fill-ins (contract C-4 / theme D).
+    valid = _subject_validity(tracks, n_frames)  # (n_subjects, N)
+
     dist = np.zeros((n_frames, n_subj, n_subj), dtype=np.float64)
     for i in range(n_subj):
         for j in range(i + 1, n_subj):
             d = np.linalg.norm(pos_stack[i] - pos_stack[j], axis=1)  # (N,)
+            d[~(valid[i] & valid[j])] = np.nan
             dist[:, i, j] = d
             dist[:, j, i] = d
 
@@ -147,6 +165,12 @@ def compute_relative_orientation(
             rel = angle_to_j - ang_stack[i]  # (N,)
             # Wrap to (-180, 180]
             rel = (rel + 180.0) % 360.0 - 180.0
+            # Coincident positions make the heading-to-j angle undefined;
+            # arctan2(0, 0) == 0 would otherwise masquerade as "facing exactly"
+            # at the most contact-heavy (and most behaviourally meaningful)
+            # frames. Mark those NaN.
+            coincident = np.hypot(vec_ij[:, 0], vec_ij[:, 1]) < 1e-9
+            rel[coincident] = np.nan
             orient[:, i, j] = rel
 
     return orient
@@ -160,6 +184,7 @@ def compute_relative_orientation(
 def compute_approach_score(
     tracks: list[SubjectTrack],
     window: int = 30,
+    fps: float | None = None,
 ) -> np.ndarray:
     """Compute per-pair approach/avoidance score over a sliding window.
 
@@ -183,37 +208,50 @@ def compute_approach_score(
         Synchronised subject tracks.
     window : int
         Number of frames for the sliding average (default 30).
+    fps : float or None
+        If given, the score is returned in **pixels/second** (multiplied by
+        fps) so it is comparable across recordings at different frame rates.
+        If None (default), the score is in pixels/frame (frame-rate dependent).
 
     Returns
     -------
     np.ndarray, shape (N, n_subjects, n_subjects)
         Approach score matrix.  ``score[t, i, j] == score[t, j, i]``.
-        Diagonal entries are 0.
+        Diagonal entries are 0. Windows that overlap only interpolated /
+        tracking-loss frames are NaN.
     """
-    dist = compute_pairwise_distance(tracks)  # (N, S, S)
+    dist = compute_pairwise_distance(tracks)  # (N, S, S); NaN at invalid frames
     n_frames, n_subj, _ = dist.shape
 
     # First derivative of distance: (N-1, S, S)
     delta_d = np.diff(dist, axis=0)
 
-    # Score = –mean(Δd) over a sliding window; shape (N, S, S)
+    # Score = –mean(Δd) over a sliding window; shape (N, S, S). nanmean so a
+    # window with some interpolated (NaN) frames still uses its valid frames
+    # instead of collapsing the whole window to NaN.
     half = window // 2
     scores = np.zeros_like(dist)
 
-    for t in range(n_frames):
-        t_start = max(0, t - half)
-        t_end = min(n_frames - 1, t + half)
-        # delta_d[k] represents change from frame k to k+1
-        d_start = t_start
-        d_end = t_end  # delta_d has shape N-1
-        if d_end > d_start and d_end <= n_frames - 1:
-            window_slice = delta_d[d_start:d_end]
-        elif d_end == d_start:
-            window_slice = delta_d[d_start : d_start + 1]
-        else:
-            window_slice = delta_d[d_start:]
-        if len(window_slice) > 0:
-            scores[t] = -np.mean(window_slice, axis=0)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN window
+        for t in range(n_frames):
+            t_start = max(0, t - half)
+            t_end = min(n_frames - 1, t + half)
+            # delta_d[k] represents change from frame k to k+1
+            d_start = t_start
+            d_end = t_end  # delta_d has shape N-1
+            if d_end > d_start and d_end <= n_frames - 1:
+                window_slice = delta_d[d_start:d_end]
+            elif d_end == d_start:
+                window_slice = delta_d[d_start : d_start + 1]
+            else:
+                window_slice = delta_d[d_start:]
+            if len(window_slice) > 0:
+                scores[t] = -np.nanmean(window_slice, axis=0)
+
+    if fps is not None:
+        scores *= float(fps)  # px/frame -> px/s
 
     logger.debug(
         "compute_approach_score: window=%d, score range [%.2f, %.2f]",

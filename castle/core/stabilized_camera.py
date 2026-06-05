@@ -468,8 +468,16 @@ class StabilizedCamera:
             # Align lengths (speed has N-1 entries)
             if len(speeds) == len(self.crop_sizes) - 1:
                 speeds = np.append(speeds, speeds[-1])
-            corr_matrix = np.corrcoef(speeds, self.crop_sizes)
-            speed_crop_correlation = float(corr_matrix[0, 1])
+            # Correlation is undefined if either series is constant (zero
+            # variance — e.g. a still animal, or every frame clamped to
+            # min_crop): np.corrcoef would divide by a zero std and emit a
+            # RuntimeWarning + NaN. Report NaN explicitly instead.
+            crops = np.asarray(self.crop_sizes, dtype=np.float64)
+            if np.std(speeds) < 1e-12 or np.std(crops) < 1e-12:
+                speed_crop_correlation = float("nan")
+            else:
+                corr_matrix = np.corrcoef(speeds, crops)
+                speed_crop_correlation = float(corr_matrix[0, 1])
         else:
             speed_crop_correlation = float("nan")
 
@@ -712,7 +720,8 @@ def extract_centroids_from_masks(
     mask_h5_path: str,
     roi_id: int,
     n_frames: int,
-) -> np.ndarray:
+    return_valid: bool = False,
+):
     """Extract per-frame centroids of a ROI from a mask HDF5 file.
 
     Uses connected components to find the largest component of the specified
@@ -766,8 +775,11 @@ def extract_centroids_from_masks(
             positions[i, 0] = centroids[best, 0]
             positions[i, 1] = centroids[best, 1]
 
-    # Interpolate NaN frames
-    valid = np.where(~np.isnan(positions[:, 0]))[0]
+    # Frames with a real detection, captured BEFORE interpolation fills gaps.
+    # This is the per-frame validity mask: downstream social metrics must not
+    # treat an interpolated position as a real observation.
+    valid_mask = ~np.isnan(positions[:, 0])
+    valid = np.where(valid_mask)[0]
     if len(valid) == 0:
         raise ValueError(
             f"No valid centroids found for roi_id={roi_id} in {mask_h5_path}"
@@ -789,6 +801,8 @@ def extract_centroids_from_masks(
         n_frames,
         100.0 * len(valid) / n_frames,
     )
+    if return_valid:
+        return positions, valid_mask
     return positions
 
 

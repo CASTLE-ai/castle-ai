@@ -502,3 +502,14 @@ class TestAttributeShapes:
         raw_diff_std = np.std(np.diff(positions, axis=0))
         filt_diff_std = np.std(np.diff(cam.pos_filtered, axis=0))
         assert filt_diff_std < raw_diff_std
+
+
+def test_get_diagnostics_constant_series_is_nan_no_warning(static_cam):
+    """A perfectly still animal has zero-variance speed and crop size, so the
+    speed-vs-crop correlation is undefined: report NaN and do NOT emit a
+    RuntimeWarning from np.corrcoef dividing by a zero std (PR2 Stage 5)."""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        diag = static_cam.get_diagnostics()
+    assert np.isnan(diag["speed_crop_correlation"])

@@ -66,6 +66,10 @@ class SubjectTrack:
     angles: np.ndarray  # (N,)
     latents: Optional[np.ndarray] = field(default=None)  # (N, D)
     labels: Optional[np.ndarray] = field(default=None)  # (N,)
+    # (N,) bool — True where this frame had a real detection, False where the
+    # position was filled by interpolation (tracking loss). None → all valid
+    # (backward compatible: existing constructors keep working).
+    valid_frames: Optional[np.ndarray] = field(default=None)
 
     def __post_init__(self) -> None:
         self.positions = np.asarray(self.positions, dtype=np.float64)
@@ -74,6 +78,10 @@ class SubjectTrack:
             self.latents = np.asarray(self.latents, dtype=np.float64)
         if self.labels is not None:
             self.labels = np.asarray(self.labels, dtype=np.int64)
+        if self.valid_frames is None:
+            self.valid_frames = np.ones(self.n_frames, dtype=bool)
+        else:
+            self.valid_frames = np.asarray(self.valid_frames, dtype=bool)
 
     @property
     def n_frames(self) -> int:
@@ -325,10 +333,11 @@ class MultiSubjectProject:
                 total,
             )
 
-            positions = extract_centroids_from_masks(
+            positions, valid_frames = extract_centroids_from_masks(
                 self._mask_h5_path,
                 roi_id=body_roi,
                 n_frames=resolved_n_frames,
+                return_valid=True,
             )
             angles = extract_orientations_from_masks(
                 self._mask_h5_path,
@@ -343,6 +352,7 @@ class MultiSubjectProject:
                 head_roi_id=head_roi,
                 positions=positions,
                 angles=angles,
+                valid_frames=valid_frames,
             )
 
             if progress_callback is not None:

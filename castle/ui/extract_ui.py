@@ -602,8 +602,39 @@ def ui_extract_roi_latent(
 # UI Construction
 # ---------------------------
 
+def _env_notice_md(storage_path) -> str:
+    """Markdown banner for the top of the Extract tab when running on a network
+    filesystem (cloud VM), summarising what was auto-detected and the safe
+    defaults applied. Empty string (banner hidden) on a local box. Never raises.
+    """
+    try:
+        from castle.core import runtime_env
+        from castle.core.environment import get_num_workers
+        s = runtime_env.summary(storage_path)
+        if not s.get("network_fs_detected"):
+            return ""
+        workers = get_num_workers("extraction", fs_path=storage_path)
+        budget_gb = runtime_env.latent_ram_budget_bytes() / (1024 ** 3)
+        ram = f"{s['total_ram_gb']:.0f} GB RAM" if s.get("total_ram_gb") else "RAM"
+        return (
+            f"> ℹ️ **Cloud / network filesystem detected** "
+            f"(`{s['fs_type']}` at `{s['storage_root']}`), {s['usable_cpus']} usable CPUs, {ram}.\n"
+            f">\n"
+            f"> Auto-applied: HDF5 file locking **off**, DataLoader workers ≤ **{workers}**, "
+            f"temp files → node-local **`{s['scratch_dir']}`**, latent buffer kept in RAM up to "
+            f"**{budget_gb:.0f} GB** before spilling. Override with `CASTLE_*` env vars."
+        )
+    except Exception:
+        return ""
+
+
 def create_extract_ui(storage_path, project_name, extract_tab):
     ui = {}
+
+    # Cross-environment notice (decision: auto-detect + notify). Static, computed
+    # once at UI build; visible only when the project storage is on a network FS.
+    _env_notice = _env_notice_md(storage_path)
+    ui["env_notice"] = gr.Markdown(value=_env_notice, visible=bool(_env_notice))
 
     # ------------------------------------------------------------------
     # Session selector (top of tab)

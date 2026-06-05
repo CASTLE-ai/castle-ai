@@ -28,6 +28,7 @@ def extract(
     pooling: str = typer.Option("weighted_average", "--pooling", "-p", help="Pooling method: weighted_average or multiscale"),
     scales: str = typer.Option("", "--scales", help="Comma-separated scales for multiscale pooling, e.g. '1,2,4'"),
     layers: str = typer.Option("", "--layers", help="Comma-separated layer indices for multi-layer extraction, e.g. '3,7,11'"),
+    latent_dtype: str = typer.Option("float32", "--latent-dtype", help="Latent storage dtype: float32 (default) or float16 (half the file size / I/O — useful on network storage)"),
 ):
     """Extract latent features from tracked videos."""
     storage = get_storage(storage)
@@ -44,6 +45,10 @@ def extract(
     # A-06: Parse advanced extraction options
     parsed_scales = [int(s.strip()) for s in scales.split(',') if s.strip()] if scales else None
     parsed_layers = [int(lay.strip()) for lay in layers.split(',') if lay.strip()] if layers else None
+
+    if latent_dtype not in ("float32", "float16"):
+        console.print(f"[red]✗[/red] --latent-dtype must be float32 or float16, got '{latent_dtype}'")
+        raise typer.Exit(code=1)
 
     extra_info = ""
     if pooling == 'multiscale':
@@ -95,6 +100,7 @@ def extract(
                 pooling_method=pooling,
                 pooling_scales=parsed_scales,
                 feature_layers=parsed_layers,
+                latent_dtype=latent_dtype,
             )
 
             if result:

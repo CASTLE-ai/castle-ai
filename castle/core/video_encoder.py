@@ -33,7 +33,11 @@ def _nvenc_ok(fps, w: int, h: int) -> bool:
     import av  # type: ignore
     import numpy as np
     import tempfile
-    out = tempfile.mktemp(suffix=".mp4")
+    from castle.core import runtime_env
+    # Probe file goes to node-local scratch, never a network FS (CephFS), and
+    # uses mkstemp (mktemp is deprecated / racy).
+    fd, out = tempfile.mkstemp(suffix=".mp4", dir=runtime_env.scratch_dir())
+    os.close(fd)
     ok = False
     try:
         c = av.open(out, mode="w")
@@ -49,7 +53,15 @@ def _nvenc_ok(fps, w: int, h: int) -> bool:
         ok = True
         logger.info("video encoder: h264_nvenc OK at %dx%d (GPU)", w, h)
     except Exception as e:  # noqa: BLE001
-        logger.warning("video encoder: h264_nvenc unusable at %dx%d (%s) → libx264", w, h, e)
+        # Log the real reason (driver/ffmpeg mismatch, session limit, unsupported
+        # option) AND that we are falling back to CPU encode, which is much slower
+        # — users on cloud boxes with a new driver vs older ffmpeg often hit this
+        # silently and wonder why pre-process is slow.
+        logger.warning(
+            "video encoder: h264_nvenc unusable at %dx%d → falling back to libx264 "
+            "(CPU, slower). Reason: %s: %s. Set CASTLE_VIDEO_ENCODER=x264 to skip "
+            "this probe.", w, h, type(e).__name__, e,
+        )
     finally:
         try:
             if os.path.exists(out):

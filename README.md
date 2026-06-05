@@ -55,7 +55,6 @@
   - **Multi-scale Pooling**: Spatial pyramid pooling for richer latent representations
   - **Session Management**: Multiple clustering sessions per project with `SessionManager`
   - **NWB Export**: `castle ethogram export-nwb` — Neurodata Without Borders format
-  - **MCP Server**: `castle mcp start` — Model Context Protocol server
   - **Undo/Redo**: Command Pattern history for clustering operations
   - **260 Unit Tests**: Comprehensive test coverage
   - **Code Quality**: Zero ruff warnings in non-vendored code

@@ -125,7 +125,6 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 | `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export/export-nwb` |
 | `compare_cmd.py` | `castle compare run/fingerprint` |
 | `gui_cmd.py` | `castle gui` — launch the PyQt6 desktop app |
-| `mcp_cmd.py` | `castle mcp start` — start the MCP server |
 | `batch_cmd.py` 🟢 | `castle batch run/status/report` — batch processing across multiple experiments (P4) |
 
 ### `castle/ui/` — Gradio Web Interface

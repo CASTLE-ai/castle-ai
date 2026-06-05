@@ -78,7 +78,6 @@ castle/
 ├── ui/             # Gradio 前端 (7 tabs: Project→Export)
 ├── desktop/        # PyQt6 前端 (7 tabs: 對齊 Gradio)
 ├── cli/            # CLI 介面 (castle command)
-├── mcp/            # MCP Server
 ├── visualization/  # 繪圖工具
 ├── utils/          # 工具函數 (video_io, h5_io, video_align)
 ├── aot/            # [vendored] DeAOT tracking

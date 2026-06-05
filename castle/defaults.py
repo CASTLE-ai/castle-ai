@@ -66,7 +66,7 @@ correlated (saves 3–5× storage and clustering time at minimal cost to
 behavioral resolution).
 
 Used by: ``ExtractionConfig.bin_size``, ``ClusteringSession`` default,
-``mcp.server`` tool default, desktop ``SyllableBar`` initial state.
+desktop ``SyllableBar`` initial state.
 """
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ without smearing across longer locomotion sequences. The exact value isn't
 load-bearing; UMAP is fairly insensitive in the 50–300 range for the
 datasets CASTLE targets.
 
-Used by: ``UMAPConfig.n_neighbors``, ``mcp.server`` tool default.
+Used by: ``UMAPConfig.n_neighbors``.
 """
 
 UMAP_MIN_DIST: float = 0.0
@@ -94,7 +94,7 @@ Larger ``min_dist`` spreads the embedding for visual clarity but blurs
 DBSCAN's edges — only useful when the embedding is the *final* product
 (rare in CASTLE workflows).
 
-Used by: ``UMAPConfig.min_dist``, ``mcp.server`` tool default.
+Used by: ``UMAPConfig.min_dist``.
 """
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ intra-cluster nearest-neighbor distance in 2D UMAP output sits around
 point — the Behavior Microscope is designed so the user sweeps this value
 interactively rather than relying on the default for science.
 
-Used by: ``ClusterConfig.eps``, ``mcp.server`` tool default,
+Used by: ``ClusterConfig.eps``,
 ``cli.cluster_cmd`` ``--eps`` option default,
 ``clustering_service`` docstring example.
 """

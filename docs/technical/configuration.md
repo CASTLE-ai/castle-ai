@@ -196,7 +196,7 @@ Smaller eps → more clusters. Larger eps → fewer clusters.
 !!! tip "Multi-GPU (tracking + extraction)"
     When `CASTLE_MULTI_GPU=1` **and** ≥2 CUDA GPUs are visible:
 
-    - **Batches** (track-all / extract-`All`, the CLI, `castle batch`, MCP) run **whole videos across GPUs** — one video per GPU concurrently (DeAOT tracking is sequential *within* a video, so this is the only way to parallelise it). Tracking is ~3× faster on two GPUs; extraction scales with batch size.
+    - **Batches** (track-all / extract-`All`, the CLI, `castle batch`) run **whole videos across GPUs** — one video per GPU concurrently (DeAOT tracking is sequential *within* a video, so this is the only way to parallelise it). Tracking is ~3× faster on two GPUs; extraction scales with batch size.
     - A **single** video's extraction still uses the within-video frame-range split across GPUs.
 
     The default uses fast cuDNN autotuning + fp16, exactly like single-GPU — so a video processed on the second GPU can differ from the single-GPU result by **fp16-rounding noise (~1e-2)**, which is negligible for downstream clustering (UMAP standardises it). For **exact per-GPU reproducibility** set `CASTLE_MULTI_GPU_DETERMINISTIC=1` (pins cuDNN deterministic; slower). Tracking masks are near-identical (mean-IoU ≈ 0.9999) either way.

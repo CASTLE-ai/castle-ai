@@ -41,6 +41,7 @@ class _StubLocalLatent:
         progress_callback=None,
         base_seed: Optional[int] = None,
         log_path=None,
+        deterministic: bool = False,
     ) -> List[int]:
         stages = cfg if isinstance(cfg, list) else [cfg]
         seeds: List[int] = []

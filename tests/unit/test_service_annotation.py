@@ -14,23 +14,24 @@ from castle.service.annotation_service import (
 
 
 def test_default_schemes():
-    assert '5-class' in DEFAULT_SCHEMES
-    assert '10-class' in DEFAULT_SCHEMES
-    assert len(DEFAULT_SCHEMES['5-class']) == 5
-    assert len(DEFAULT_SCHEMES['10-class']) == 10
+    # Schemes were renamed to mice-5-class / mice-10-class (commit 5131986).
+    assert 'mice-5-class' in DEFAULT_SCHEMES
+    assert 'mice-10-class' in DEFAULT_SCHEMES
+    assert len(DEFAULT_SCHEMES['mice-5-class']) == 5
+    assert len(DEFAULT_SCHEMES['mice-10-class']) == 10
 
 
 def test_default_scheme_labels():
-    assert 'Running' in DEFAULT_SCHEMES['5-class']
-    assert 'Sniffing' in DEFAULT_SCHEMES['10-class']
+    assert 'Running' in DEFAULT_SCHEMES['mice-5-class']
+    assert 'Sniffing' in DEFAULT_SCHEMES['mice-10-class']
 
 
 def test_list_schemes_defaults_only():
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, 'test', 'cluster'), exist_ok=True)
         schemes = list_schemes(tmp, 'test')
-        assert '5-class' in schemes
-        assert '10-class' in schemes
+        assert 'mice-5-class' in schemes
+        assert 'mice-10-class' in schemes
 
 
 def test_save_load_scheme():
@@ -54,7 +55,7 @@ def test_save_scheme_overwrites():
 def test_get_scheme_labels():
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, 'test', 'cluster'), exist_ok=True)
-        labels = get_scheme_labels(tmp, 'test', '5-class')
+        labels = get_scheme_labels(tmp, 'test', 'mice-5-class')
         assert len(labels) == 5
 
 

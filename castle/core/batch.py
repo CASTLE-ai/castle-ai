@@ -153,7 +153,27 @@ class BatchRunner:
         def _run_one(idx: int, spec: dict) -> dict:
             return self._process_project(idx, n, spec, progress_callback)
 
-        if self.config.parallel and n > 1:
+        # Parallel projects share one process-wide ModelRegistry singleton and
+        # one default CUDA device: one project's cleanup unloads a model another
+        # is still using (data race / freed-module inference), and several big
+        # models on one GPU OOM. The GPU pipeline is not safe to run concurrently
+        # this way, so on CUDA we force sequential execution + warn (CPU-only
+        # parallelism is unaffected). See review theme C / robustness.
+        use_parallel = self.config.parallel and n > 1
+        if use_parallel:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    logger.warning(
+                        "BatchRunner: parallel=True is unsafe with a shared CUDA "
+                        "device (projects would unload each other's models / OOM); "
+                        "running the %d projects sequentially instead.", n,
+                    )
+                    use_parallel = False
+            except Exception:  # noqa: BLE001 — torch import/probe must not block the run
+                pass
+
+        if use_parallel:
             futures_map = {}
             with ThreadPoolExecutor(max_workers=self.config.max_workers) as pool:
                 for idx, spec in enumerate(projects):

@@ -50,6 +50,25 @@ def load_cluster_model(model_path) -> ClusterModel:
         n_clusters=meta.get("n_clusters", 0),
     )
 
+def _majority_vote_excluding_noise(neighbor_labels: np.ndarray) -> tuple[int, float]:
+    """Majority vote over neighbour labels, ignoring -1 (noise) training points.
+
+    DBSCAN/HDBSCAN noise (-1) is not a behavioral class: it must not win votes
+    nor dilute a real winner. Returns ``(predicted_label, confidence)``; when
+    every neighbour is noise the sample is genuinely unclassifiable → ``(-1,
+    0.0)``. Confidence is the winning count over the number of *valid*
+    (non-noise) neighbours, so it reflects the real support.
+    """
+    valid = np.asarray(neighbor_labels)
+    valid = valid[valid >= 0]
+    if valid.size == 0:
+        return -1, 0.0
+    unique, counts = np.unique(valid, return_counts=True)
+    winner = int(unique[int(np.argmax(counts))])
+    confidence = float(counts.max()) / float(valid.size)
+    return winner, confidence
+
+
 def apply_cluster_model(model, new_features, method="knn_feature") -> dict:
     """Apply saved model to new features.
     
@@ -71,10 +90,9 @@ def apply_cluster_model(model, new_features, method="knn_feature") -> dict:
     if method == "knn_feature":
         predicted, confidences = [], []
         for i in range(len(new_features)):
-            neighbor_labels = model.cluster_labels[indices[i]]
-            unique, counts = np.unique(neighbor_labels, return_counts=True)
-            predicted.append(unique[np.argmax(counts)])
-            confidences.append(float(counts.max()) / model.k)
+            label, conf = _majority_vote_excluding_noise(model.cluster_labels[indices[i]])
+            predicted.append(label)
+            confidences.append(conf)
         return {"labels": np.array(predicted), "confidence": np.array(confidences), "cluster_names": model.cluster_names}
     
     elif method == "knn_umap":
@@ -88,11 +106,10 @@ def apply_cluster_model(model, new_features, method="knn_feature") -> dict:
         _, umap_indices = nn_umap.kneighbors(projected)
         predicted, confidences = [], []
         for i in range(len(new_features)):
-            neighbor_labels = model.cluster_labels[umap_indices[i]]
-            unique, counts = np.unique(neighbor_labels, return_counts=True)
-            predicted.append(unique[np.argmax(counts)])
-            confidences.append(float(counts.max()) / model.k)
-        return {"labels": np.array(predicted), "confidence": np.array(confidences), 
+            label, conf = _majority_vote_excluding_noise(model.cluster_labels[umap_indices[i]])
+            predicted.append(label)
+            confidences.append(conf)
+        return {"labels": np.array(predicted), "confidence": np.array(confidences),
                 "umap_projection": projected, "cluster_names": model.cluster_names}
     else:
         raise ValueError(f"Unknown method: {method}")

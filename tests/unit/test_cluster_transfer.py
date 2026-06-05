@@ -360,3 +360,57 @@ def test_negative_cluster_ids_ignored():
         new_features = np.random.randn(5, feature_dim)
         result = apply_cluster_model(loaded, new_features, method="knn_feature")
         assert len(result["labels"]) == 5
+
+
+# ---------------------------------------------------------------------------
+# PR1 Stage 1.4: -1 (noise) neighbours must not win votes or dilute confidence
+# ---------------------------------------------------------------------------
+
+def _tiny_model(cluster_labels, feature_dim=4, k=None):
+    """A model whose k == n_train, so every training point neighbours any query
+    (deterministic regardless of the cosine metric)."""
+    n = len(cluster_labels)
+    rng = np.random.default_rng(0)
+    return ClusterModel(
+        umap_embedding=rng.standard_normal((n, 2)),
+        training_features=rng.standard_normal((n, feature_dim)),
+        cluster_labels=np.asarray(cluster_labels),
+        cluster_names={0: "rest", 1: "active"},
+        k=k or n,
+        feature_dim=feature_dim,
+        n_clusters=len({int(c) for c in cluster_labels if c >= 0}),
+    )
+
+
+def test_noise_neighbours_excluded_from_vote():
+    """A noise majority among neighbours must not make the prediction -1."""
+    model = _tiny_model([-1, -1, 0])  # k=3, 2 noise + 1 real
+    q = np.random.default_rng(1).standard_normal((1, 4))
+    res = apply_cluster_model(model, q, method="knn_feature")
+    assert res["labels"][0] == 0           # the real label, not the noise majority
+    assert res["confidence"][0] == 1.0     # 1 valid neighbour, unanimous
+
+
+def test_all_noise_neighbours_unclassified():
+    """When every neighbour is noise the sample is genuinely unclassifiable."""
+    model = _tiny_model([-1, -1, -1])
+    q = np.random.default_rng(2).standard_normal((1, 4))
+    res = apply_cluster_model(model, q, method="knn_feature")
+    assert res["labels"][0] == -1
+    assert res["confidence"][0] == 0.0
+
+
+def test_confidence_uses_valid_neighbour_denominator():
+    """Confidence is winning count / number of VALID neighbours (noise excluded)."""
+    model = _tiny_model([-1, -1, 0, 0, 1])  # k=5; valid = [0,0,1]
+    q = np.random.default_rng(3).standard_normal((1, 4))
+    res = apply_cluster_model(model, q, method="knn_feature")
+    assert res["labels"][0] == 0
+    assert res["confidence"][0] == pytest.approx(2 / 3)  # 2 wins / 3 valid
+
+
+def test_noise_excluded_in_knn_umap_too():
+    model = _tiny_model([-1, -1, 0])
+    q = np.random.default_rng(4).standard_normal((1, 4))
+    res = apply_cluster_model(model, q, method="knn_umap")
+    assert res["labels"][0] == 0

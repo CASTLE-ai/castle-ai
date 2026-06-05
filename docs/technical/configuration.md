@@ -109,7 +109,8 @@ Configured in the **3. Extract Latent** tab:
 |-----------|---------|-------|-------------|
 | Visual Model | `dinov3_vitb16` | 3 options | Feature extraction backbone (`dinov3_vitb16` default, 768-d; `dinov3_vitl16`, 1024-d; `dinov2_vitb14_reg4_pretrain`, 768-d) |
 | ROI ID | `1` | Any tracked ROI | Which ROI to extract |
-| Batch Size | `32` | 1–256+ | Frames per batch (limited by VRAM) |
+| Batch Size | auto | 1–256+ | Frames per batch. The CLI auto-sizes from free VRAM when `--batch-size` is omitted (and halves & retries on OOM); the UI default is 32 with an "Auto Batch Size" button. |
+| Latent dtype | `float32` | float32 / float16 | Storage precision of the latent `.npz` (CLI `--latent-dtype`). `float16` halves file size and I/O. |
 | Skip Existing | `True` | — | Don't re-extract existing files |
 
 ### Preprocessing
@@ -174,12 +175,62 @@ Smaller eps → more clusters. Larger eps → fewer clusters.
 
 ## Environment Variables
 
+CASTLE auto-detects the runtime environment at startup — filesystem type (local
+vs network such as CephFS/NFS), usable CPU count (honouring container cgroup
+limits, not just the host core count), total/available RAM, and GPU/VRAM — and
+applies safe defaults. Every decision can be overridden with the variables
+below; set them in the shell **before** launching CASTLE.
+
+**General**
+
 | Variable | Description |
 |----------|-------------|
 | `COLAB_GPU` | Auto-detected in Google Colab; enables `--share` and Colab-specific paths |
-| `HDF5_USE_FILE_LOCKING` | Set to `FALSE` by `app.py` to avoid HDF5 locking issues |
+| `HDF5_USE_FILE_LOCKING` | Forced to `FALSE` at `import castle` — POSIX file locking is unnecessary (CASTLE is single-writer / multi-reader) and hangs on network filesystems (CephFS/NFS). Set explicitly to override. |
+
+**Multi-GPU (latent extraction)**
+
+| Variable | Description |
+|----------|-------------|
 | `CASTLE_MULTI_GPU` | Opt-in multi-GPU for tracking **and** latent extraction (Gradio app or CLI). Default OFF. Set to `1` to enable. |
 | `CASTLE_MULTI_GPU_DETERMINISTIC` | Opt-in: force cuDNN-deterministic during multi-GPU runs for per-GPU reproducibility, at a throughput cost. Default OFF (speed). |
+
+**Worker & thread tuning** (auto-sized from usable CPUs; override only if needed)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CASTLE_EXTRACTION_WORKERS` / `CASTLE_NUM_WORKERS` | auto | Force the extraction DataLoader worker count. |
+| `CASTLE_MAX_EXTRACTION_WORKERS` | `16` | Absolute cap on extraction workers. |
+| `CASTLE_NETWORK_FS_WORKERS` | `8` | Lower worker cap when the mask file is on a network FS (fewer concurrent HDF5 readers). |
+| `CASTLE_PREFETCH_FACTOR` | `2` | DataLoader `prefetch_factor`. |
+| `CASTLE_PIN_MEMORY` | `1` | DataLoader `pin_memory` (set `0` to disable on memory-tight hosts). |
+| `CASTLE_TORCH_THREADS` | auto | Cap torch intra-op threads during extraction (auto-capped on many-core / cgroup-limited boxes). |
+| `CASTLE_RESERVED_CORES` | `4` | Cores left free for the OS when sizing pre-process pools. |
+| `CASTLE_CENTROID_WORKERS` / `CASTLE_CENTROID_MAX_WORKERS` | auto / `16` | Pre-process centroid pool size / cap. |
+| `CASTLE_PREPROCESS_WARP_WORKERS` | auto | Pre-process warpAffine / mask-transform pool size. |
+
+**Latent buffering & scratch** (RAM-aware; big-RAM hosts keep latents resident in RAM instead of spilling to slow disk)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CASTLE_SCRATCH_DIR` | auto | Node-local directory for large temp files (latent memmaps, NVENC probes). Auto picks `/dev/shm` on big-RAM hosts, else local `/tmp`; **never** a network FS. |
+| `CASTLE_MEMMAP_THRESHOLD_GB` | RAM-aware | Force the latent-buffer → disk spill threshold (overrides the RAM-aware default). |
+| `CASTLE_LATENT_RAM_FRACTION` | `0.5` | On big-RAM hosts, fraction of available RAM the latent buffer may use before spilling. |
+| `CASTLE_BIG_RAM_GB` | `128` | Total-RAM threshold (GiB) above which a host counts as "big RAM". |
+
+**Video encode**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CASTLE_VIDEO_ENCODER` | `auto` | H.264 encoder for pre-process / mix videos: `auto` (NVENC, falling back to libx264), `nvenc`, or `x264`. |
+
+**Detection overrides** (rarely needed — for exotic mounts / mis-detected containers)
+
+| Variable | Description |
+|----------|-------------|
+| `CASTLE_FORCE_NETWORK_FS` | `1`/`0` to force network-filesystem handling on/off. |
+| `CASTLE_USABLE_CPUS` | Override the detected usable CPU count. |
+| `CASTLE_TOTAL_RAM_GB` | Override the detected total RAM (GiB). |
 
 !!! tip "Multi-GPU (tracking + extraction)"
     When `CASTLE_MULTI_GPU=1` **and** ≥2 CUDA GPUs are visible:

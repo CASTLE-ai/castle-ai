@@ -191,7 +191,9 @@ Clean separation between frontends and business logic. Both frontends (CLI, Grad
 | `config.py` | Constants: checkpoint paths, model IDs, supported models (default `dinov3_vitb16`) |
 | `project.py` | Project config read/write (file inventory) |
 | `project_config.py` | `ProjectConfig` dataclass — typed processing parameters |
-| `environment.py` | Device detection (`cuda`/`mps`/`cpu`), worker count |
+| `environment.py` | Device detection (`cuda`/`mps`/`cpu`), cgroup/network-FS-aware worker count |
+| `runtime_env.py` | Cross-environment detection — filesystem type, cgroup-limited CPU count, RAM, GPU/VRAM, node-local scratch dir, RAM-aware latent budget |
+| `_early_env.py` | Sets `HDF5_USE_FILE_LOCKING=FALSE` at `import castle` (before h5py loads) |
 | `mask_filter.py` | Post-tracking mask filtering — largest component, configurable threshold |
 | `stabilized_camera.py` | `StabilizedCamera`, `extract_centroids_from_masks`, `extract_orientations_from_masks`, `preview_stabilization` — Phase 0 preprocessing (P0) ★ |
 | `logging_config.py` | Centralized logging setup |

@@ -100,6 +100,22 @@ def _enable_cudnn_benchmark_if_not_strict() -> None:
         torch.backends.cudnn.benchmark = True
 
 
+def _compute_determinism_tags(device=None) -> dict:
+    """Record the actual COMPUTE precision / determinism so a saved latent is
+    self-describing. Distinct from the latent_dtype STORAGE precision: the
+    default CUDA path runs the backbone under fp16 autocast with
+    cudnn.benchmark kernel selection, so extraction is NOT bit-reproducible
+    across runs/GPUs (small numerical differences are expected, and for
+    behavioural clustering acceptable). This records what was used; it does
+    not claim determinism."""
+    on_cuda = ("cuda" in str(device)) if device is not None else torch.cuda.is_available()
+    return {
+        "compute_precision": "fp16_autocast" if on_cuda else "fp32",
+        "cudnn_benchmark": bool(torch.backends.cudnn.benchmark),
+        "bit_reproducible": not on_cuda,
+    }
+
+
 class ExtractionCancelled(Exception):
     """Raised inside the per-batch loop when a run's cancel_event is set, so a
     long single-video extraction aborts within ~one batch (the .npz is written
@@ -612,7 +628,11 @@ def extract_roi_latent_from_video(
                 "preprocess_session_id": session_id,
                 "device": str(device) if device else None,
                 "batch_size": int(batch_size),
-                # seed: untracked — extraction is deterministic (fixed weights, no RNG)
+                # Compute precision / determinism: the default CUDA path uses
+                # fp16 autocast + cudnn.benchmark and is NOT bit-reproducible
+                # across runs (small numerical differences are expected/accepted).
+                # seed: untracked (fixed weights, no RNG).
+                **_compute_determinism_tags(device),
             },
             dtype=_resolve_latent_dtype(latent_dtype),
         )
@@ -982,6 +1002,7 @@ def extract_roi_rotation_latent_from_video(
                 "failed_frame_ranges": failed_frame_ranges or None,
                 "remove_background": bool(preprocess_config.remove_background_switch),
                 "preprocess_session_id": session_id,
+                **_compute_determinism_tags(),
             },
         )
 
@@ -1309,6 +1330,7 @@ def extract_roi_latent_from_video_2gpu(
                 "remove_background": bool(preprocess_config.remove_background_switch),
                 "preprocess_session_id": session_id,
                 "batch_size": int(batch_size),
+                **_compute_determinism_tags(),
             },
             dtype=_resolve_latent_dtype(latent_dtype),
         )

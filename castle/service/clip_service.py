@@ -7,7 +7,7 @@ historically tangled into ``castle/ui/cluster_handlers.py``.
 
 This module exposes a single public entry point
 :func:`generate_clip_with_roi_overlay` plus its supporting helpers, so
-the same clip-generation code can be reused from PyQt or a Jupyter
+the same clip-generation code can be reused from the CLI or a Jupyter
 notebook without dragging in the Gradio import path.
 """
 

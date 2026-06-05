@@ -2,14 +2,14 @@
 
 The Gradio handlers used to instantiate :class:`EmbeddingScatterPlot`
 inline. That coupled algorithm code to the UI module and made the
-"build figure" step impossible to call from a notebook or PyQt without
+"build figure" step impossible to call from a notebook or the CLI without
 dragging the Gradio import path along for the ride.
 
 This service exposes two thin helpers that return the plot object plus
 its rendered image, so the handler reduces to "call helper, slot two
 items into Gradio outputs".
 
-It deliberately does **not** depend on ``gradio`` or ``PyQt6`` — only on
+It deliberately does **not** depend on ``gradio`` (or any UI toolkit) — only on
 matplotlib (already a CASTLE dep).
 """
 

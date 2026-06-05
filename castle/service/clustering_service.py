@@ -988,12 +988,11 @@ def apply_cluster_model_to_project(
 # (ARCH-01 / P4)
 #
 # These functions encapsulate "what the algorithm actually does" without any
-# Gradio / PyQt coupling. They take the relevant Latent / LocalLatent /
+# UI coupling. They take the relevant Latent / LocalLatent /
 # LatentAggregator objects explicitly and return structured results.
 #
 # Gradio handlers call them and translate exceptions into ``gr.Info`` /
-# ``gr.Warning``; PyQt panels can call the same functions and translate
-# into Qt signals. The CLI calls ``ClusteringSession`` (which in turn
+# ``gr.Warning``. The CLI calls ``ClusteringSession`` (which in turn
 # wraps these helpers).
 # ---------------------------------------------------------------------------
 
@@ -1004,7 +1003,7 @@ class UMAPRunArtifacts:
 
     Attributes:
         local_latents: The freshly built :class:`LocalLatent` (caller stores
-            this in Gradio state / PyQt model).
+            this in Gradio state).
         resolved_seeds: Per-stage seeds actually used (length =
             ``len(cfg_list)`` where the input was multi-stage).
         status_text: User-facing one-line summary suitable for a status bar.
@@ -1133,7 +1132,7 @@ def submit_local_to_global(
 
     Mirrors what the legacy handler ``import_info_from_local_latent`` did,
     minus the Gradio coupling. The caller wraps the result for Gradio
-    ``outputs=...`` or PyQt slots.
+    ``outputs=...``.
 
     Args:
         latents: Parent :class:`Latent`. Mutated — local clusters are
@@ -1344,8 +1343,7 @@ def restore_session_from_disk(
             messages.
 
     Returns:
-        :class:`RestoredSessionArtifacts` ready to map into Gradio state /
-        PyQt model fields.
+        :class:`RestoredSessionArtifacts` ready to map into Gradio state.
     """
     from castle.core.cluster import LatentAggregator
     from castle.service.plotting_service import plot_syllables_per_video

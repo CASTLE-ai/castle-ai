@@ -123,7 +123,10 @@ class Latent:
         self.time_window = time_window
         self.data = raw[:n].reshape((-1,  num_feature * time_window))
         self.cluster = np.zeros(len(self.data)).astype(int)
-        self.cluster[np.isnan(self.data.sum(axis=1))] = -1
+        # Exclude any non-finite row (NaN OR +/-Inf). np.isnan alone missed Inf
+        # (np.isnan(inf) is False), so Inf rows slipped through to the embedding
+        # and crashed the whole session instead of being marked -1 (contract C-4).
+        self.cluster[~np.isfinite(self.data.sum(axis=1))] = -1
         self.cluster_meta = dict()
         self.behavior_name2cluster_id = dict()
         

@@ -61,14 +61,17 @@ def test_multiscale_pooling_with_roi_mask():
 
 
 def test_multiscale_pooling_empty_mask():
-    """All-zero mask should not produce NaN (clamped to 1e-6)."""
+    """All-zero mask -> NaN. An empty ROI (tracking loss / detection failure)
+    has no valid features, so the latent is NaN (a downstream gap) rather than
+    a near-zero vector. PR2 Stage 4 reverses the earlier clamp-to-1e-6 behaviour
+    that let empty frames form a fake near-origin cluster (contract C-1/C-4)."""
     enc = StubEncoder()
     B, C = 1, 768
     features = torch.randn(B, 37 * 37, C)
     masks = torch.zeros(B, 592, 592)
     result = enc._multiscale_pooling(features, masks, 592, 16, scales=[1, 2, 4])
     assert result.shape == (B, 21 * C)
-    assert not torch.isnan(result).any()
+    assert torch.isnan(result).all()
 
 
 def test_multiscale_pooling_scale_8():
@@ -226,3 +229,46 @@ def test_dinov3_extract_tensor_batch_signature():
     assert 'pooling' in param_names
     assert 'scales' in param_names
     assert 'layers' in param_names
+
+
+# --- PR2 Stage 4: empty-mask frames -> NaN (tracking loss / detection failure) ---
+
+def test_weighted_pooling_empty_mask_is_nan():
+    """A frame with an all-zero ROI mask has no valid features -> NaN latent
+    (not a near-zero vector that would form a fake cluster)."""
+    enc = StubEncoder()
+    B, C = 2, 768
+    features = torch.randn(B, 37 * 37, C)
+    masks = torch.zeros(B, 592, 592)
+    masks[0, 100:400, 100:400] = 1.0   # frame 0 has an ROI
+    # frame 1: empty mask
+    result = enc._weighted_pooling(features, masks, 592, 16)
+    assert result.shape == (B, C)
+    assert not torch.isnan(result[0]).any()   # real frame stays finite
+    assert torch.isnan(result[1]).all()        # empty-mask frame -> NaN
+
+
+def test_multiscale_pooling_mixed_batch_empty_is_nan():
+    """In a batch, only the empty-mask frame becomes NaN; the real frame stays
+    finite (per-frame masking, not whole-batch)."""
+    enc = StubEncoder()
+    B, C = 2, 768
+    features = torch.randn(B, 37 * 37, C)
+    masks = torch.zeros(B, 592, 592)
+    masks[0, 100:400, 100:400] = 1.0
+    result = enc._multiscale_pooling(features, masks, 592, 16, scales=[1, 2])
+    assert result.shape == (B, 5 * C)
+    assert not torch.isnan(result[0]).any()
+    assert torch.isnan(result[1]).all()        # whole-frame empty -> NaN
+
+
+def test_multiscale_pooling_partial_mask_not_nan():
+    """A frame with *some* ROI (non-empty overall) is not NaN even if some SPP
+    sub-regions are empty — only whole-frame-empty frames are NaN."""
+    enc = StubEncoder()
+    B, C = 1, 768
+    features = torch.randn(B, 37 * 37, C)
+    masks = torch.zeros(B, 592, 592)
+    masks[:, 0:80, 0:80] = 1.0   # mask only in one corner → some 4x4 regions empty
+    result = enc._multiscale_pooling(features, masks, 592, 16, scales=[1, 2, 4])
+    assert not torch.isnan(result).any()

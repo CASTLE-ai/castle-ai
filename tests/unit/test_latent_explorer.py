@@ -37,6 +37,18 @@ def test_latent_nan_handling():
     assert lat.cluster[0] == 0
 
 
+def test_latent_inf_handling():
+    """Inf frames must also get cluster=-1 (np.isnan alone missed them, so an
+    Inf row used to slip through and crash the embedding; PR2 Stage 4)."""
+    raw = np.random.randn(50, 768).astype(np.float32)
+    raw[7, :] = np.inf
+    raw[8, 3] = -np.inf  # a single -inf entry is enough to exclude the row
+    lat = Latent(raw, time_window=1, device='cpu')
+    assert lat.cluster[7] == -1
+    assert lat.cluster[8] == -1
+    assert lat.cluster[0] == 0
+
+
 def test_latent_select():
     raw = np.random.randn(100, 768).astype(np.float32)
     lat = Latent(raw, time_window=1, device='cpu')

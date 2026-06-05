@@ -109,6 +109,13 @@ class VisualEncoder(ABC):
         
         weighted_sum = (feats * w[..., None]).sum(dim=(1, 2))
         latents = weighted_sum / sum_w.view(B, 1)
+        # Empty-mask frames (no ROI pixels: tracking loss / detection
+        # failure) have no valid features; mark them NaN so downstream
+        # treats them as gaps, not a near-zero "behavior" (contract C-1/C-4).
+        _empty = w.sum(dim=(1, 2)) <= 1e-6
+        if _empty.any():
+            latents = latents.clone()
+            latents[_empty] = float("nan")
         
         return latents
 
@@ -183,7 +190,16 @@ class VisualEncoder(ABC):
                 # Stack and flatten: (B, s² * C)
                 results.append(torch.stack(region_vecs, dim=1).reshape(B, s * s * C))
 
-        return torch.cat(results, dim=1)  # (B, sum(s²)×C)
+        out = torch.cat(results, dim=1)  # (B, sum(s²)×C)
+        # Whole-frame empty mask -> no valid features anywhere; mark NaN so
+        # the frame is treated as a gap downstream (contract C-1/C-4). A
+        # non-empty frame with some empty sub-regions keeps its SPP cells.
+        _frame_w = w.sum(dim=(1, 2))
+        _empty = _frame_w <= 1e-6
+        if _empty.any():
+            out = out.clone()
+            out[_empty] = float("nan")
+        return out
 
 
     def extract_tensor_batch(self, frame_batch: Any, mask_batch: Any, roi_id: int) -> List[np.ndarray]:

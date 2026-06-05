@@ -50,7 +50,7 @@ def test_load_latent_safe_wrong_shape_raises(tmp_path) -> None:
         load_latent_safe(p)
 
 
-def test_load_latent_safe_nonfinite_values_warn_but_return(tmp_path, caplog) -> None:
+def test_load_latent_safe_nonfinite_converted_to_nan(tmp_path, caplog) -> None:
     p = tmp_path / "nan.npz"
     arr = np.array([[1.0, 2.0], [np.nan, np.inf]], dtype=np.float32)
     _save_npz(p, arr)
@@ -60,6 +60,11 @@ def test_load_latent_safe_nonfinite_values_warn_but_return(tmp_path, caplog) -> 
 
     assert out.shape == (2, 2)
     assert any("non-finite" in rec.message for rec in caplog.records)
+    # Inf is normalised to NaN so EVERY downstream non-finite check excludes the
+    # row (np.isnan(inf) was False, letting Inf crash the embedding later).
+    assert np.isnan(out[1, 0])              # was NaN
+    assert np.isnan(out[1, 1])              # was +inf -> NaN
+    assert out[0, 0] == 1.0 and out[0, 1] == 2.0   # finite values untouched
 
 
 def test_load_latent_safe_corrupt_file_raises(tmp_path) -> None:

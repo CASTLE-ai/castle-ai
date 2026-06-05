@@ -71,9 +71,17 @@ def load_latent_safe(path: Union[str, Path]) -> np.ndarray:
 
     if not np.isfinite(arr).all():
         n_bad = int((~np.isfinite(arr)).sum())
+        # Actually handle non-finite values instead of only warning: normalise
+        # +/-Inf to NaN so EVERY downstream non-finite check catches them
+        # consistently. Previously Inf slipped past the NaN-only row exclusion
+        # (np.isnan(inf) is False) and only blew up later at the embedding's
+        # isfinite assertion, taking down the whole clustering session for one
+        # bad video instead of excluding its bad rows (contract C-4).
         logger.warning(
-            "%s contains %d non-finite values; downstream clustering may "
-            "filter or NaN-propagate them.", path, n_bad,
+            "%s contains %d non-finite values; converting to NaN so the "
+            "affected rows are excluded downstream instead of crashing the "
+            "clustering session.", path, n_bad,
         )
+        arr = np.where(np.isfinite(arr), arr, np.nan)
 
     return arr

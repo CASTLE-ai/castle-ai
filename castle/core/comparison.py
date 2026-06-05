@@ -8,9 +8,34 @@ Reference: von Ziegler et al., Nature Methods 2024 (BehaviorFlow)
 
 from __future__ import annotations
 
+import math
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+
+# Fingerprint output schema version (docs/behavior_data_contract.md C-6). Bumped
+# to 2.0 when fingerprints became dimensioned by the GLOBAL cluster-id set
+# (so every animal's vector has identical length), frequency switched to the
+# valid-frames-only definition, and absent-behavior durations became NaN.
+FINGERPRINT_SCHEMA_VERSION = "2.0"
+
+
+def _perm_p_floor(n_total: int, n_a: int, n_permutations: int) -> float:
+    """Smallest reportable permutation p-value.
+
+    A permutation test over groups of size ``n_a`` / ``n_b`` has at most
+    ``C(n_total, n_a)`` distinct labellings, so the true minimum achievable
+    p-value is ``1 / C(n_total, n_a)`` — for small samples this is far larger
+    than ``1 / (n_permutations + 1)`` and using the latter as the floor reports
+    impossibly-significant p-values (e.g. n=1 per group can never be
+    significant). The floor is the coarser (larger) of the two resolutions.
+    """
+    try:
+        comb = math.comb(n_total, n_a)
+    except ValueError:
+        comb = 1
+    comb = max(comb, 1)
+    return max(1.0 / (n_permutations + 1), 1.0 / comb)
 
 
 @dataclass
@@ -36,8 +61,13 @@ class BehavioralFingerprint:
     cluster_names: List[str]
     n_frames: int
     fps: float
+    # Global cluster-id order this vector is dimensioned by (contract C-6).
+    cluster_id_order: List[int] = field(default_factory=list)
+    schema_version: str = FINGERPRINT_SCHEMA_VERSION
 
-    def to_feature_vector(self, include_transitions: bool = True) -> np.ndarray:
+    def to_feature_vector(
+        self, include_transitions: bool = True, fill_nan: bool = True
+    ) -> np.ndarray:
         """Convert to flat feature vector for multivariate analysis.
 
         Features order: frequencies (K) + bout_counts (K) +
@@ -45,7 +75,12 @@ class BehavioralFingerprint:
         cv_bout_durations (K) + inter_bout_intervals (K) +
         [transition_matrix (K*K)].
 
-        NaN values are replaced with 0.0.
+        Args:
+            include_transitions: append the flattened K×K transition matrix.
+            fill_nan: when True (default), NaN entries (absent-behavior
+                durations) are replaced with 0.0 — required for the multivariate
+                omnibus distances (BFA / energy). Set False for per-feature
+                tests that must distinguish "absent" (NaN) from "0 seconds".
         """
         features = [
             self.frequencies,
@@ -58,8 +93,8 @@ class BehavioralFingerprint:
         vec = np.concatenate(features).astype(np.float64)
         if include_transitions:
             vec = np.concatenate([vec, self.transition_matrix.flatten()])
-        # Replace NaN with 0
-        vec = np.nan_to_num(vec, nan=0.0)
+        if fill_nan:
+            vec = np.nan_to_num(vec, nan=0.0)
         return vec
 
     def feature_names(self, include_transitions: bool = True) -> List[str]:
@@ -121,11 +156,12 @@ def compute_fingerprint(
     cluster_labels: np.ndarray,
     fps: float = 30.0,
     cluster_names: Optional[Dict[int, str]] = None,
+    all_cluster_ids: Optional[List[int]] = None,
 ) -> BehavioralFingerprint:
     """Compute behavioral fingerprint for one animal.
 
-    Uses ethogram engine to extract bout stats and transition matrix,
-    then packages into a BehavioralFingerprint.
+    Uses the ethogram engine to extract bout stats and the transition matrix,
+    then packages them into a fixed-length :class:`BehavioralFingerprint`.
 
     Args:
         animal_id: Identifier for this animal/video.
@@ -133,6 +169,14 @@ def compute_fingerprint(
         cluster_labels: 1-D integer array of per-frame cluster assignments.
         fps: Frames per second.
         cluster_names: Optional mapping of cluster_id → human name.
+        all_cluster_ids: The GLOBAL set of cluster ids shared across every
+            animal being compared. **Pass this** so all fingerprints have the
+            same dimension and the i-th feature means the same behavior for
+            every animal (contract C-6). A behavior absent in this animal is
+            padded — structural fields (frequency, bout_count) with 0, and
+            undefined duration / IBI fields with NaN. When ``None`` the animal's
+            own present clusters are used (back-compat; do not use for
+            cross-animal comparison).
 
     Returns:
         BehavioralFingerprint with all statistics computed.
@@ -142,27 +186,46 @@ def compute_fingerprint(
     labels = np.asarray(cluster_labels)
     ethogram = compute_ethogram(labels, fps=fps, cluster_names=cluster_names)
 
-    # Use sorted cluster_ids for consistent ordering
-    sorted_ids = sorted(ethogram.cluster_names.keys())
+    # Dimension by the GLOBAL cluster set when supplied, so every animal's
+    # vector is the same length and aligned feature-for-feature.
+    if all_cluster_ids is not None:
+        sorted_ids = sorted(int(c) for c in all_cluster_ids)
+    else:
+        sorted_ids = sorted(ethogram.cluster_names.keys())
     K = len(sorted_ids)
-    name_list = [ethogram.cluster_names[cid] for cid in sorted_ids]
+    name_list = [
+        ethogram.cluster_names.get(cid, (cluster_names or {}).get(cid, f"cluster_{cid}"))
+        for cid in sorted_ids
+    ]
 
+    # Structural fields default to 0 (a real "did not occur"); duration/IBI
+    # default to NaN ("undefined" for an absent behavior, not 0 seconds).
     frequencies = np.zeros(K, dtype=np.float64)
     bout_counts_arr = np.zeros(K, dtype=np.float64)
-    mean_durs = np.zeros(K, dtype=np.float64)
-    median_durs = np.zeros(K, dtype=np.float64)
-    cv_durs = np.zeros(K, dtype=np.float64)
-    ibis = np.zeros(K, dtype=np.float64)
+    mean_durs = np.full(K, np.nan, dtype=np.float64)
+    median_durs = np.full(K, np.nan, dtype=np.float64)
+    cv_durs = np.full(K, np.nan, dtype=np.float64)
+    ibis = np.full(K, np.nan, dtype=np.float64)
 
     for i, cid in enumerate(sorted_ids):
         if cid in ethogram.bout_stats:
             bs = ethogram.bout_stats[cid]
-            frequencies[i] = bs.frequency
+            frequencies[i] = bs.frequency_valid_only
             bout_counts_arr[i] = bs.n_bouts
             mean_durs[i] = bs.mean_duration_s
             median_durs[i] = bs.median_duration_s
             cv_durs[i] = bs.cv_duration
             ibis[i] = bs.mean_inter_bout_interval_s
+
+    # Map the ethogram's (present-cluster) transition matrix into the global
+    # K×K, zero-padding rows/cols for behaviors absent in this animal.
+    global_idx = {cid: i for i, cid in enumerate(sorted_ids)}
+    tm = ethogram.transition_matrix
+    trans = np.zeros((K, K), dtype=np.float64)
+    for ai, a_cid in enumerate(tm.cluster_ids):
+        for aj, b_cid in enumerate(tm.cluster_ids):
+            if a_cid in global_idx and b_cid in global_idx:
+                trans[global_idx[a_cid], global_idx[b_cid]] = tm.matrix[ai, aj]
 
     return BehavioralFingerprint(
         animal_id=animal_id,
@@ -173,10 +236,11 @@ def compute_fingerprint(
         median_bout_durations=median_durs,
         cv_bout_durations=cv_durs,
         inter_bout_intervals=ibis,
-        transition_matrix=ethogram.transition_matrix.matrix,
+        transition_matrix=trans,
         cluster_names=name_list,
         n_frames=ethogram.n_frames,
         fps=fps,
+        cluster_id_order=list(sorted_ids),
     )
 
 
@@ -227,7 +291,7 @@ def bfa_test(
 
     # p-value: fraction of permuted distances >= observed (with floor)
     p_value = float(np.mean(null_dist >= observed))
-    p_value = max(p_value, 1.0 / (n_permutations + 1))
+    p_value = max(p_value, _perm_p_floor(n_total, n_a, n_permutations))
 
     return observed, p_value
 
@@ -260,27 +324,34 @@ def energy_distance_test(
     Y = np.array([fp.to_feature_vector() for fp in group_b])
     n_a = len(X)
     Z = np.vstack([X, Y])
+    n_total = len(Z)
+
+    # PERF-04: compute the full N×N pairwise-distance matrix ONCE (a single
+    # GPU/scipy call), then every permutation's energy statistic is plain numpy
+    # indexing into it — avoids ~3*n_permutations tiny pairwise_distance calls
+    # (each a host↔device round-trip on CUDA). Numerically identical: each
+    # sub-block mean equals pairwise_distance(subset, subset).mean(), diagonal
+    # zeros included exactly as before.
+    D = np.asarray(pairwise_distance(Z, Z))
 
     def _energy_stat(idx_a: np.ndarray, idx_b: np.ndarray) -> float:
-        A = Z[idx_a]
-        B = Z[idx_b]
-        cross = pairwise_distance(A, B).mean()
-        within_a = pairwise_distance(A, A).mean() if len(A) > 1 else 0.0
-        within_b = pairwise_distance(B, B).mean() if len(B) > 1 else 0.0
+        cross = D[np.ix_(idx_a, idx_b)].mean()
+        within_a = D[np.ix_(idx_a, idx_a)].mean() if len(idx_a) > 1 else 0.0
+        within_b = D[np.ix_(idx_b, idx_b)].mean() if len(idx_b) > 1 else 0.0
         return 2.0 * cross - within_a - within_b
 
     a_idx = np.arange(n_a)
-    b_idx = np.arange(n_a, len(Z))
+    b_idx = np.arange(n_a, n_total)
     observed = _energy_stat(a_idx, b_idx)
 
     rng = np.random.default_rng(random_state)
     null_dist = np.empty(n_permutations)
     for i in range(n_permutations):
-        perm = rng.permutation(len(Z))
+        perm = rng.permutation(n_total)
         null_dist[i] = _energy_stat(perm[:n_a], perm[n_a:])
 
     p_value = float(np.mean(null_dist >= observed))
-    p_value = max(p_value, 1.0 / (n_permutations + 1))
+    p_value = max(p_value, _perm_p_floor(n_total, n_a, n_permutations))
 
     return float(observed), p_value
 
@@ -395,8 +466,11 @@ def permutation_test_per_feature(
             feature_names, pvalues, pvalues_adj, effect_sizes,
             ci_lower, ci_upper, means_a, means_b
     """
-    vecs_a = np.array([fp.to_feature_vector() for fp in group_a])
-    vecs_b = np.array([fp.to_feature_vector() for fp in group_b])
+    # Keep NaN (do not 0-fill): an absent-behavior duration is undefined, not
+    # 0 seconds, so only animals that exhibited the behavior contribute to that
+    # feature's mean / effect size (contract C-6 missing_duration_policy=NaN).
+    vecs_a = np.array([fp.to_feature_vector(fill_nan=False) for fp in group_a])
+    vecs_b = np.array([fp.to_feature_vector(fill_nan=False) for fp in group_b])
     n_a = vecs_a.shape[0]
     n_b = vecs_b.shape[0]
     n_features = vecs_a.shape[1]
@@ -406,36 +480,52 @@ def permutation_test_per_feature(
     all_vecs = np.vstack([vecs_a, vecs_b])  # (n_total, n_features)
     n_total = n_a + n_b
 
-    # Observed difference in means
-    means_a = vecs_a.mean(axis=0)
-    means_b = vecs_b.mean(axis=0)
-    observed_diff = np.abs(means_a - means_b)
+    # NaN-aware means + permutation. A permutation can land every animal that
+    # exhibits a behavior in one group, leaving the other group's slice all-NaN
+    # → np.nanmean emits "Mean of empty slice"; the result (NaN) is correct and
+    # handled by the `untestable` mask, so silence the cosmetic warning.
+    import warnings
 
-    # Permutation test: vectorised over features
-    rng = np.random.default_rng(random_state)
-    count_ge = np.zeros(n_features, dtype=np.float64)
-    for _ in range(n_permutations):
-        perm = rng.permutation(n_total)
-        perm_a = all_vecs[perm[:n_a]]
-        perm_b = all_vecs[perm[n_a:]]
-        perm_diff = np.abs(perm_a.mean(axis=0) - perm_b.mean(axis=0))
-        count_ge += (perm_diff >= observed_diff).astype(np.float64)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        means_a = np.nanmean(vecs_a, axis=0)
+        means_b = np.nanmean(vecs_b, axis=0)
+        observed_diff = np.abs(means_a - means_b)
+        # Features with no valid observation in a group are not testable.
+        untestable = ~np.isfinite(observed_diff)
+
+        rng = np.random.default_rng(random_state)
+        count_ge = np.zeros(n_features, dtype=np.float64)
+        for _ in range(n_permutations):
+            perm = rng.permutation(n_total)
+            perm_a = np.nanmean(all_vecs[perm[:n_a]], axis=0)
+            perm_b = np.nanmean(all_vecs[perm[n_a:]], axis=0)
+            perm_diff = np.abs(perm_a - perm_b)
+            # NaN >= x is False — harmless for untestable features (set to 1 below).
+            count_ge += (perm_diff >= observed_diff).astype(np.float64)
 
     pvalues = count_ge / n_permutations
-    # Floor p-values
-    pvalues = np.maximum(pvalues, 1.0 / (n_permutations + 1))
+    # Floor at the combinatorially-achievable minimum (small-n honesty).
+    pvalues = np.maximum(pvalues, _perm_p_floor(n_total, n_a, n_permutations))
+    pvalues[untestable] = 1.0
 
     # BH-FDR correction
     pvalues_adj = benjamini_hochberg(pvalues, alpha=alpha)
 
-    # Effect sizes + CIs
+    # Effect sizes + CIs (per feature, over animals with a valid value).
     effect_sizes = np.zeros(n_features, dtype=np.float64)
     ci_lower = np.zeros(n_features, dtype=np.float64)
     ci_upper = np.zeros(n_features, dtype=np.float64)
     for j in range(n_features):
-        g = hedges_g(vecs_a[:, j], vecs_b[:, j])
+        aj = vecs_a[:, j]
+        bj = vecs_b[:, j]
+        aj = aj[np.isfinite(aj)]
+        bj = bj[np.isfinite(bj)]
+        if len(aj) == 0 or len(bj) == 0:
+            continue  # leave effect 0 / CI (0, 0) — not estimable
+        g = hedges_g(aj, bj)
         effect_sizes[j] = g
-        lo, hi = hedges_g_ci(g, n_a, n_b, alpha=alpha)
+        lo, hi = hedges_g_ci(g, len(aj), len(bj), alpha=alpha)
         ci_lower[j] = lo
         ci_upper[j] = hi
 
@@ -446,8 +536,8 @@ def permutation_test_per_feature(
         "effect_sizes": effect_sizes,
         "ci_lower": ci_lower,
         "ci_upper": ci_upper,
-        "means_a": means_a,
-        "means_b": means_b,
+        "means_a": np.nan_to_num(means_a, nan=0.0),
+        "means_b": np.nan_to_num(means_b, nan=0.0),
     }
 
 
@@ -479,8 +569,23 @@ def compare_groups(
     if len(group_a) == 0 or len(group_b) == 0:
         raise ValueError("Both groups must have at least one animal.")
 
+    # Fail loud with a clear message if fingerprints are not dimension-aligned
+    # (build them with a shared all_cluster_ids — contract C-6).
+    lengths = {len(fp.to_feature_vector()) for fp in (*group_a, *group_b)}
+    if len(lengths) > 1:
+        from castle.core.types import CastleDataError
+        raise CastleDataError(
+            "Fingerprints have mismatched feature-vector lengths "
+            f"({sorted(lengths)}); build every animal's fingerprint with the "
+            "same all_cluster_ids so features align (contract C-6)."
+        )
+
     group_a_name = group_a[0].group
     group_b_name = group_b[0].group
+
+    # Small samples cannot reach significance in a permutation test; the
+    # p-value floor reflects this, but flag it explicitly too.
+    small_sample = len(group_a) < 2 or len(group_b) < 2
 
     # 1. BFA omnibus test
     bfa_dist, bfa_p = bfa_test(
@@ -516,6 +621,14 @@ def compare_groups(
     summary_lines = [
         f"=== Group Comparison: {group_a_name} vs {group_b_name} ===",
         f"Sample sizes: n_a={len(group_a)}, n_b={len(group_b)}",
+    ]
+    if small_sample:
+        summary_lines.append(
+            "  ⚠️  WARNING: a group has < 2 animals — a permutation test cannot "
+            "reach significance (p is floored at the combinatorial minimum) and "
+            "effect-size CIs are unreliable. Interpret with caution."
+        )
+    summary_lines += [
         "",
         "--- Omnibus Tests ---",
         f"  BFA: distance={bfa_dist:.4f}, p={bfa_p:.4f} {bfa_sig}",

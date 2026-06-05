@@ -168,6 +168,18 @@ def compare_projects(
     # Merge cluster names from both projects
     cluster_names = {**data_a["cluster_names"], **data_b["cluster_names"]}
 
+    # GLOBAL cluster-id set shared by every animal's fingerprint (contract C-6):
+    # union of named clusters AND any cluster id actually present in the labels
+    # (a label may exist without an id.csv name). Passing this guarantees every
+    # fingerprint has the same dimension and aligned features — otherwise an
+    # animal missing a behavior yields a shorter vector and the comparison
+    # crashes / mis-aligns features.
+    all_ids = {int(c) for c in cluster_names.keys()}
+    for vid in (*data_a["videos"], *data_b["videos"]):
+        lbl = np.asarray(vid["labels"])
+        all_ids.update(int(x) for x in np.unique(lbl) if int(x) != -1)
+    all_cluster_ids = sorted(all_ids)
+
     fps_a = []
     for vid in data_a["videos"]:
         fp = compute_fingerprint(
@@ -176,6 +188,7 @@ def compare_projects(
             cluster_labels=vid["labels"],
             fps=fps,
             cluster_names=cluster_names,
+            all_cluster_ids=all_cluster_ids,
         )
         fps_a.append(fp)
 
@@ -187,6 +200,7 @@ def compare_projects(
             cluster_labels=vid["labels"],
             fps=fps,
             cluster_names=cluster_names,
+            all_cluster_ids=all_cluster_ids,
         )
         fps_b.append(fp)
 
@@ -198,8 +212,13 @@ def compare_projects(
 
     result = compare_groups(fps_a, fps_b, n_permutations=n_permutations)
 
+    from castle.core.comparison import FINGERPRINT_SCHEMA_VERSION
     out = _result_to_dict(result)
     out["status"] = "success"
+    out["fingerprint_schema_version"] = FINGERPRINT_SCHEMA_VERSION
+    out["cluster_id_order"] = list(all_cluster_ids)
+    out["frequency_definition"] = "valid_frames_only"
+    out["missing_duration_policy"] = "NaN"
     out["fingerprints_a"] = [_fingerprint_to_dict(fp) for fp in fps_a]
     out["fingerprints_b"] = [_fingerprint_to_dict(fp) for fp in fps_b]
     return out

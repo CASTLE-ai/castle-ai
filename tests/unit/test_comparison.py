@@ -624,3 +624,78 @@ class TestComparisonService:
         assert len(paths) >= 2
         for p in paths:
             assert os.path.exists(p)
+
+
+# ---------------------------------------------------------------------------
+# PR1 Stage 3 (CRITICAL C2): global cluster-id alignment + small-sample honesty
+# ---------------------------------------------------------------------------
+
+class TestGlobalClusterAlignment:
+    """Fingerprints dimensioned by the GLOBAL cluster set, so cross-animal
+    comparison never crashes or mis-aligns features (contract C-6)."""
+
+    def test_different_cluster_sets_aligned(self):
+        all_ids = [0, 1, 2, 3]
+        labels_a = np.array([0] * 10 + [1] * 10 + [2] * 10)          # no cluster 3
+        labels_b = np.array([0] * 10 + [1] * 10 + [2] * 10 + [3] * 10)
+        fp_a = compute_fingerprint("a", "G", labels_a, fps=10.0, all_cluster_ids=all_ids)
+        fp_b = compute_fingerprint("b", "G", labels_b, fps=10.0, all_cluster_ids=all_ids)
+
+        assert len(fp_a.to_feature_vector()) == len(fp_b.to_feature_vector())
+        assert fp_a.cluster_id_order == fp_b.cluster_id_order == [0, 1, 2, 3]
+        # cluster 3 absent in A: structural 0, duration undefined (NaN)
+        assert fp_a.frequencies[3] == 0.0
+        assert fp_a.bout_counts[3] == 0.0
+        assert np.isnan(fp_a.mean_bout_durations[3])
+        assert fp_a.transition_matrix.shape == (4, 4)
+        # frequency uses valid-frames-only and sums to 1 (no -1 here)
+        assert fp_b.frequencies.sum() == pytest.approx(1.0)
+
+    def test_compare_groups_different_cluster_sets_no_crash(self):
+        all_ids = [0, 1, 2, 3]
+        group_a = [
+            compute_fingerprint(f"a{i}", "A", np.array([0] * 10 + [1] * 10 + [2] * 10),
+                                fps=10.0, all_cluster_ids=all_ids)
+            for i in range(3)
+        ]
+        group_b = [
+            compute_fingerprint(f"b{i}", "B", np.array([0] * 10 + [1] * 10 + [2] * 10 + [3] * 10),
+                                fps=10.0, all_cluster_ids=all_ids)
+            for i in range(3)
+        ]
+        result = compare_groups(group_a, group_b, n_permutations=200)
+        assert isinstance(result, ComparisonResult)
+        assert len(result.feature_names) == len(group_a[0].to_feature_vector())
+
+    def test_mismatched_fingerprint_lengths_raise(self):
+        from castle.core.types import CastleDataError
+        fp_a = _make_fingerprint("a", "A", K=3, seed=1)
+        fp_b = _make_fingerprint("b", "B", K=4, seed=2)  # different length
+        with pytest.raises(CastleDataError, match="mismatched"):
+            compare_groups([fp_a], [fp_b], n_permutations=50)
+
+
+class TestSmallSampleHonesty:
+    def test_n1_group_floored_and_warned(self):
+        all_ids = [0, 1, 2]
+        a = [compute_fingerprint("a0", "A", np.array([0] * 10 + [1] * 10 + [2] * 10),
+                                 fps=10.0, all_cluster_ids=all_ids)]
+        b = [
+            compute_fingerprint(f"b{i}", "B", np.array([0] * 5 + [1] * 15 + [2] * 10),
+                                fps=10.0, all_cluster_ids=all_ids)
+            for i in range(2)
+        ]
+        result = compare_groups(a, b, n_permutations=1000)
+        # n_a=1, n_b=2 → C(3,1)=3 → min achievable p = 1/3
+        assert result.bfa_pvalue >= 1.0 / 3 - 1e-9
+        assert "WARNING" in result.summary
+
+    def test_energy_distance_precomputed_finite(self):
+        all_ids = [0, 1]
+        a = [compute_fingerprint(f"a{i}", "A", np.array([0] * 10 + [1] * 10),
+                                 fps=10.0, all_cluster_ids=all_ids) for i in range(4)]
+        b = [compute_fingerprint(f"b{i}", "B", np.array([0] * 15 + [1] * 5),
+                                 fps=10.0, all_cluster_ids=all_ids) for i in range(4)]
+        dist, p = energy_distance_test(a, b, n_permutations=200)
+        assert np.isfinite(dist)
+        assert 0.0 < p <= 1.0

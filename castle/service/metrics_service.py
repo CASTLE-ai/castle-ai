@@ -65,7 +65,13 @@ def evaluate_project_clustering(
     # ------------------------------------------------------------------
     # 2. Load embedding from NPZ (if available)
     # ------------------------------------------------------------------
+    # Initialise BOTH here so every downstream path has them defined. Previously
+    # labels_for_emb was only set inside the branches, so an npz that loaded but
+    # lacked an "emb" key left it unbound — only a short-circuit on
+    # `embedding is not None` avoided a NameError. Any refactor would have
+    # re-broken it. (PR3 Stage 7.5)
     embedding = None
+    labels_for_emb = None
     npz_files = sorted(
         f for f in os.listdir(cluster_dir) if f.startswith("cluster_") and f.endswith(".npz")
     )

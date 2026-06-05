@@ -7,6 +7,8 @@ Loads cluster data from CASTLE projects and delegates computation to
 import os
 import csv
 import logging
+from typing import Optional, Tuple
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -109,7 +111,7 @@ def _read_behavior_csv(ts_path: str) -> np.ndarray:
     return labels
 
 
-def _read_time_series(ts_path: str):
+def _read_time_series(ts_path: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Read ``behavior`` (+ optional ``exclude_reason``) from a time_series CSV.
 
     Returns ``(labels, exclude_reason)``. ``exclude_reason`` is ``None`` for
@@ -199,6 +201,7 @@ def compute_video_ethogram(
     """
     from castle.core.ethogram import compute_ethogram
 
+    _validate_fps(fps)
     project_path = _resolve_project_path(project_path)
     basename = os.path.splitext(os.path.basename(video_name))[0]
     ts_path = os.path.join(project_path, "cluster", f"time_series_{basename}.csv")
@@ -278,6 +281,177 @@ def _round_or_none(x: float, ndigits: int):
 
 
 # ------------------------------------------------------------------ #
+# Per-video aggregation (contract C-2 / C-3)
+# ------------------------------------------------------------------ #
+
+def _validate_fps(fps) -> None:
+    """fps policy (contract C-2): ``None`` is allowed (read per-video metadata),
+    but a supplied fps must be finite and > 0 — ``0.0`` / negative is not a
+    legal override (no meaning on the time axis)."""
+    if fps is None:
+        return
+    from castle.core.types import CastleDataError
+    if not np.isfinite(fps) or fps <= 0:
+        raise CastleDataError(
+            f"fps must be a finite positive number or None, got {fps!r}."
+        )
+
+
+def _read_cluster_names(project_path: str) -> dict:
+    """Read just the ``{cluster_id: name}`` mapping from ``cluster/id.csv``."""
+    id_csv = os.path.join(project_path, "cluster", "id.csv")
+    names: dict = {}
+    if os.path.exists(id_csv):
+        with open(id_csv, "r") as f:
+            for row in csv.DictReader(f):
+                cid = int(row["Id"])
+                names[cid] = row.get("Name", f"cluster_{cid}")
+    return names
+
+
+def _compute_per_video(project_path, fps, smooth, smooth_window, min_bout_frames):
+    """Compute one Ethogram per video (each with its own fps).
+
+    Returns ``(per_video, video_fps)`` — ``per_video`` is a list of
+    ``(basename, Ethogram)`` and ``video_fps`` maps basename → fps used.
+    """
+    videos = list(_list_video_time_series(project_path))
+    if not videos:
+        raise FileNotFoundError(
+            f"No time_series_*.csv files in {os.path.join(project_path, 'cluster')}. "
+            "Run clustering and submit first."
+        )
+    cluster_names = _read_cluster_names(project_path)
+    per_video = []
+    video_fps: dict = {}
+    for basename, _ in videos:
+        etho = compute_video_ethogram(
+            project_path, basename, cluster_names=cluster_names, fps=fps,
+            smooth=smooth, smooth_window=smooth_window, min_bout_frames=min_bout_frames,
+        )
+        per_video.append((basename, etho))
+        video_fps[basename] = etho.fps
+    return per_video, video_fps
+
+
+def _fps_info(video_fps: dict) -> dict:
+    """Build the mixed-fps reporting block (contract C-2/C-3)."""
+    values = list(video_fps.values())
+    uniform = len({round(v, 6) for v in values}) <= 1
+    return {
+        "fps_policy": "per_video",
+        "video_fps": video_fps,
+        "mixed_fps": not uniform,
+        # representative fps: the common value when uniform, else None (callers
+        # should read per-video values from video_fps).
+        "fps": values[0] if (uniform and values) else None,
+    }
+
+
+def _aggregate_video_ethograms(per_video):
+    """Aggregate per-video Ethograms into one Ethogram (contract C-3).
+
+    Frame-based metrics (transition counts, entropy, stationarity, temporal
+    coherence) are computed from the per-video label sequences joined by a -1
+    separator, so nothing crosses a video boundary; these are fps-independent.
+    Bout durations (fps-dependent) come from each video's own bouts, and bout
+    statistics / coverage are summed across videos.
+    """
+    from collections import defaultdict
+    from castle.core.ethogram import (
+        compute_transition_matrix, compute_temporal_coherence,
+        BoutStatistics, Ethogram, ETHOGRAM_SCHEMA_VERSION,
+    )
+
+    ethograms = [e for _, e in per_video]
+    names: dict = {}
+    for e in ethograms:
+        names.update(e.cluster_names)
+
+    # Join labels with a -1 separator (excluded everywhere) so transition counts
+    # and coherence are summed per video without crossing boundaries.
+    parts = []
+    for i, e in enumerate(ethograms):
+        if i > 0:
+            parts.append(np.array([-1], dtype=np.int64))
+        parts.append(np.asarray(e.cluster_labels, dtype=np.int64))
+    merged = np.concatenate(parts) if parts else np.array([], dtype=np.int64)
+
+    tm = compute_transition_matrix(merged, names)
+    tc = compute_temporal_coherence(merged)
+
+    bouts = [b for e in ethograms for b in e.bouts]
+
+    n_frames = sum(e.n_frames for e in ethograms)
+    n_unlabeled = sum(e.n_unlabeled for e in ethograms)
+    n_valid_frames = sum(e.n_valid_frames for e in ethograms)
+    reason_counts: dict = defaultdict(int)
+    for e in ethograms:
+        for k, v in e.excluded_reason_counts.items():
+            reason_counts[k] += v
+
+    # Per-cluster bout stats from per-video bouts (durations already correct for
+    # each video's fps); inter-bout intervals stay within a video.
+    dur: dict = defaultdict(list)
+    frames: dict = defaultdict(int)
+    ibi: dict = defaultdict(list)
+    for e in ethograms:
+        by_c: dict = defaultdict(list)
+        for b in e.bouts:
+            dur[b.cluster_id].append(b.duration_seconds)
+            frames[b.cluster_id] += b.duration_frames
+            by_c[b.cluster_id].append(b)
+        for cid, bs in by_c.items():
+            ordered = sorted(bs, key=lambda b: b.start_frame)
+            for j in range(len(ordered) - 1):
+                ibi[cid].append(
+                    (ordered[j + 1].start_frame - ordered[j].end_frame) / e.fps
+                )
+
+    bout_stats: dict = {}
+    for cid in sorted(dur):
+        d = np.asarray(dur[cid], dtype=np.float64)
+        mean_d = float(np.mean(d))
+        std_d = float(np.std(d, ddof=0))
+        cv = std_d / mean_d if (mean_d > 0 and np.isfinite(std_d)) else 0.0
+        bout_stats[cid] = BoutStatistics(
+            cluster_id=cid,
+            cluster_name=names.get(cid, f"cluster_{cid}"),
+            n_bouts=int(len(d)),
+            total_frames=int(frames[cid]),
+            frequency=frames[cid] / n_frames if n_frames > 0 else 0.0,
+            mean_duration_s=mean_d,
+            median_duration_s=float(np.median(d)),
+            std_duration_s=std_d,
+            cv_duration=cv,
+            min_duration_s=float(np.min(d)),
+            max_duration_s=float(np.max(d)),
+            mean_inter_bout_interval_s=float(np.mean(ibi[cid])) if ibi[cid] else 0.0,
+            frequency_valid_only=(
+                frames[cid] / n_valid_frames if n_valid_frames > 0 else 0.0
+            ),
+        )
+
+    return Ethogram(
+        cluster_labels=merged,
+        fps=ethograms[0].fps if ethograms else 0.0,
+        n_frames=n_frames,
+        n_clusters=len(names),
+        cluster_names=names,
+        bouts=bouts,
+        bout_stats=bout_stats,
+        transition_matrix=tm,
+        temporal_coherence=tc,
+        n_unlabeled=n_unlabeled,
+        unlabeled_fraction=n_unlabeled / n_frames if n_frames > 0 else 0.0,
+        n_valid_frames=n_valid_frames,
+        valid_frame_fraction=n_valid_frames / n_frames if n_frames > 0 else 1.0,
+        excluded_reason_counts=dict(reason_counts),
+        schema_version=ETHOGRAM_SCHEMA_VERSION,
+    )
+
+
+# ------------------------------------------------------------------ #
 # Public API
 # ------------------------------------------------------------------ #
 
@@ -299,30 +473,18 @@ def analyze_ethogram(
         min_bout_frames: Minimum bout duration for the bout filter.
 
     Returns:
-        Structured dict suitable for JSON serialisation.
+        Structured dict suitable for JSON serialisation. Computed per video
+        (each with its own fps) and aggregated; ``video_fps`` / ``mixed_fps`` /
+        ``fps_policy`` describe the frame rates used (contract C-2/C-3).
     """
-    from castle.core.ethogram import compute_ethogram
-
+    _validate_fps(fps)
     project_path = _resolve_project_path(project_path)
-    data = _load_cluster_data(project_path)
-    effective_fps = fps or data["fps"] or 30.0
-
-    labels = data["labels"]
-
-    if smooth:
-        from castle.core.temporal_smooth import smooth_labels
-        labels = smooth_labels(
-            labels, method="both",
-            window=smooth_window, min_bout_frames=min_bout_frames,
-        )
-
-    ethogram = compute_ethogram(
-        labels,
-        fps=effective_fps,
-        cluster_names=data["cluster_names"],
-        exclude_reason=data.get("exclude_reason"),
+    per_video, video_fps = _compute_per_video(
+        project_path, fps, smooth, smooth_window, min_bout_frames
     )
-    result = _ethogram_to_dict(ethogram)
+    agg = _aggregate_video_ethograms(per_video)
+    result = _ethogram_to_dict(agg)
+    result.update(_fps_info(video_fps))  # overrides the representative "fps"
     result["status"] = "success"
     result["project_path"] = project_path
     if smooth:
@@ -335,12 +497,14 @@ def analyze_ethogram(
 
 
 def get_transition_matrix(project_path: str) -> dict:
-    """Get transition matrix for a project."""
-    from castle.core.ethogram import compute_transition_matrix
+    """Get the aggregated transition matrix for a project.
 
+    Transition counts are summed per video (no cross-video transitions) and
+    normalised once (contract C-3). Frame-based, so fps does not affect it.
+    """
     project_path = _resolve_project_path(project_path)
-    data = _load_cluster_data(project_path)
-    tm = compute_transition_matrix(data["labels"], data["cluster_names"])
+    per_video, video_fps = _compute_per_video(project_path, None, False, 5, 3)
+    tm = _aggregate_video_ethograms(per_video).transition_matrix
     return {
         "status": "success",
         "matrix": tm.matrix.tolist(),
@@ -349,43 +513,30 @@ def get_transition_matrix(project_path: str) -> dict:
         "cluster_names": tm.cluster_names,
         "n_transitions": tm.n_transitions,
         "entropy": round(tm.entropy, 4),
-        "stationarity": round(tm.stationarity, 4),
+        "stationarity": round(tm.stationarity, 4),  # deprecated (cosine)
+        "stationarity_jsd": _round_or_none(tm.stationarity_jsd, 4),
+        "stationarity_status": tm.stationarity_status,
+        "mixed_fps": _fps_info(video_fps)["mixed_fps"],
     }
 
 
 def get_bout_statistics(project_path: str, fps: float = None) -> dict:
-    """Get per-cluster bout statistics."""
-    from castle.core.ethogram import extract_bouts, compute_bout_statistics
+    """Get per-cluster bout statistics, computed per video and aggregated.
 
+    Each video's bouts use that video's own fps; no bout crosses a video
+    boundary (contract C-2/C-3).
+    """
+    _validate_fps(fps)
     project_path = _resolve_project_path(project_path)
-    data = _load_cluster_data(project_path)
-    effective_fps = fps or data["fps"] or 30.0
-
-    bouts = extract_bouts(data["labels"], effective_fps)
-    stats = compute_bout_statistics(
-        bouts, data["labels"], effective_fps, data["cluster_names"]
-    )
-
-    return {
+    per_video, video_fps = _compute_per_video(project_path, fps, False, 5, 3)
+    full = _ethogram_to_dict(_aggregate_video_ethograms(per_video))
+    result = {
         "status": "success",
-        "bout_stats": {
-            str(cid): {
-                "cluster_name": bs.cluster_name,
-                "n_bouts": bs.n_bouts,
-                "total_frames": bs.total_frames,
-                "frequency": round(bs.frequency, 4),
-                "mean_duration_s": round(bs.mean_duration_s, 4),
-                "median_duration_s": round(bs.median_duration_s, 4),
-                "std_duration_s": round(bs.std_duration_s, 4),
-                "cv_duration": round(bs.cv_duration, 4),
-                "min_duration_s": round(bs.min_duration_s, 4),
-                "max_duration_s": round(bs.max_duration_s, 4),
-                "mean_inter_bout_interval_s": round(bs.mean_inter_bout_interval_s, 4),
-            }
-            for cid, bs in stats.items()
-        },
-        "n_bouts_total": len(bouts),
+        "bout_stats": full["bout_stats"],
+        "n_bouts_total": full["n_bouts_total"],
     }
+    result.update(_fps_info(video_fps))
+    return result
 
 
 def compute_ethogram_from_data(labels, fps: float, cluster_names: dict = None):

@@ -259,7 +259,9 @@ class ReportGenerator:
         try:
             from castle.service.ethogram_service import analyze_ethogram  # noqa: PLC0415
 
-            data = analyze_ethogram(self.project_path, fps=30.0)
+            # fps=None → analyze_ethogram reads each video's real fps
+            # (contract C-2); do not hard-code 30.
+            data = analyze_ethogram(self.project_path)
             self._ethogram_data = data
         except Exception as exc:
             return (

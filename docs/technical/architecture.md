@@ -6,11 +6,11 @@
 ┌────────────────────────────────────────────────────────────────┐
 │                        Frontend Layer                          │
 │                                                                │
-│  castle/cli/          castle/ui/           castle/desktop/     │
-│  (typer CLI)          (Gradio Web UI)      (PyQt6 App)        │
-└────────────┬───────────────┬───────────────────┬──────────────┘
-             │               │                   │
-             ▼               ▼                   ▼
+│  castle/cli/                      castle/ui/                   │
+│  (typer CLI)                      (Gradio Web UI)              │
+└────────────┬───────────────────────────┬──────────────────────┘
+             │                           │
+             ▼                           ▼
 ┌────────────────────────────────────────────────────────────────┐
 │                      castle/service/                           │
 │                      (Service Layer)                           │
@@ -124,7 +124,6 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 | `info_cmd.py` | `castle info <project>` |
 | `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export/export-nwb` |
 | `compare_cmd.py` | `castle compare run/fingerprint` |
-| `gui_cmd.py` | `castle gui` — launch the PyQt6 desktop app |
 | `batch_cmd.py` 🟢 | `castle batch run/status/report` — batch processing across multiple experiments (P4) |
 
 ### `castle/ui/` — Gradio Web Interface
@@ -158,32 +157,9 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module.
 | `plot_mask_info.py` | (component) | Mask info / contour overlay utilities |
 | `HANDLER_GUIDE.md` 🔷 | (guide) | UI handler pattern guide — thin-handler / fat-service convention, anti-patterns, error handling contract |
 
-### `castle/desktop/` — PyQt6 Desktop Application
-
-Native desktop GUI using [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) and [pyqtgraph](https://pyqtgraph.readthedocs.io/).
-
-8 tabs: **0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Annotator | 6. Analysis | 7. Export**
-
-| Module | Purpose |
-|--------|---------|
-| `main_window.py` | Main window with 8 tabs |
-| `services/worker_threads.py` | QThread `ServiceWorker` for background tasks |
-| `components/syllable_bar.py` | pyqtgraph-based syllable bar widget |
-| `components/embedding_view.py` | Embedding scatter view |
-| `components/video_player.py` | In-app video player |
-| `components/cluster_tree.py` | Hierarchical cluster tree widget |
-| `widgets/project_panel.py` | Tab 0 — Project management |
-| `widgets/source_panel.py` | Tab 1 — Video source |
-| `widgets/tracking_panel.py` | Tab 2 — ROI tracking |
-| `widgets/extract_panel.py` | Tab 3 — Feature extraction |
-| `widgets/cluster_panel.py` | Tab 4 — Behavior Microscope (UMAP + DBSCAN) |
-| `widgets/annotator_panel.py` | Tab 5 — Cluster Annotator (grid video, labels, comments, auto-save) |
-| `widgets/analysis_panel.py` | Tab 6 — Analysis (Ethogram + Quality Metrics sub-tabs) |
-| `widgets/export_panel.py` | Tab 7 — Export (ZIP with selectable components) |
-
 ### `castle/service/` — Service Layer
 
-Clean separation between frontends and business logic. All three frontends (CLI, Gradio, Desktop) call these services.
+Clean separation between frontends and business logic. Both frontends (CLI, Gradio) call these services.
 
 | Module | Purpose |
 |--------|---------|

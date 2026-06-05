@@ -76,7 +76,6 @@ castle/
 ├── core/           # 核心演算法 (extractor, cluster, ethogram, metrics, models...)
 ├── service/        # Service Layer (project, tracking, extraction, clustering, annotation...)
 ├── ui/             # Gradio 前端 (7 tabs: Project→Export)
-├── desktop/        # PyQt6 前端 (7 tabs: 對齊 Gradio)
 ├── cli/            # CLI 介面 (castle command)
 ├── visualization/  # 繪圖工具
 ├── utils/          # 工具函數 (video_io, h5_io, video_align)

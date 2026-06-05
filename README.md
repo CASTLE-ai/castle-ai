@@ -48,10 +48,9 @@
   - **Stabilized Camera Preprocessing** (Phase 0): Zero-phase Butterworth low-pass filtering of centroid trajectories + dynamic crop extraction → 518×518 stabilised MP4 ready for DINOv2 (`castle preprocess`)
   - **Service Layer**: Clean separation between UI and business logic
   - **CLI Frontend**: Full command-line interface via `castle` command
-  - **Desktop App**: PyQt6 native 8-tab application with pyqtgraph visualization
-  - **Cluster Annotator** (Tab 5 desktop / sub-tab in Gradio 4): Grid video browser, per-session annotations, comment field, auto-save on label change / comment blur, mask contour overlay, speed control
-  - **Analysis Tab** (Tab 6 desktop / Tab 5 Gradio): Ethogram (raster + transition matrix + bout stats), Quality Metrics (silhouette, CH, DB, V-measure, NMI, ARI), Group Comparison placeholder
-  - **Export Tab** (Tab 7 desktop / Tab 6 Gradio): ZIP download with selectable components (masks, latent, cluster results, annotations, grid videos, analysis outputs)
+  - **Cluster Annotator** (sub-tab in Gradio 4): Grid video browser, per-session annotations, comment field, auto-save on label change / comment blur, mask contour overlay, speed control
+  - **Analysis Tab** (Tab 5 Gradio): Ethogram (raster + transition matrix + bout stats), Quality Metrics (silhouette, CH, DB, V-measure, NMI, ARI), Group Comparison placeholder
+  - **Export Tab** (Tab 6 Gradio): ZIP download with selectable components (masks, latent, cluster results, annotations, grid videos, analysis outputs)
   - **Multi-scale Pooling**: Spatial pyramid pooling for richer latent representations
   - **Session Management**: Multiple clustering sessions per project with `SessionManager`
   - **NWB Export**: `castle ethogram export-nwb` — Neurodata Without Borders format
@@ -162,17 +161,6 @@ python app.py
 
 Opens at [http://localhost:7860](http://localhost:7860) with 7 tabs:
 `0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Analysis | 6. Export`
-
-=== "PyQt6 Desktop App"
-
-```bash
-castle gui
-# or
-python -m castle.desktop
-```
-
-Native 8-tab desktop GUI:
-`0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Annotator | 6. Analysis | 7. Export`
 
 === "CLI"
 

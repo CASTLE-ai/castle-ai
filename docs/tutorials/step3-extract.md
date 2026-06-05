@@ -109,10 +109,10 @@ The log shows:
 ![Extraction progress](../assets/screenshots/tutorial-step3-extract.png)
 
 !!! tip "Multi-GPU extraction (opt-in)"
-    On a machine with two or more CUDA GPUs you can speed up extraction by setting the environment variable `CASTLE_MULTI_GPU=1` in your environment before launching CASTLE (the Gradio app, the desktop app, and the CLI all honour it). CASTLE then splits a single video's frames by range across the available GPUs (each GPU runs the full decode → preprocess → encode on its half, and the results are merged in original order). On two identical GPUs this is bit-identical to the single-GPU output and roughly **1.9× faster**. The feature is **off by default** (single GPU).
+    On a machine with two or more CUDA GPUs you can speed up extraction by setting the environment variable `CASTLE_MULTI_GPU=1` in your environment before launching CASTLE (the Gradio app and the CLI both honour it). CASTLE then splits a single video's frames by range across the available GPUs (each GPU runs the full decode → preprocess → encode on its half, and the results are merged in original order). On two identical GPUs this is bit-identical to the single-GPU output and roughly **1.9× faster**. The feature is **off by default** (single GPU).
 
     ```bash
-    CASTLE_MULTI_GPU=1 python -m castle.desktop
+    CASTLE_MULTI_GPU=1 python app.py
     ```
 
 ---

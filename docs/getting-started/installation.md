@@ -96,14 +96,6 @@ Download each file and place it in the `ckpt/` directory:
 
     If everything is set up correctly, a Gradio web UI will launch at [http://localhost:7860](http://localhost:7860).
 
-=== "PyQt6 Desktop App"
-
-    ```bash
-    castle gui
-    # or
-    python -m castle.desktop
-    ```
-
 === "CLI"
 
     ```bash

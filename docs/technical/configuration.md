@@ -17,18 +17,6 @@ python app.py [OPTIONS]
 | `--root PATH` | Custom project storage path | `projects/` |
 | `--share` | Enable Gradio public URL (auto-enabled on Colab) | `False` |
 
-### PyQt6 Desktop App
-
-```bash
-castle gui [OPTIONS]
-# or: python -m castle.desktop [OPTIONS]
-```
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--storage PATH` | Custom project storage path | `projects/` |
-| `--project NAME` | Auto-open this project on startup | `None` |
-
 ### CLI
 
 ```bash
@@ -190,7 +178,7 @@ Smaller eps → more clusters. Larger eps → fewer clusters.
 |----------|-------------|
 | `COLAB_GPU` | Auto-detected in Google Colab; enables `--share` and Colab-specific paths |
 | `HDF5_USE_FILE_LOCKING` | Set to `FALSE` by `app.py` to avoid HDF5 locking issues |
-| `CASTLE_MULTI_GPU` | Opt-in multi-GPU for tracking **and** latent extraction (Gradio app, desktop app, or CLI). Default OFF. Set to `1` to enable. |
+| `CASTLE_MULTI_GPU` | Opt-in multi-GPU for tracking **and** latent extraction (Gradio app or CLI). Default OFF. Set to `1` to enable. |
 | `CASTLE_MULTI_GPU_DETERMINISTIC` | Opt-in: force cuDNN-deterministic during multi-GPU runs for per-GPU reproducibility, at a throughput cost. Default OFF (speed). |
 
 !!! tip "Multi-GPU (tracking + extraction)"

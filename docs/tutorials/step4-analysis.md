@@ -234,10 +234,6 @@ After generating clusters, use the **Cluster Annotator** sub-tab to review and l
 
 When tracking data is available, ROI mask contours are drawn over the video frames so you can confirm the tracked region corresponds to the animal.
 
-### Speed Control (Desktop App)
-
-The PyQt6 desktop app includes a **playback speed** selector (0.25×, 0.5×, 1×, 2×) for reviewing grid videos.
-
 ---
 
 ## Tips

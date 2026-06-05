@@ -45,7 +45,7 @@ Before feature extraction, the **StabilizedCamera** module normalises each frame
 - **Zero-phase Butterworth low-pass filter** (`filtfilt`, fc = 0.25 Hz, order 2) applied to centroid x(t) and heading angle θ(t) — no temporal delay
 - **Dynamic crop window**: `max(300, 2 × (‖residual‖ + 75))` px, adapting to fast movements
 - **Output**: 518×518 px MP4 saved to `preprocessed/{video}/stabilized.mp4`
-- Available via CLI (`castle preprocess`), Gradio UI (Tracking tab → Preprocessing sub-tab), and PyQt desktop app
+- Available via CLI (`castle preprocess`) and Gradio UI (Tracking tab → Preprocessing sub-tab)
 
 This ensures that the extracted features encode **posture and movement** rather than arena position or heading direction.
 
@@ -95,7 +95,6 @@ After clustering, annotate discovered clusters with behavior labels:
 - **Per-session annotations** — label name and comment saved per clustering session
 - **Auto-save** — labels and comments saved automatically on change / focus-out
 - **Mask contour overlay** — ROI contours drawn over video frames
-- **Speed control** — playback speed selector in the desktop app
 
 ### 7. Downstream Analysis
 
@@ -111,7 +110,7 @@ Package results as a ZIP archive with selectable components (masks, latent featu
 
 ## GUI vs Programmatic
 
-CASTLE offers three interfaces:
+CASTLE offers two interfaces:
 
 ### Gradio Web UI (Recommended for exploration)
 
@@ -130,29 +129,6 @@ Interactive web interface at `http://localhost:7860` with **7 tabs** following t
 | 4 | Behavior Microscope | UMAP + DBSCAN clustering + Cluster Annotator |
 | 5 | Analysis | Ethogram, Quality Metrics, Group Comparison |
 | 6 | Export | ZIP download with selectable data components |
-
-### PyQt6 Desktop App
-
-```bash
-python -m castle.desktop
-```
-or via CLI:
-```bash
-castle gui
-```
-
-Native desktop application with **8 tabs**:
-
-| Tab | Name |
-|-----|------|
-| 0 | Project |
-| 1 | Upload Videos |
-| 2 | Tracking ROIs |
-| 3 | Extract Latent |
-| 4 | Behavior Microscope |
-| 5 | Annotator |
-| 6 | Analysis |
-| 7 | Export |
 
 ### Jupyter Notebooks
 

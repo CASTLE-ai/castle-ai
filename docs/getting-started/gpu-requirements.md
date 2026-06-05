@@ -22,7 +22,7 @@ Models are loaded sequentially (not simultaneously), so peak VRAM is determined 
     CASTLE can run without a GPU, but performance will be significantly slower — particularly for tracking (SAM + DeAOT) and feature extraction (DINOv3, default `dinov3_vitb16`). GPU-accelerated clustering via cuml will be unavailable.
 
 !!! tip "Multi-GPU Extraction (Optional)"
-    If you have **2 or more CUDA GPUs**, you can opt into parallel latent extraction by setting the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction — it applies to the Gradio app, the PyQt desktop app, and the CLI. When enabled, the frames of a single video are split by range across the available GPUs (each GPU runs the full decode → preprocess → encode on its half, and results are merged in the original frame order). This yields roughly **1.9× speedup on 2 GPUs** and is bit-identical to single-GPU output on identical GPUs. It is **off by default** (single GPU).
+    If you have **2 or more CUDA GPUs**, you can opt into parallel latent extraction by setting the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction — it applies to the Gradio app and the CLI. When enabled, the frames of a single video are split by range across the available GPUs (each GPU runs the full decode → preprocess → encode on its half, and results are merged in the original frame order). This yields roughly **1.9× speedup on 2 GPUs** and is bit-identical to single-GPU output on identical GPUs. It is **off by default** (single GPU).
 
 ### RAM
 

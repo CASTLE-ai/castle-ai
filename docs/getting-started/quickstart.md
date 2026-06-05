@@ -17,16 +17,6 @@ This guide walks you through a complete analysis using a demo video in under 5 m
 
     The Gradio web UI opens at [http://localhost:7860](http://localhost:7860).
 
-=== "PyQt6 Desktop App"
-
-    ```bash
-    castle gui
-    # or
-    python -m castle.desktop
-    ```
-
-    A native desktop window opens with 8 tabs.
-
 ---
 
 ## 2. Create a Project

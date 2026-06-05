@@ -87,7 +87,7 @@
 4. Check GPU utilization — ensure the GPU is actually being used
 
 !!! tip "Multi-GPU extraction (opt-in)"
-    If you have 2 or more CUDA GPUs, set the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction (the Gradio app, the desktop app, and the CLI all honour it). Latent extraction for each video then splits its frames by range across the GPUs (each GPU runs the full decode → preprocess → encode on its half, and the results are merged in original order). On two identical GPUs this is bit-identical to single-GPU output and roughly 1.9× faster. It is **off** by default (single GPU).
+    If you have 2 or more CUDA GPUs, set the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction (the Gradio app and the CLI both honour it). Latent extraction for each video then splits its frames by range across the GPUs (each GPU runs the full decode → preprocess → encode on its half, and the results are merged in original order). On two identical GPUs this is bit-identical to single-GPU output and roughly 1.9× faster. It is **off** by default (single GPU).
 
 ### "Please click Apply on Preprocess settings first"
 

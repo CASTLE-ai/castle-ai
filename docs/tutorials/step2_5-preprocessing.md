@@ -18,7 +18,7 @@ to produce a head-fixed, dynamically-cropped video that is optimal for DINOv3 fe
 
 The `StabilizedCamera` module applies a **zero-phase Butterworth low-pass filter** to the body
 centroid trajectory and heading angle extracted from the tracking masks, then extracts a
-dynamically-sized crop centred on the filtered trajectory and resized to 518×518 px.
+dynamically-sized crop centred on the filtered trajectory and resized to 592×592 px.
 
 ```
 mask_list.h5  (tracking output)
@@ -100,7 +100,7 @@ ROI 1 and Head as ROI 2 in the tracking step, use `--body-roi 1 --head-roi 2`.
         --video animal.mp4 \
         --body-roi 1 --head-roi 2 \
         --fc 0.25 --order 2 \
-        --margin 75 --min-crop 300 --output-size 518
+        --margin 75 --min-crop 300 --output-size 592
     ```
 
     The command prints a progress bar and diagnostic metrics when finished:
@@ -115,12 +115,11 @@ ROI 1 and Head as ROI 2 in the tracking step, use `--body-roi 1 --head-roi 2`.
 
 === "Gradio Web UI"
 
-    1. Switch to the **2. Tracking ROIs** tab
-    2. Open the **Preprocessing** sub-tab
-    3. Select the project video from the dropdown
-    4. Enter Body ROI id and Head ROI id
-    5. Adjust filter parameters if needed
-    6. Click **Run Preprocessing**
+    1. Switch to the **3. Pre-process (Optional)** tab
+    2. Select the project video from the dropdown
+    3. Enter Body ROI id and Head ROI id
+    4. Adjust filter parameters if needed
+    5. Click **Run Preprocessing**
 
     A preview clip is shown inline when processing completes.
 
@@ -140,7 +139,7 @@ ROI 1 and Head as ROI 2 in the tracking step, use `--body-roi 1 --head-roi 2`.
         order=2,
         margin=75,
         min_crop=300,
-        output_size=518,
+        output_size=592,
         preview_duration=10.0,
     )
 
@@ -182,7 +181,7 @@ projects/my_project/
         └── stabilized_preview.mp4  # Short preview clip (first preview_duration seconds)
 ```
 
-Use `stabilized.mp4` as the video source in the **3. Extract Latent** tab.
+Use `stabilized.mp4` as the video source in the **4. Extract Latent** tab.
 
 ---
 

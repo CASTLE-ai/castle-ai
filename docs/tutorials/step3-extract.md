@@ -1,6 +1,6 @@
 # Step 3: Extract Latent Features
 
-The **3. Extract Latent** tab uses visual foundation models to extract feature representations from tracked ROIs. These features encode the animal's posture and movement in each frame as a high-dimensional vector.
+The **4. Extract Latent** tab uses visual foundation models to extract feature representations from tracked ROIs. These features encode the animal's posture and movement in each frame as a high-dimensional vector.
 
 ---
 

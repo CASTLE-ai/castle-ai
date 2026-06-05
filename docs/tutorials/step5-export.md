@@ -1,10 +1,10 @@
 # Step 5: Export and Use Results
 
-After completing the behavior analysis, CASTLE provides a dedicated **6. Export** tab for packaging project data, plus several output files generated automatically during analysis.
+After completing the behavior analysis, CASTLE provides a dedicated **7. Export** tab for packaging project data, plus several output files generated automatically during analysis.
 
 ---
 
-## Export Tab (6. Export)
+## Export Tab (7. Export)
 
 The Export tab lets you select which data components to include in a downloadable ZIP archive:
 
@@ -17,7 +17,7 @@ The Export tab lets you select which data components to include in a downloadabl
 | **Grid Videos** | `cluster/grid_videos/*.mp4` — pre-rendered cluster mosaic clips |
 | **Analysis Outputs** | `analysis/` + session analysis folders |
 
-1. Switch to the **6. Export** tab
+1. Switch to the **7. Export** tab
 2. Select a session (for annotations/grid videos)
 3. Check the components you want
 4. Click **Package ZIP** — the archive is built and a download link appears

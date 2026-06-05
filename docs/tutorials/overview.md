@@ -44,8 +44,8 @@ Before feature extraction, the **StabilizedCamera** module normalises each frame
 
 - **Zero-phase Butterworth low-pass filter** (`filtfilt`, fc = 0.25 Hz, order 2) applied to centroid x(t) and heading angle θ(t) — no temporal delay
 - **Dynamic crop window**: `max(300, 2 × (‖residual‖ + 75))` px, adapting to fast movements
-- **Output**: 518×518 px MP4 saved to `preprocessed/{video}/stabilized.mp4`
-- Available via CLI (`castle preprocess`) and Gradio UI (Tracking tab → Preprocessing sub-tab)
+- **Output**: 592×592 px MP4 saved to `preprocessed/{video}/stabilized.mp4`
+- Available via CLI (`castle preprocess`) and Gradio UI (Tab 3: Pre-process)
 
 This ensures that the extracted features encode **posture and movement** rather than arena position or heading direction.
 
@@ -118,17 +118,18 @@ CASTLE offers two interfaces:
 python app.py
 ```
 
-Interactive web interface at `http://localhost:7860` with **7 tabs** following the pipeline:
+Interactive web interface at `http://localhost:7860` with **8 tabs** following the pipeline:
 
 | Tab | Name | Purpose |
 |-----|------|---------|
 | 0 | Project | Create / open projects |
 | 1 | Upload Videos | Import video files |
-| 2 | Tracking ROIs | SAM labeling + DeAOT tracking + batch + **Preprocessing** sub-tab |
-| 3 | Extract Latent | DINOv3 feature extraction (DINOv2 still selectable) |
-| 4 | Behavior Microscope | UMAP + DBSCAN clustering + Cluster Annotator |
-| 5 | Analysis | Ethogram, Quality Metrics, Group Comparison |
-| 6 | Export | ZIP download with selectable data components |
+| 2 | Tracking ROIs | SAM labeling + DeAOT tracking + batch |
+| 3 | Pre-process (Optional) | Stabilized-camera preprocessing |
+| 4 | Extract Latent | DINOv3 feature extraction (DINOv2 still selectable) |
+| 5 | Behavior Microscope | UMAP + DBSCAN clustering + Cluster Annotator |
+| 6 | Analysis | Ethogram, Quality Metrics, Group Comparison |
+| 7 | Export | ZIP download with selectable data components |
 
 ### Jupyter Notebooks
 

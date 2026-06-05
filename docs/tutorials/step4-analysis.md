@@ -1,6 +1,6 @@
 # Step 4: Behavior Analysis
 
-The **4. Behavior Microscope** tab is where CASTLE's core analysis happens — transforming latent features into interpretable behavioral categories through dimensionality reduction and clustering.
+The **5. Behavior Microscope** tab is where CASTLE's core analysis happens — transforming latent features into interpretable behavioral categories through dimensionality reduction and clustering.
 
 The tab contains two sub-tabs:
 
@@ -30,7 +30,7 @@ This is an **iterative, hierarchical** process. You start with broad categories 
 
 ### Initialize
 
-1. Switch to the **4. Behavior Microscope** tab
+1. Switch to the **5. Behavior Microscope** tab
 2. In the **Input Setting** accordion, configure:
 
     | Parameter | Description | Default |
@@ -219,7 +219,7 @@ After submitting, the following are generated:
 
 After generating clusters, use the **Cluster Annotator** sub-tab to review and label them:
 
-1. Switch to the **Cluster Annotator** sub-tab within **4. Behavior Microscope**
+1. Switch to the **Cluster Annotator** sub-tab within **5. Behavior Microscope**
 2. Select the clustering session from the dropdown and click **Load Cluster Data**
 3. A list of clusters appears on the left panel
 4. Click a cluster to load its **grid video** — a mosaic of representative video clips
@@ -251,4 +251,4 @@ When tracking data is available, ROI mask contours are drawn over the video fram
 
 ## Next Step
 
-After labeling clusters, explore downstream analysis in **5. Analysis** (Ethogram, Quality Metrics, Group Comparison), then proceed to [**Step 5: Export Results**](step5-export.md).
+After labeling clusters, explore downstream analysis in **6. Analysis** (Ethogram, Quality Metrics, Group Comparison), then proceed to [**Step 5: Export Results**](step5-export.md).

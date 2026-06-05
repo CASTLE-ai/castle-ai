@@ -13,7 +13,7 @@ CASTLE is a **training-free** framework for unsupervised animal behavior analysi
 - 🎯 **Training-free** — no manual labeling or model training required
 - 🐭 **Cross-species** — works on mice, rats, flies, C. elegans, and more
 - 🧠 **Foundation model powered** — SAM + DeAOT + DINOv3 (DINOv2 still selectable)
-- 📹 **Stabilized Camera Preprocessing** — zero-phase Butterworth filtering of centroid trajectories with dynamic crop extraction, producing head-fixed 518×518 video optimal for the DINO encoder
+- 📹 **Stabilized Camera Preprocessing** — zero-phase Butterworth filtering of centroid trajectories with dynamic crop extraction, producing head-fixed 592×592 video optimal for the DINO encoder
 - 🖥️ **Interactive GUI** — Gradio web UI
 - 🔬 **Hierarchical analysis** — explore behavior at multiple magnification scales
 - 🏷️ **Cluster Annotator** — grid video browser with per-session labels, comment field, and auto-save

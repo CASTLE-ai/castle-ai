@@ -121,7 +121,7 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 | `extract_cmd.py` | `castle extract <project>` |
 | `track_cmd.py` | `castle track <project>` |
 | `preprocess_cmd.py` | `castle preprocess <project> --video … --body-roi … --head-roi …` ★ |
-| `info_cmd.py` | `castle info <project>` |
+| (in `main.py`) | `castle info <project>` — alias for `castle project info` |
 | `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export/export-nwb` |
 | `compare_cmd.py` | `castle compare run/fingerprint` |
 | `batch_cmd.py` 🟢 | `castle batch run/status/report` — batch processing across multiple experiments (P4) |
@@ -130,11 +130,11 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 
 Built on [Gradio](https://gradio.app/). Each tab has its own module.
 
-7 top-level tabs: **0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Extract Latent | 4. Behavior Microscope | 5. Analysis | 6. Export**
+8 top-level tabs: **0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Pre-process (Optional) | 4. Extract Latent | 5. Behavior Microscope | 6. Analysis | 7. Export**
 
 | Module | Tab | Purpose |
 |--------|-----|---------|
-| `main_ui.py` | — | Creates the top-level app with all 7 tabs |
+| `main_ui.py` | — | Creates the top-level app with all 8 tabs |
 | `project_ui.py` | 0. Project | Create, open, delete projects |
 | `source_ui.py` | 1. Upload Videos | Upload local files or scan server directories |
 | `edit_ui.py` | 2. Tracking ROIs | Container for all tracking sub-UIs |
@@ -144,16 +144,16 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module.
 | `track_ui.py` | └─ Tracking | Run DeAOT tracking with progress |
 | `post_track_ui.py` | └─ Post-Track | Post-process and review tracking results |
 | `batch_track_ui.py` | └─ Batch | Process multiple videos |
-| `preprocess_ui.py` | └─ Preprocessing | Stabilized camera preprocessing (P0) ★ |
-| `extract_ui.py` | 3. Extract Latent | Configure and run feature extraction |
-| `cluster_page_ui.py` | 4. Behavior Microscope | UMAP + DBSCAN clustering workspace |
+| `preprocess_ui.py` | 3. Pre-process (Optional) | Stabilized camera preprocessing (P0) ★ |
+| `extract_ui.py` | 4. Extract Latent | Configure and run feature extraction |
+| `cluster_page_ui.py` | 5. Behavior Microscope | UMAP + DBSCAN clustering workspace |
 | `embedding_scatter.py` | └─ (component) | Plotly embedding scatter widget |
 | `cluster_handlers.py` | └─ (component) | Cluster operation callbacks |
 | `cluster_tree.py` | └─ (component) | Hierarchical cluster tree view |
 | `cluster_input_ui.py` | └─ (component) | Clustering parameter input widgets |
 | `annotator_ui.py` | └─ Cluster Annotator | Grid video browser, per-session labels, auto-save |
-| `analysis_ui.py` | 5. Analysis | Ethogram, Quality Metrics sub-tabs, Group Comparison placeholder |
-| `export_ui.py` | 6. Export | ZIP download with selectable data components |
+| `analysis_ui.py` | 6. Analysis | Ethogram, Quality Metrics sub-tabs, Group Comparison placeholder |
+| `export_ui.py` | 7. Export | ZIP download with selectable data components |
 | `plot_mask_info.py` | (component) | Mask info / contour overlay utilities |
 | `HANDLER_GUIDE.md` 🔷 | (guide) | UI handler pattern guide — thin-handler / fat-service convention, anti-patterns, error handling contract |
 
@@ -338,7 +338,7 @@ projects/my-project/
 │       └── mask_list.h5                     # HDF5 with per-frame masks
 ├── preprocessed/                            # Stabilized camera output (Phase 0) ★
 │   └── video1.mp4/
-│       ├── stabilized.mp4                   # Full-length stabilised video (518×518)
+│       ├── stabilized.mp4                   # Full-length stabilised video (592×592)
 │       └── stabilized_preview.mp4           # 10-second preview clip
 ├── crop/                                    # Cropped/aligned videos
 │   └── video1.mp4/

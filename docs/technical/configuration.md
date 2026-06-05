@@ -103,7 +103,7 @@ Defines paths and parameters for all models:
 
 ## Extraction Parameters
 
-Configured in the **3. Extract Latent** tab:
+Configured in the **4. Extract Latent** tab:
 
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
@@ -129,7 +129,7 @@ Configured in the **3. Extract Latent** tab:
 
 ## UMAP Parameters
 
-Configured in the **4. Behavior Microscope** tab. See [Behavior Analysis Tutorial](../tutorials/step4-analysis.md) for preset details.
+Configured in the **5. Behavior Microscope** tab. See [Behavior Analysis Tutorial](../tutorials/step4-analysis.md) for preset details.
 
 ### Custom Configuration Format
 

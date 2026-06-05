@@ -49,6 +49,7 @@ logger = setup_logger(__name__)
 # Parallel centroid extraction tuning (Phase A). Overridable via env.
 _CENTROID_MIN_PARALLEL = 2000     # below this frame count, run serial (pool overhead wins)
 _CHUNKS_PER_WORKER = 3            # over-chunk for load balance (missing-frame chunks are cheap)
+_CENTROID_MAX_WORKERS = 16        # I/O-bound; beyond ~16 workers HDF5 throughput saturates
 
 
 class StabilizedCamera:
@@ -488,12 +489,24 @@ def _get_mp_context():
 
 
 def _resolve_centroid_workers(n_frames: int) -> int:
-    """Worker count for centroid extraction. Short clips run serial; otherwise the
-    shared policy (``cpu_count - reserved``, ``CASTLE_CENTROID_WORKERS`` overrides,
-    ``"1"`` forces serial) — no hardcoded cap, scales with the host."""
+    """Worker count for centroid extraction.
+
+    Short clips run serial. Otherwise the shared policy (cpu_count − reserved,
+    ``CASTLE_CENTROID_WORKERS`` overrides, ``"1"`` → serial) capped at
+    ``CASTLE_CENTROID_MAX_WORKERS`` (default 16). The cap prevents spawning 60+
+    processes on high-core-count server CPUs where the HDF5 I/O throughput
+    saturates well before the core count, and the Manager IPC would become the
+    bottleneck on machines with many logical cores.
+    """
     if n_frames < _CENTROID_MIN_PARALLEL:
         return 1
-    return resolve_workers("CASTLE_CENTROID_WORKERS")
+    workers = resolve_workers("CASTLE_CENTROID_WORKERS")
+    raw_max = os.environ.get("CASTLE_CENTROID_MAX_WORKERS", "").strip()
+    try:
+        max_w = max(1, int(raw_max)) if raw_max else _CENTROID_MAX_WORKERS
+    except ValueError:
+        max_w = _CENTROID_MAX_WORKERS
+    return min(workers, max_w)
 
 
 def _extract_body_head_serial(
@@ -595,12 +608,14 @@ def extract_body_head_centroids(
     head = np.full((n_frames, 2), np.nan, dtype=np.float64)
 
     ctx = _get_mp_context()
-    manager = None
     executor = None
     try:
-        manager = ctx.Manager()
-        progress_dict = manager.dict()
-        mp_cancel = manager.Event()
+        # ctx.Event() uses an OS-level semaphore — picklable + shared across
+        # forkserver/spawn workers without a Manager server process.  The old
+        # Manager()-based dict/event caused the "unexpected EOF" crash on
+        # high-core-count EPYC/Xeon servers where 60+ workers overwhelmed the
+        # Manager's socket IPC.
+        mp_cancel = ctx.Event()
         executor = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
         logger.info(
             "extract_body_head_centroids: %d frames, %d workers, %d chunks (%s)",
@@ -609,8 +624,7 @@ def extract_body_head_centroids(
         futures = {
             executor.submit(
                 centroid_chunk_worker,
-                (mask_h5_path, int(body_roi_id), int(head_roi_id), s, e,
-                 progress_dict, mp_cancel),
+                (mask_h5_path, int(body_roi_id), int(head_roi_id), s, e, mp_cancel),
             ): (s, e)
             for (s, e) in bounds
         }
@@ -631,12 +645,15 @@ def extract_body_head_centroids(
                     "extract_body_head_centroids: %d/%d chunks done (%d pending)",
                     len(bounds) - len(pending), len(bounds), len(pending),
                 )
-            if progress_callback:
-                frames_done = sum(progress_dict.values())
-                progress_callback(
-                    min(1.0, frames_done / max(n_frames, 1)),
-                    f"Centroids {frames_done}/{n_frames}",
-                )
+                if progress_callback:
+                    frames_done = sum(
+                        futures[f][1] - futures[f][0]
+                        for f in set(futures) - pending
+                    )
+                    progress_callback(
+                        min(1.0, frames_done / max(n_frames, 1)),
+                        f"Centroids {frames_done}/{n_frames}",
+                    )
     except PreprocessCancelled:
         raise
     except Exception as exc:  # noqa: BLE001 — pool unavailable / worker crash → serial fallback
@@ -646,10 +663,6 @@ def extract_body_head_centroids(
         )
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
-        if manager is not None:
-            manager.shutdown()
-            manager = None
-            executor = None
         return _extract_body_head_serial(
             mask_h5_path, body_roi_id, head_roi_id, n_frames,
             progress_callback=progress_callback, cancel_event=cancel_event,
@@ -657,8 +670,6 @@ def extract_body_head_centroids(
     finally:
         if executor is not None:
             executor.shutdown(wait=True)
-        if manager is not None:
-            manager.shutdown()
 
     _interp_nan_inplace(body, n_frames, f"roi_id={int(body_roi_id)} (body)")
     _interp_nan_inplace(head, n_frames, f"roi_id={int(head_roi_id)} (head)")

@@ -43,11 +43,9 @@ def centroid_chunk_worker(args):
     Parameters
     ----------
     args : tuple
-        ``(mask_h5_path, body_roi_id, head_roi_id, start, stop,
-        progress_dict, mp_cancel)`` where ``progress_dict`` is a
-        ``multiprocessing.Manager().dict`` (this worker writes
-        ``progress_dict[start] = frames_done_in_chunk`` periodically) and
-        ``mp_cancel`` is a ``Manager().Event`` polled per frame.
+        ``(mask_h5_path, body_roi_id, head_roi_id, start, stop, mp_cancel)``
+        where ``mp_cancel`` is a ``ctx.Event()`` (OS semaphore, no Manager)
+        polled per frame for cooperative cancellation.
 
     Returns
     -------
@@ -60,17 +58,13 @@ def centroid_chunk_worker(args):
 
     from castle.utils.h5_io import H5IO
 
-    (mask_h5_path, body_roi_id, head_roi_id, start, stop,
-     progress_dict, mp_cancel) = args
+    (mask_h5_path, body_roi_id, head_roi_id, start, stop, mp_cancel) = args
 
     body_roi_id = int(body_roi_id)
     head_roi_id = int(head_roi_id)
     n = stop - start
     body = np.full((n, 2), np.nan, dtype=np.float64)
     head = np.full((n, 2), np.nan, dtype=np.float64)
-
-    _FLUSH_EVERY = 200
-    local_done = 0
 
     with H5IO(mask_h5_path, read_only=True) as h5:
         for j in range(n):
@@ -91,10 +85,5 @@ def centroid_chunk_worker(args):
                         cv2, np, (mask == head_roi_id).astype(np.uint8))
                     if hd is not None:
                         head[j, 0], head[j, 1] = hd
-            local_done += 1
-            if progress_dict is not None and local_done % _FLUSH_EVERY == 0:
-                progress_dict[start] = local_done
 
-    if progress_dict is not None:
-        progress_dict[start] = local_done
     return start, body, head

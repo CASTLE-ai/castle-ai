@@ -210,6 +210,54 @@ def test_scratch_dir_warns_when_only_network_fs(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
+# RAM-aware latent budget (the core cloud-vs-dev lever)
+# ---------------------------------------------------------------------------
+
+def test_is_big_ram_box(monkeypatch):
+    monkeypatch.setattr(rt, "total_ram_bytes", lambda: 1000 * rt._GiB)
+    assert rt.is_big_ram_box() is True
+    monkeypatch.setattr(rt, "total_ram_bytes", lambda: 32 * rt._GiB)
+    assert rt.is_big_ram_box() is False
+    monkeypatch.setattr(rt, "total_ram_bytes", lambda: None)
+    assert rt.is_big_ram_box() is False
+
+
+def test_latent_budget_small_ram_box_keeps_default(monkeypatch):
+    # dev box: 32 GB → conservative ~2 GiB default, spills big buffers to disk.
+    monkeypatch.delenv("CASTLE_MEMMAP_THRESHOLD_GB", raising=False)
+    monkeypatch.setattr(rt, "total_ram_bytes", lambda: 32 * rt._GiB)
+    monkeypatch.setattr(rt, "available_ram_bytes", lambda: 26 * rt._GiB)
+    assert rt.latent_ram_budget_bytes() == 2 * rt._GiB
+
+
+def test_latent_budget_big_ram_box_scales(monkeypatch):
+    # cloud box: 1 TB → ~half of available RAM, so latents stay resident.
+    monkeypatch.delenv("CASTLE_MEMMAP_THRESHOLD_GB", raising=False)
+    monkeypatch.delenv("CASTLE_LATENT_RAM_FRACTION", raising=False)
+    monkeypatch.setattr(rt, "total_ram_bytes", lambda: 1000 * rt._GiB)
+    monkeypatch.setattr(rt, "available_ram_bytes", lambda: 900 * rt._GiB)
+    assert rt.latent_ram_budget_bytes() == int(0.5 * 900 * rt._GiB)
+
+
+def test_latent_budget_explicit_override_wins(monkeypatch):
+    # Even on a big-RAM box, an explicit pin is honoured exactly (dev / tests).
+    monkeypatch.setenv("CASTLE_MEMMAP_THRESHOLD_GB", "4")
+    monkeypatch.setattr(rt, "total_ram_bytes", lambda: 1000 * rt._GiB)
+    assert rt.latent_ram_budget_bytes() == 4 * (1024 ** 3)
+
+
+def test_scratch_dir_fallback_when_tmp_too_small(monkeypatch):
+    # local /tmp lacks room → fall back to the caller's output dir (dev safety).
+    monkeypatch.setattr(rt.os.path, "isdir", lambda p: p != "/dev/shm")
+    monkeypatch.setattr(rt.tempfile, "gettempdir", lambda: "/tmp")
+    monkeypatch.setattr(rt, "is_network_fs", lambda p: False)
+    monkeypatch.setattr(rt, "_free_bytes", lambda p: 1 * rt._GiB)  # tiny /tmp
+    monkeypatch.setattr(rt, "total_ram_bytes", lambda: 32 * rt._GiB)
+    out = rt.scratch_dir(min_free_bytes=10 * rt._GiB, fallback="/proj/latent")
+    assert out == "/proj/latent"
+
+
+# ---------------------------------------------------------------------------
 # summary
 # ---------------------------------------------------------------------------
 

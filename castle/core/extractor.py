@@ -167,10 +167,14 @@ def _alloc_latent_out(rows: int, dim: int, out_dir: Optional[str] = None):
     "Too many open files" across many videos.
     """
     import tempfile
-    from castle.core.cluster import _memmap_threshold_bytes
+    from castle.core import runtime_env
     nbytes = rows * dim * 4  # float32
-    if rows > 0 and nbytes > _memmap_threshold_bytes():
-        d = out_dir or tempfile.gettempdir()
+    # RAM-aware: on a big-RAM box the budget is huge so the buffer stays in RAM
+    # (never touches the slow network disk); on a small-RAM dev box it keeps the
+    # conservative ~2 GiB threshold and spills to node-local scratch. ``out_dir``
+    # (the latent dir) is only a last-resort fallback, NOT the primary target.
+    if rows > 0 and nbytes > runtime_env.latent_ram_budget_bytes():
+        d = runtime_env.scratch_dir(min_free_bytes=nbytes, fallback=out_dir)
         os.makedirs(d, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=d, suffix=".latents.dat")
         os.close(fd)

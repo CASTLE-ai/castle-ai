@@ -295,29 +295,70 @@ def _free_bytes(path: str) -> int:
         return 0
 
 
+def _big_ram_threshold_bytes() -> int:
+    try:
+        return int(float(os.environ.get("CASTLE_BIG_RAM_GB", "128")) * _GiB)
+    except ValueError:
+        return 128 * _GiB
+
+
+def is_big_ram_box() -> bool:
+    """True on a server with abundant RAM (cloud), False on a workstation (dev).
+
+    Threshold is ``CASTLE_BIG_RAM_GB`` (default 128). Used to decide when RAM is
+    plentiful enough to keep large buffers resident / spill to RAM-backed tmpfs
+    instead of touching the slow shared disk.
+    """
+    total = total_ram_bytes()
+    return total is not None and total >= _big_ram_threshold_bytes()
+
+
+def latent_ram_budget_bytes() -> int:
+    """Max latent-buffer size (bytes) to keep in RAM before spilling to a disk
+    memmap. The dominant cross-environment lever (per the cloud insight: huge RAM,
+    slow disk).
+
+    - ``CASTLE_MEMMAP_THRESHOLD_GB`` set → honour it exactly (dev pin / tests),
+      delegating to the existing resolver so behaviour is byte-identical.
+    - small-RAM box (dev) → the same conservative default (~2 GiB): big buffers
+      spill to local disk, unchanged from today.
+    - big-RAM box (cloud) → a fraction (``CASTLE_LATENT_RAM_FRACTION``, default
+      0.5) of currently-available RAM, so a video's latents stay resident and
+      never touch CephFS.
+    """
+    from castle.core.cluster import _memmap_threshold_bytes  # lazy: pulls numpy
+    default = _memmap_threshold_bytes()
+    if os.environ.get("CASTLE_MEMMAP_THRESHOLD_GB"):
+        return default
+    if not is_big_ram_box():
+        return default
+    avail = available_ram_bytes() or total_ram_bytes()
+    if not avail:
+        return default
+    try:
+        frac = float(os.environ.get("CASTLE_LATENT_RAM_FRACTION", "0.5"))
+    except ValueError:
+        frac = 0.5
+    return max(default, int(frac * avail))
+
+
 def _shm_is_good_target(min_free_bytes: int) -> bool:
     """Whether ``/dev/shm`` (RAM-backed tmpfs) is a sane spill target here.
 
     Spilling to /dev/shm consumes RAM — great on a big-RAM cloud box (RAM is
     abundant, the real disk is slow CephFS), but counter-productive on a small-
-    RAM workstation where we spill *because* RAM is tight. So require both a
-    large total RAM (``CASTLE_SHM_MIN_TOTAL_RAM_GB``, default 128) and >= 1.5x
-    free headroom for the request.
+    RAM workstation where we spill *because* RAM is tight. So require a big-RAM
+    box and >= 1.5x free headroom for the request.
     """
     shm = "/dev/shm"
     if not (os.path.isdir(shm) and fs_type(shm) == "tmpfs"):
         return False
-    total = total_ram_bytes()
-    try:
-        min_total = float(os.environ.get("CASTLE_SHM_MIN_TOTAL_RAM_GB", "128")) * _GiB
-    except ValueError:
-        min_total = 128 * _GiB
-    if total is None or total < min_total:
+    if not is_big_ram_box():
         return False  # small-RAM box → spill to real local disk instead
     return min_free_bytes <= 0 or _free_bytes(shm) >= int(min_free_bytes * 1.5)
 
 
-def scratch_dir(min_free_bytes: int = 0) -> str:
+def scratch_dir(min_free_bytes: int = 0, fallback: Optional[str] = None) -> str:
     """Resolve a node-local directory for large temporary files (memmaps, encode
     probes). NEVER returns a network filesystem silently.
 
@@ -326,9 +367,13 @@ def scratch_dir(min_free_bytes: int = 0) -> str:
       2. ``/dev/shm`` when it is a RAM-backed tmpfs AND the box has lots of RAM
          with >= 1.5x headroom — ideal on big-RAM cloud boxes (spill to RAM, not
          the slow network disk); skipped on small-RAM workstations.
-      3. ``tempfile.gettempdir()`` when it is NOT a network FS.
-      4. Fallback to ``gettempdir()`` with a loud warning (everything looked
-         network-backed) so a multi-GB memmap never lands on CephFS unannounced.
+      3. ``tempfile.gettempdir()`` when it is NOT a network FS and has room.
+      4. ``fallback`` (the caller's output dir) when local /tmp is unusable —
+         preserves the old "temp next to output" behaviour as a last resort
+         (local on a workstation; only network-backed in the cloud, where we'd
+         essentially never reach here because big buffers stay in RAM).
+      5. ``gettempdir()`` with a loud warning otherwise, so a multi-GB memmap
+         never lands on CephFS unannounced.
     """
     explicit = os.environ.get("CASTLE_SCRATCH_DIR", "").strip()
     if explicit:
@@ -342,13 +387,17 @@ def scratch_dir(min_free_bytes: int = 0) -> str:
         return "/dev/shm"
 
     tmp = tempfile.gettempdir()
-    if not is_network_fs(tmp):
+    tmp_ok = not is_network_fs(tmp) and (min_free_bytes <= 0 or _free_bytes(tmp) >= min_free_bytes)
+    if tmp_ok:
         return tmp
 
+    if fallback:
+        return fallback
+
     logger.warning(
-        "Scratch dir %s is on a network filesystem (%s); large temporary files "
-        "will be slow. Set CASTLE_SCRATCH_DIR to node-local storage (e.g. a "
-        "local SSD or /dev/shm).", tmp, fs_type(tmp),
+        "Scratch dir %s is on a network filesystem (%s) or out of space; large "
+        "temporary files will be slow. Set CASTLE_SCRATCH_DIR to node-local "
+        "storage (e.g. a local SSD or /dev/shm).", tmp, fs_type(tmp),
     )
     return tmp
 

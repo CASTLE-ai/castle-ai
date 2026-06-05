@@ -126,7 +126,16 @@ def save_latent_with_metadata(
         src = latent_array
         if latent_array.dtype != store_dtype:
             import tempfile
-            fd, cast_tmp = tempfile.mkstemp(dir=str(latent_path.parent), suffix=".cast.dat")
+            from castle.core import runtime_env
+            # Cast temp goes to node-local scratch, NOT next to the output (which
+            # is on CephFS in the cloud). Falls back to the output dir only if no
+            # local scratch has room. Matches _alloc_latent_out's policy.
+            cast_nbytes = int(np.prod(latent_array.shape)) * store_dtype.itemsize
+            cast_dir = runtime_env.scratch_dir(
+                min_free_bytes=cast_nbytes, fallback=str(latent_path.parent)
+            )
+            os.makedirs(cast_dir, exist_ok=True)
+            fd, cast_tmp = tempfile.mkstemp(dir=cast_dir, suffix=".cast.dat")
             os.close(fd)
             cast = np.memmap(cast_tmp, dtype=store_dtype, mode="w+", shape=latent_array.shape)
             CH = 8192

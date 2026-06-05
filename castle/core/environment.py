@@ -66,11 +66,28 @@ def get_device() -> str:
     return env.device
 
 
-def get_num_workers(task_type: str = 'default') -> int:
+def _env_int(name: str) -> 'int | None':
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def get_num_workers(task_type: str = 'default', *, fs_path: 'str | None' = None) -> int:
     """Get optimal number of DataLoader workers based on system resources.
 
     This is the single canonical source for worker count across CASTLE.
     All modules should use this instead of inline cpu_count calculations.
+
+    Unlike a raw ``os.cpu_count()``, this uses the *usable* core count
+    (cgroup/affinity aware via :mod:`castle.core.runtime_env`), so a container
+    limited to N cores on a 64-core host sizes pools to N, not 64. It also
+    enforces an absolute cap and, when ``fs_path`` is on a network filesystem,
+    a lower cap — too many workers thrash a shared FS (HDF5 round-trips) and
+    starve the GPU rather than feeding it.
 
     Args:
         task_type:
@@ -79,17 +96,39 @@ def get_num_workers(task_type: str = 'default') -> int:
             'tracking' — GPU-heavy batch inference; fewer workers to save
                 GPU memory and avoid contention.
             'default' — balanced middle-ground.
+        fs_path: If given and on a network FS (CephFS/NFS), apply the lower
+            ``CASTLE_NETWORK_FS_WORKERS`` cap (default 8).
 
     Returns:
         Number of workers (always >= 1).
+
+    Env overrides:
+        CASTLE_EXTRACTION_WORKERS / CASTLE_NUM_WORKERS — force the count
+            (authoritative; bypasses the caps).
+        CASTLE_MAX_EXTRACTION_WORKERS — absolute cap (default 16).
+        CASTLE_NETWORK_FS_WORKERS — network-FS cap (default 8).
     """
-    cpu_count = os.cpu_count() or 4
+    from castle.core import runtime_env
 
+    override = _env_int('CASTLE_EXTRACTION_WORKERS') if task_type == 'extraction' else None
+    if override is None:
+        override = _env_int('CASTLE_NUM_WORKERS')
+    if override is not None:
+        return max(1, override)
+
+    cpu = runtime_env.usable_cpu_count()
     if task_type == 'extraction':
-        workers = max(1, cpu_count // 2)
+        workers = max(1, cpu // 2)
     elif task_type == 'tracking':
-        workers = max(1, min(4, cpu_count // 4))
+        workers = max(1, min(4, cpu // 4))
     else:
-        workers = max(1, cpu_count // 4)
+        workers = max(1, cpu // 4)
 
-    return workers
+    cap = _env_int('CASTLE_MAX_EXTRACTION_WORKERS') or 16
+    workers = min(workers, cap)
+
+    if fs_path is not None and runtime_env.is_network_fs(fs_path):
+        net_cap = _env_int('CASTLE_NETWORK_FS_WORKERS') or 8
+        workers = min(workers, net_cap)
+
+    return max(1, workers)

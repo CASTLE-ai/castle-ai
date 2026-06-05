@@ -191,6 +191,11 @@ def _build_extractor_loader_kwargs(batch_size: int, num_workers: int, pin_memory
     the master-seed-derived ``torch.Generator`` for reproducibility
     (BUG-09, set by P0-B).
     """
+    # CASTLE_PIN_MEMORY lets a memory-pressured / cgroup-limited box turn off
+    # pinned-buffer allocation (default keeps the caller's choice, normally True).
+    pm_env = os.environ.get("CASTLE_PIN_MEMORY", "").strip().lower()
+    if pm_env:
+        pin_memory = pm_env not in ("0", "false", "no", "off")
     kwargs = dict(
         batch_size=batch_size,
         shuffle=False,
@@ -198,13 +203,18 @@ def _build_extractor_loader_kwargs(batch_size: int, num_workers: int, pin_memory
         pin_memory=pin_memory,
     )
     # prefetch_factor=2 (PyTorch default) keeps the GPU fed without exhausting
-    # pinned memory on servers with many workers × large video frames.
-    # persistent_workers intentionally omitted: we create one DataLoader per
-    # video (single-pass), so workers are never reused across calls.  Keeping
+    # pinned memory on servers with many workers × large video frames. On a
+    # high-latency network FS a larger CASTLE_PREFETCH_FACTOR can hide read
+    # latency. persistent_workers intentionally omitted: we create one DataLoader
+    # per video (single-pass), so workers are never reused across calls. Keeping
     # them "persistent" only adds cleanup complexity and risks a hang when
     # h5py.File.close() is slow (e.g. on NFS) during worker teardown.
     if num_workers > 0:
-        kwargs["prefetch_factor"] = 2
+        pf_raw = os.environ.get("CASTLE_PREFETCH_FACTOR", "").strip()
+        try:
+            kwargs["prefetch_factor"] = max(1, int(pf_raw)) if pf_raw else 2
+        except ValueError:
+            kwargs["prefetch_factor"] = 2
     gen = make_torch_generator()
     if gen is not None:
         kwargs["generator"] = gen
@@ -553,7 +563,7 @@ def extract_roi_latent_from_video(
     # 4. Processing — when several videos extract concurrently (one per GPU) the
     # caller passes a reduced num_workers (total // n_gpu) so the DataLoaders
     # don't oversubscribe the CPU and starve the GPUs.
-    NUM_WORKERS = num_workers if num_workers is not None else get_num_workers('extraction')
+    NUM_WORKERS = num_workers if num_workers is not None else get_num_workers('extraction', fs_path=mask_list_path)
 
     # Get video length
     try:
@@ -924,7 +934,7 @@ def extract_roi_rotation_latent_from_video(
     embed_dim = observer.n_feature
 
     # 4. Processing
-    NUM_WORKERS = get_num_workers('extraction')
+    NUM_WORKERS = get_num_workers('extraction', fs_path=mask_list_path)
 
     try:
         with VideoReader(source_path) as vr:
@@ -1245,7 +1255,7 @@ def extract_roi_latent_from_video_2gpu(
     bounds = [(k * video_len) // n_dev for k in range(n_dev + 1)]
     ranges = [(bounds[k], bounds[k + 1]) for k in range(n_dev)]
 
-    per_thread_workers = max(0, get_num_workers('extraction') // n_dev)
+    per_thread_workers = max(0, get_num_workers('extraction', fs_path=mask_list_path) // n_dev)
     results: dict = {}
     errors: dict = {}
 

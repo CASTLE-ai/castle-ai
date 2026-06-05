@@ -1,0 +1,7 @@
+# These source files are stored with CRLF line endings. Mark them -text so git
+# does NO end-of-line conversion (stored and checked out verbatim), preventing
+# silent renormalization that would corrupt multi-line patches / explode diffs.
+# See workspace learning LRN-20260604-002.
+castle/core/extractor.py -text
+castle/core/models.py    -text
+castle/core/data.py      -text

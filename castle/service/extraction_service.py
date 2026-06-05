@@ -68,6 +68,7 @@ def extract_latent(
     feature_layers: Optional[list] = None,
     session_id: Optional[str] = None,
     latent_dtype: str = 'float32',
+    cancel_event=None,
 ) -> str:
     """
     Extract latent features from a tracked video ROI.
@@ -143,6 +144,7 @@ def extract_latent(
                 feature_layers=feature_layers,
                 source_video_path=svp, mask_path_override=mpo, session_id=session_id,
                 device=device, num_workers=per_worker, latent_dtype=latent_dtype,
+                cancel_event=cancel_event,
             )
 
         def _on_done(vname: str, res) -> None:
@@ -161,7 +163,8 @@ def extract_latent(
         # Speed by default (fast cuDNN benchmark + fp16, like single-GPU). Opt in
         # to per-GPU-reproducible cuDNN-deterministic via CASTLE_MULTI_GPU_DETERMINISTIC.
         with deterministic_ctx_if_enabled():
-            pool_out = run_on_device_pool(video_list, _worker, device_ids, on_done=_on_done)
+            pool_out = run_on_device_pool(video_list, _worker, device_ids, on_done=_on_done,
+                                          cancel_event=cancel_event)
         for vname, res in zip(video_list, pool_out):
             if isinstance(res, BaseException):
                 logger.error("Extraction failed for %s: %s", vname, res)
@@ -217,6 +220,7 @@ def extract_latent(
                     mask_path_override=mask_path_override,
                     session_id=session_id,
                     latent_dtype=latent_dtype,
+                    cancel_event=cancel_event,
                 )
                 if path:
                     paths.append(path)

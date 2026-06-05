@@ -275,7 +275,7 @@ class ClusteringSession:
                 'exclude_reason': video_reason_frames,
             })
 
-            video_basename = os.path.basename(v).split('.')[0]
+            video_basename = os.path.splitext(os.path.basename(v))[0]
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
             df2.to_csv(ts_path, index=False)
             ts_paths.append(ts_path)
@@ -288,8 +288,11 @@ class ClusteringSession:
         
         # Save embedding
         emb_name = ''
-        for _, it in self.local_latents.export.items():
-            emb_name += it['name'] + '_'
+        # Encode child names in sorted-cluster-ID order so restore can re-pair
+        # them to cluster IDs deterministically (label order is not necessarily
+        # ID order, which mis-mapped historic names on restore).
+        for cid in sorted(self.local_latents.export):
+            emb_name += self.local_latents.export[cid]['name'] + '_'
         emb_path = os.path.join(cluster_path, f'cluster_{emb_name}.npz')
         
         index_mask = self.local_latents.index_mask
@@ -348,7 +351,7 @@ class ClusteringSession:
         ts_paths = []
         cum = 0
         for vn, v in self.aggregator.videos_meta:
-            video_basename = os.path.basename(v).split('.')[0]
+            video_basename = os.path.splitext(os.path.basename(v))[0]
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
             if os.path.exists(ts_path):
                 ts_df = pd.read_csv(ts_path)
@@ -361,7 +364,18 @@ class ClusteringSession:
                         f"it would mislabel this and every subsequent video — refusing. "
                         f"Re-save the session or delete the corrupt CSV and re-cluster."
                     )
-                self.latents.cluster[cum:cum + vn] = bin_clusters
+                # A NaN/empty cell makes pandas read the whole column as float;
+                # assigning that into the int cluster array would silently
+                # truncate / produce garbage IDs. Refuse instead.
+                if not np.isfinite(np.asarray(bin_clusters, dtype=np.float64)).all():
+                    raise CastleDataError(
+                        f"Session restore: {os.path.basename(ts_path)} has non-finite "
+                        f"(NaN/inf) behavior values; refusing to coerce them into "
+                        f"integer cluster labels. Fix or delete the CSV and re-cluster."
+                    )
+                self.latents.cluster[cum:cum + vn] = bin_clusters.astype(
+                    self.latents.cluster.dtype
+                )
                 ts_paths.append(ts_path)
             cum += vn
         
@@ -711,12 +725,25 @@ def restore_local_latent_from_npz(
                     return col
             return '#888888'  # neutral grey; plot_named_embedding also guards against ''
 
+        # The filename encodes child names in sorted-cluster-ID order (see the
+        # submit() writer). Re-pair them to cluster IDs by that order, NOT by
+        # using the cluster ID as a positional index: labelled clusters can be
+        # non-contiguous (e.g. 0 and 2), which previously attached the wrong
+        # historic name to the wrong cluster.
+        nonnoise_ids = sorted(int(c) for c in np.unique(masked_cls) if c != -1)
+        name_by_id = {
+            cid: filename_child_names[k]
+            for k, cid in enumerate(nonnoise_ids)
+            if k < len(filename_child_names)
+        }
+
         for cid_local in np.unique(masked_cls):
             if cid_local == -1:
                 continue
+            cid_local = int(cid_local)
             # Prefer historic name from filename when available.
-            if cid_local < len(filename_child_names):
-                child_name = filename_child_names[cid_local]
+            if cid_local in name_by_id:
+                child_name = name_by_id[cid_local]
                 local_latents.export[cid_local] = {
                     'name': child_name,
                     'color': _find_color_for_historic(child_name),
@@ -820,15 +847,24 @@ def save_project_cluster_model(
         latent_chunks.append(loaded["latent"])
     all_features = np.concatenate(latent_chunks, axis=0)
 
-    # --- Build valid mask (non-NaN embedding rows) ---
-    valid_mask = ~np.isnan(emb_full).any(axis=1)
-    umap_embedding = emb_full[valid_mask]
-    cluster_labels = cls_full[valid_mask]
+    # The latent .npz rows are per-FRAME, but emb_full / cls_full are per-BIN
+    # (the embedding was built from Latent's time_window binning). Naively
+    # pairing the i-th FRAME's features with the i-th BIN's label mis-aligns
+    # every training example whenever bin_size > 1 (the common case). Instead,
+    # label each frame by the bin it belongs to (frame f -> bin f // bin_size)
+    # and keep features at frame resolution, so the per-frame apply path matches
+    # without a dimension change.
+    n_bins = len(emb_full)
+    bin_size = max(1, len(all_features) // n_bins) if n_bins > 0 else 1
+    n_keep = n_bins * bin_size
+    all_features = all_features[:n_keep]
+    frame_emb = np.repeat(emb_full, bin_size, axis=0)[:n_keep]
+    frame_cls = np.repeat(cls_full, bin_size)[:n_keep]
 
-    # Align features: the embedding was built from the same number of bins
-    n_emb = len(emb_full)
-    if len(all_features) > n_emb:
-        all_features = all_features[:n_emb]
+    # --- Build valid mask (non-NaN embedding rows), at frame resolution ---
+    valid_mask = ~np.isnan(frame_emb).any(axis=1)
+    umap_embedding = frame_emb[valid_mask]
+    cluster_labels = frame_cls[valid_mask]
     training_features = all_features[valid_mask]
 
     if output_path is None:
@@ -1160,7 +1196,7 @@ def submit_local_to_global(
         video_cluster = latents.cluster[cum:cum + vn]
         video_frames = np.repeat(video_cluster, latents.time_window)
         df2 = pd.DataFrame({'behavior': video_frames})
-        video_basename = os.path.basename(v).split('.')[0]
+        video_basename = os.path.splitext(os.path.basename(v))[0]
         df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
         df2.to_csv(df2_path, index=False)
         df2_paths.append(df2_path)
@@ -1178,8 +1214,9 @@ def submit_local_to_global(
 
         Z_plt = EmbeddingScatterPlot(local_latents)
         cluster_name = ''
-        for _, it in local_latents.export.items():
-            cluster_name += it['name'] + '_'
+        # Sorted-cluster-ID order (see submit) so restore can re-pair names.
+        for cid in sorted(local_latents.export):
+            cluster_name += local_latents.export[cid]['name'] + '_'
         embedding_path = os.path.join(cluster_path, f'cluster_{cluster_name}.npz')
         Z_plt.save_named_embedding(save_path=embedding_path)
 
@@ -1355,7 +1392,7 @@ def restore_session_from_disk(
 
         cum = 0
         for vn, v in aggregator.videos_meta:
-            video_basename = os.path.basename(v).split('.')[0]
+            video_basename = os.path.splitext(os.path.basename(v))[0]
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
             if os.path.exists(ts_path):
                 ts_df = pd.read_csv(ts_path)
@@ -1368,7 +1405,13 @@ def restore_session_from_disk(
                         f"it would mislabel this and every subsequent video — refusing. "
                         f"Re-save the session or delete the corrupt CSV and re-cluster."
                     )
-                latents.cluster[cum:cum + vn] = bin_clusters
+                if not np.isfinite(np.asarray(bin_clusters, dtype=np.float64)).all():
+                    raise CastleDataError(
+                        f"Session restore: {os.path.basename(ts_path)} has non-finite "
+                        f"(NaN/inf) behavior values; refusing to coerce them into "
+                        f"integer cluster labels. Fix or delete the CSV and re-cluster."
+                    )
+                latents.cluster[cum:cum + vn] = bin_clusters.astype(latents.cluster.dtype)
                 df2_paths.append(ts_path)
             cum += vn
     else:

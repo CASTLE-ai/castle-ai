@@ -270,3 +270,45 @@ def test_get_bin_video_info_respects_bin_size() -> None:
     # frame_idx = bin_idx * bin_size + bin_size//2
     assert name == "vid.mp4"
     assert frame_idx == 3 * 5 + 2
+
+
+def test_save_project_cluster_model_bin_alignment(tmp_path):
+    """PR2 Stage 6: latent .npz rows are per-FRAME but the embedding/labels are
+    per-BIN. The saved transfer model must label each FRAME by the bin it
+    belongs to (frame f -> bin f // bin_size), not pair the i-th frame with the
+    i-th bin's label (which mis-aligned every example when bin_size > 1)."""
+    import numpy as np
+    import pandas as pd
+    from castle.service.clustering_service import save_project_cluster_model
+    from castle.core.cluster_transfer import load_cluster_model
+
+    proj = tmp_path / "proj"
+    (proj / "cluster").mkdir(parents=True)
+    (proj / "latent" / "model").mkdir(parents=True)
+
+    F, n_bins, bs = 8, 5, 2
+    n_frames = n_bins * bs  # 10
+
+    pd.DataFrame(
+        [{"Id": 0, "Name": "a", "Color": "#111111"},
+         {"Id": 1, "Name": "b", "Color": "#222222"}]
+    ).to_csv(proj / "cluster" / "id.csv", index=False)
+
+    emb = np.random.RandomState(0).randn(n_bins, 2).astype(np.float64)  # bin-res, no NaN
+    cls = np.array([0, 0, 1, 1, 0], dtype=np.int16)                     # per-bin label
+    np.savez(proj / "cluster" / "cluster_a_b_.npz", emb=emb, cls=cls)
+
+    # frame-res latent: frame f -> a row whose values are all f (so we can check
+    # which frame ended up where).
+    latent = (np.arange(n_frames)[:, None] * np.ones((1, F))).astype(np.float32)
+    np.savez(proj / "latent" / "model" / "v.npz", latent=latent)
+
+    out = save_project_cluster_model(str(proj), output_path=str(proj / "m.npz"))
+    model = load_cluster_model(out)
+
+    # feature dim stays frame-resolution F (apply path is also per-frame)
+    assert model.training_features.shape == (n_frames, F)
+    assert len(model.cluster_labels) == n_frames
+    for f in range(n_frames):
+        assert np.allclose(model.training_features[f], float(f))   # frame f kept in place
+        assert model.cluster_labels[f] == cls[f // bs]             # labelled by its bin

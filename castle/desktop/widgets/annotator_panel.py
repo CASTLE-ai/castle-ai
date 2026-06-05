@@ -382,8 +382,10 @@ class AnnotatorPanel(QWidget):
             self._scheme_combo.clear()
             for name in schemes:
                 self._scheme_combo.addItem(name)
-            # Default to 10-class
-            idx = self._scheme_combo.findText("10-class")
+            # Default to the 10-class scheme (renamed mice-10-class, commit
+            # 5131986); findText on the old name silently failed (idx -1), so
+            # the default selection never applied.
+            idx = self._scheme_combo.findText("mice-10-class")
             if idx >= 0:
                 self._scheme_combo.setCurrentIndex(idx)
         finally:

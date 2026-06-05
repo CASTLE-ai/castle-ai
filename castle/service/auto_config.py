@@ -143,6 +143,7 @@ def recommend_config(
     video_path: str,
     mask_info: Optional[dict] = None,
     gpu_info: Optional[dict] = None,
+    model_name: str = "dinov3_vitb16",
 ) -> dict:
     """Automatically recommend preprocessing and pipeline parameters.
 
@@ -222,21 +223,18 @@ def recommend_config(
             min_crop, output_size = 200, 336
 
     # ------------------------------------------------------------------
-    # Batch size from VRAM
+    # Batch size: single source of truth is memory_guard.suggest_batch_size,
+    # which scales with free VRAM (so a 24 GB cloud card is not capped at 32),
+    # accounts for the rotation multiplier, and applies a safety margin.
     # ------------------------------------------------------------------
-    vram = gpu_info.get("vram_free_mb", 0)
     if not gpu_info.get("available"):
         batch_size = 1
-    elif vram >= 10_000:
-        batch_size = 32
-    elif vram >= 6_000:
-        batch_size = 16
-    elif vram >= 4_000:
-        batch_size = 8
-    elif vram >= 2_000:
-        batch_size = 4
     else:
-        batch_size = 2
+        try:
+            from castle.core.memory_guard import suggest_batch_size
+            batch_size = suggest_batch_size(model_name, "cuda", rotate=False)
+        except Exception:
+            batch_size = 8
 
     # ------------------------------------------------------------------
     # Cluster count: heuristic from video length

@@ -3,6 +3,8 @@ castle/cli/extract_cmd.py
 Latent extraction CLI command.
 """
 
+from typing import Optional
+
 import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -21,7 +23,7 @@ def extract(
     storage: str = typer.Option(None, "--storage", "-s", help="Storage directory (or set CASTLE_STORAGE env var)"),
     model: str = typer.Option("dinov3_vitb16", "--model", "-m", help="Visual model name"),
     roi: int = typer.Option(1, "--roi", help="ROI ID to extract"),
-    batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size for extraction"),
+    batch_size: Optional[int] = typer.Option(None, "--batch-size", "-b", help="Batch size for extraction (default: auto-sized from free VRAM)"),
     skip_existing: bool = typer.Option(True, "--skip-existing/--no-skip-existing", help="Skip already extracted"),
     pooling: str = typer.Option("weighted_average", "--pooling", "-p", help="Pooling method: weighted_average or multiscale"),
     scales: str = typer.Option("", "--scales", help="Comma-separated scales for multiscale pooling, e.g. '1,2,4'"),
@@ -49,21 +51,26 @@ def extract(
     if parsed_layers:
         extra_info += f", layers={parsed_layers}"
 
-    # Pre-flight memory check (CLI has no rotate flag; rotation path not available here)
-    try:
-        import torch
-        from castle.core.memory_guard import check as _mem_check, suggest_batch_size as _suggest_bs
-        _device = "cuda" if torch.cuda.is_available() else "cpu"
-        _risky, _warn = _mem_check(model, batch_size, _device, rotate=False)
-        if _risky:
-            console.print(f"[yellow]{_warn}[/yellow]")
-            console.print(f"[yellow]Tip: re-run with --batch-size {_suggest_bs(model, _device, rotate=False)} to stay within safe limits.[/yellow]")
-    except Exception:
-        pass  # memory check is advisory; never block extraction
+    # Pre-flight memory check, only when the user pinned an explicit batch size.
+    # When --batch-size is omitted the service auto-sizes it from free VRAM, so
+    # there is nothing to warn about. (The CLI does not enable the rotation path,
+    # so rotate=False here is correct; the service uses the real flag.)
+    if batch_size is not None:
+        try:
+            import torch
+            from castle.core.memory_guard import check as _mem_check, suggest_batch_size as _suggest_bs
+            _device = "cuda" if torch.cuda.is_available() else "cpu"
+            _risky, _warn = _mem_check(model, batch_size, _device, rotate=False)
+            if _risky:
+                console.print(f"[yellow]{_warn}[/yellow]")
+                console.print(f"[yellow]Tip: re-run with --batch-size {_suggest_bs(model, _device, rotate=False)} to stay within safe limits.[/yellow]")
+        except Exception:
+            pass  # memory check is advisory; never block extraction
 
+    _bs_display = batch_size if batch_size is not None else "auto"
     console.print(
         f"Extracting latents for {len(videos)} videos "
-        f"with model [bold]{model}[/bold], ROI={roi}, batch_size={batch_size}{extra_info}..."
+        f"with model [bold]{model}[/bold], ROI={roi}, batch_size={_bs_display}{extra_info}..."
     )
 
     preprocess_config = make_preprocess_config()

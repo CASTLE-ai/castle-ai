@@ -24,6 +24,28 @@ from castle.defaults import EXTRACTION_BATCH_SIZE
 logger = logging.getLogger(__name__)
 
 
+def _auto_batch_size(model: str, preprocess_config: Preprocess) -> int:
+    """Auto-size the extraction batch from free VRAM (single source of truth:
+    memory_guard.suggest_batch_size, which already accounts for the 7x rotation
+    multiplier and a 0.75 safety margin). Falls back to the static default if
+    memory info is unavailable. ``auto_retry_on_oom`` in the extractor is the
+    backstop if the estimate is still too optimistic.
+    """
+    try:
+        import torch
+        from castle.core.memory_guard import suggest_batch_size
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        rotate = bool(getattr(preprocess_config, "rotate_roi_tail_switch", False))
+        bs = suggest_batch_size(model, device, rotate=rotate)
+        logger.info(
+            "extract_latent: auto batch_size=%d (model=%s, device=%s, rotate=%s)",
+            bs, model, device, rotate,
+        )
+        return bs
+    except Exception:
+        return EXTRACTION_BATCH_SIZE
+
+
 def make_preprocess_config(
     center_roi_switch: bool = False,
     center_roi_id: int = 1,
@@ -59,7 +81,7 @@ def extract_latent(
     video_name: str,
     model: str,
     roi: int,
-    batch_size: int = EXTRACTION_BATCH_SIZE,
+    batch_size: Optional[int] = EXTRACTION_BATCH_SIZE,
     preprocess_config: Optional[Preprocess] = None,
     skip_existing: bool = True,
     progress_callback: Optional[Callable] = None,
@@ -98,6 +120,11 @@ def extract_latent(
 
     if preprocess_config is None:
         preprocess_config = Preprocess()
+
+    # batch_size=None → auto-size from free VRAM (CLI default). An explicit int
+    # (UI / tests / callers using the static default) is honoured as-is.
+    if batch_size is None:
+        batch_size = _auto_batch_size(model, preprocess_config)
 
     is_batch = (video_name == 'All')
 

@@ -4,7 +4,7 @@ Core extraction logic execution engine.
 """
 
 from collections import Counter
-from typing import Protocol, Optional
+from typing import Any, Protocol, Optional, Tuple
 import json
 import os
 import threading
@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader, Subset
 # Import from our new Core modules
 from castle.core.data import OnFrameError, VideoDataset, Preprocess
 from castle.core.config import SUPPORTED_MODELS, ERROR_MESSAGES
+from castle.core.auto_batch import auto_retry_on_oom
 from castle.core.environment import get_device, get_num_workers
 from castle.core.logging_config import setup_logger
 from castle.core.models import get_visual_encoder
@@ -70,6 +71,17 @@ def _apply_extraction_thread_cap(device: Optional[str] = None) -> None:
             )
     except Exception:  # pragma: no cover - best-effort tuning, never fatal
         pass
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    """True for a CUDA out-of-memory error.
+
+    ``torch.cuda.OutOfMemoryError`` is a ``RuntimeError`` subclass; some backends
+    only set the message. Such an error must NOT be tolerated as a per-frame
+    batch failure (skipping the batch won't free memory) — it should propagate
+    so :func:`auto_retry_on_oom` can halve the batch and retry.
+    """
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
 
 
 # --- Protocol Definition ---
@@ -384,6 +396,8 @@ def _run_extraction_loop(
             except ExtractionError:
                 raise
             except Exception as e:
+                if _is_cuda_oom(e):
+                    raise  # not a per-frame failure; let auto_retry_on_oom halve the batch
                 n_batches_failed += 1
                 if first_batch_error is None:
                     first_batch_error = repr(e)
@@ -639,22 +653,29 @@ def extract_roi_latent_from_video(
 
     # pin_memory on regardless of device — pinned host buffers speed the H2D copy
     # for cuda:0 and cuda:1 alike (was disabled whenever a device was passed).
-    loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS, pin_memory=True))
+    # Wrapped in auto_retry_on_oom: a CUDA OOM (now surfaced cleanly by the loop
+    # instead of being swallowed as a batch failure) halves the batch and retries.
+    # The failed attempt's temp memmap is cleaned by _run_extraction_loop's
+    # BaseException handler, so retries don't leak.
+    def _attempt(batch_size: int) -> Tuple[Any, int]:
+        loader = DataLoader(dataset, **_build_extractor_loader_kwargs(batch_size, NUM_WORKERS, pin_memory=True))
+        result = _run_extraction_loop(
+            observer, loader,
+            roi_id=roi_id,
+            pooling_method=pooling_method,
+            pooling_scales=pooling_scales,
+            feature_layers=feature_layers,
+            on_frame_error=on_frame_error,
+            max_batch_failure_rate=max_batch_failure_rate,
+            video_name=video_name,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+            out_dir=os.path.dirname(latent_path),
+        )
+        return result, len(loader)
 
-    latent_array, failed_frame_ranges, n_batches_failed, latent_tmp = _run_extraction_loop(
-        observer, loader,
-        roi_id=roi_id,
-        pooling_method=pooling_method,
-        pooling_scales=pooling_scales,
-        feature_layers=feature_layers,
-        on_frame_error=on_frame_error,
-        max_batch_failure_rate=max_batch_failure_rate,
-        video_name=video_name,
-        progress_callback=progress_callback,
-        cancel_event=cancel_event,
-        out_dir=os.path.dirname(latent_path),
-    )
-    total_batches = len(loader)
+    (latent_array, failed_frame_ranges, n_batches_failed, latent_tmp), total_batches = \
+        auto_retry_on_oom(_attempt, batch_size=batch_size, min_batch=1)
 
     # BUG-14: embed video / ROI / model identity so loaders can stop relying
     # on filename parsing. Always release + delete the memmap backing file after
@@ -1010,6 +1031,8 @@ def extract_roi_rotation_latent_from_video(
                 latent_array[frame_start:frame_start + n_rows] = np.nan
                 failed_frame_ranges.append([int(frame_start), int(frame_start + n_rows)])
             except Exception as e:
+                if _is_cuda_oom(e):
+                    raise  # not a per-frame failure; surface OOM cleanly (effective batch = B×7)
                 n_batches_failed += 1
                 if first_batch_error is None:
                     first_batch_error = repr(e)

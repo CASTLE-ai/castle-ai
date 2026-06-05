@@ -237,7 +237,6 @@ def plot_group_ethogram(
         matplotlib.use("Agg")  # non-interactive backend
         import matplotlib.patches as mpatches  # noqa: PLC0415
         import matplotlib.pyplot as plt  # noqa: PLC0415
-        from matplotlib.collections import BrokenBarHCollection  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "matplotlib is required for plot_group_ethogram. "
@@ -293,6 +292,12 @@ def plot_group_ethogram(
             run_start = t_idx
             while t_idx < n and int(labels[t_idx]) == cid:
                 t_idx += 1
+            # -1 is an unlabeled gap (DBSCAN noise / dropped frame), not a
+            # behavioral state: leave it blank instead of crashing on a missing
+            # colour-map key. Also skip any stray label absent from the global
+            # map defensively.
+            if cid == -1 or cid not in xranges_by_cluster:
+                continue
             t_start_s = time_axis[run_start]
             t_end_s = time_axis[t_idx - 1] + (1.0 / fps)
             xranges_by_cluster[cid].append((t_start_s, t_end_s - t_start_s))
@@ -300,13 +305,14 @@ def plot_group_ethogram(
         yrange = (0.5 - bar_height / 2.0, bar_height)
         for cid, xranges in xranges_by_cluster.items():
             if xranges:
-                coll = BrokenBarHCollection(
-                    xranges=xranges,
-                    yrange=yrange,
+                # ax.broken_barh replaces the removed BrokenBarHCollection
+                # (matplotlib >= 3.10) and is stable across versions.
+                ax.broken_barh(
+                    xranges,
+                    yrange,
                     facecolors=color_map[cid],
                     edgecolors="none",
                 )
-                ax.add_collection(coll)
 
         ax.set_xlim(time_axis[0], time_axis[-1])
         ax.set_ylim(0.0, 1.0)

@@ -312,8 +312,11 @@ def track_all_videos(
             device_ids = available_cuda_devices()
             if not device_ids:
                 messages.append("ℹ️  Multi-GPU requested but <2 GPUs available; running single-GPU.")
+            elif len(videos_to_process) >= 2:
+                messages.append(f"🖥️  Multi-GPU: one video per GPU across {len(device_ids)} GPUs.")
             else:
-                messages.append(f"🖥️  Multi-GPU: spreading videos across {len(device_ids)} GPUs.")
+                messages.append(f"🖥️  Multi-GPU: frame-splitting this video across {len(device_ids)} "
+                                f"GPUs (warmup overlap).")
         else:
             device_ids = []
 

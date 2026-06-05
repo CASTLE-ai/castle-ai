@@ -242,6 +242,8 @@ class ROITracker:
         skip_existing: bool = False,
         frame_callback: Optional[Callable[[float, str], None]] = None,
         cancel_event=None,
+        mask_writer=None,
+        write_start: Optional[int] = None,
     ) -> str:
         """Execute ROI tracking over specified frames using a parallelized DataLoader and batch inference.
 
@@ -273,28 +275,36 @@ class ROITracker:
 
         # Initialize tracker model and HDF5 writer (on this tracker's device;
         # None -> module default for single-GPU, 'cuda:N' for multi-GPU workers).
+        # ``mask_writer`` (frame-split mode): write into a SHARED H5IO owned by the
+        # caller — skip the open/config/skip-existing/cleanup here. ``write_start``:
+        # only persist frames with index >= write_start (the lower frames are warmup
+        # that rebuilds the AOT memory but isn't written).
+        from contextlib import nullcontext
         tracker = generate_aot(model_type=self.model_type, device=self.device)
         mask_list_path = self.track_dir / "mask_list.h5"
-        
-        if os.path.exists(mask_list_path):
+        own_writer = mask_writer is None
+
+        if own_writer and os.path.exists(mask_list_path):
             if skip_existing:
                 logger.info(f"Skipping existing tracked file: {mask_list_path}")
                 return "Skip"
-                
             try:
                 os.remove(mask_list_path)
                 logger.info(f"Removed existing HDF5 file: {mask_list_path}")
             except Exception as e:
                 logger.warning(f"Could not remove existing HDF5 file {mask_list_path}: {e}")
 
-        with H5IO(str(mask_list_path)) as mask_seq:
+        writer_cm = H5IO(str(mask_list_path)) if own_writer else nullcontext(mask_writer)
+        with writer_cm as mask_seq:
 
-            # Write video and ROI configuration
-            first_frame = self.video_source[0]
-            mask_seq.write_config("n_rois", self.n_rois)
-            mask_seq.write_config("total_frames", len(self.video_source))
-            mask_seq.write_config("height", first_frame.shape[0])
-            mask_seq.write_config("width", first_frame.shape[1])
+            # Write video and ROI configuration (shared-writer mode: the caller
+            # writes config once before launching the per-GPU halves).
+            if own_writer:
+                first_frame = self.video_source[0]
+                mask_seq.write_config("n_rois", self.n_rois)
+                mask_seq.write_config("total_frames", len(self.video_source))
+                mask_seq.write_config("height", first_frame.shape[0])
+                mask_seq.write_config("width", first_frame.shape[1])
 
             # Add all reference ROI frames to tracker's memory
             for frame, mask in self.reference_frames:
@@ -363,8 +373,10 @@ class ROITracker:
                     self.current_frame = original_frames[i].numpy()
                     self.current_mask = mask_to_save
 
-                    # Write mask to HDF5 file
-                    mask_seq.write_mask(frame_idx, mask_to_save)
+                    # Write mask to HDF5 — except warmup frames (frame_split mode),
+                    # which only exist to rebuild the AOT memory before write_start.
+                    if write_start is None or frame_idx >= write_start:
+                        mask_seq.write_mask(frame_idx, mask_to_save)
 
                 frames_done += len(processed_masks)
                 if frame_callback is not None:
@@ -381,13 +393,16 @@ class ROITracker:
 
         # H5 file is now closed (left the `with` block). If we were cancelled
         # mid-video, remove the partial mask file so a re-run with skip_existing
-        # re-tracks it cleanly instead of treating the stub as complete.
+        # re-tracks it cleanly instead of treating the stub as complete. In
+        # shared-writer (frame-split) mode the orchestrator owns the file, so it
+        # does the cleanup — here we just report the cancel.
         if cancelled:
-            try:
-                os.remove(mask_list_path)
-                logger.info("Removed partial mask file after cancel: %s", mask_list_path)
-            except OSError as e:
-                logger.warning("Could not remove partial mask file %s: %s", mask_list_path, e)
+            if own_writer:
+                try:
+                    os.remove(mask_list_path)
+                    logger.info("Removed partial mask file after cancel: %s", mask_list_path)
+                except OSError as e:
+                    logger.warning("Could not remove partial mask file %s: %s", mask_list_path, e)
             return "Cancel"
 
         return "Done"

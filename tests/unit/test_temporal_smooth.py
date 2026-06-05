@@ -157,3 +157,57 @@ class TestEdgeCases:
         orig_tc = np.mean(labels[1:] == labels[:-1])
         smooth_tc = np.mean(smoothed[1:] == smoothed[:-1])
         assert smooth_tc >= orig_tc
+
+
+# ------------------------------------------------------------------ #
+# -1 (unlabeled gap / DBSCAN noise) invariants — PR1 contract C-1
+#
+# -1 is an unlabeled gap, not a behavioral state. Smoothing must never
+# (a) fill a gap with a neighbouring label, nor (b) demote a real label to
+# a gap. For windows with no -1, behaviour is identical to before.
+# ------------------------------------------------------------------ #
+
+class TestNoiseMinusOneHandling:
+    def test_median_preserves_gap_frame(self):
+        """A -1 frame stays -1 (not filled with the surrounding label)."""
+        labels = np.array([0, 0, -1, 0, 0])
+        result = median_smooth(labels, window=5)
+        np.testing.assert_array_equal(result, [0, 0, -1, 0, 0])
+
+    def test_median_does_not_demote_lone_valid_frame(self):
+        """A lone valid frame surrounded by gaps stays valid (not → -1)."""
+        labels = np.array([-1, -1, 1, -1, -1])
+        result = median_smooth(labels, window=5)
+        np.testing.assert_array_equal(result, [-1, -1, 1, -1, -1])
+
+    def test_median_still_smooths_flicker_with_gaps_present(self):
+        """A real flicker is still removed; -1 gaps are left intact."""
+        labels = np.array([1, 1, 2, 1, 1, -1, -1])
+        result = median_smooth(labels, window=5)
+        np.testing.assert_array_equal(result, [1, 1, 1, 1, 1, -1, -1])
+
+    def test_min_bout_preserves_short_gap_run(self):
+        """A short -1 run is a gap, not a short bout to absorb — it stays."""
+        labels = np.array([0, 0, 0, -1, 1, 1, 1])
+        result = min_bout_filter(labels, min_frames=2)
+        np.testing.assert_array_equal(result, [0, 0, 0, -1, 1, 1, 1])
+
+    def test_min_bout_short_valid_bout_between_gaps_unchanged(self):
+        """A short valid bout flanked only by gaps is not relabelled to -1."""
+        labels = np.array([-1, 1, -1])
+        result = min_bout_filter(labels, min_frames=2)
+        np.testing.assert_array_equal(result, [-1, 1, -1])
+
+    def test_min_bout_merges_into_valid_neighbour_not_gap(self):
+        """Short bout with a valid prev and a gap next → merges into the valid
+        neighbour, never into the gap."""
+        labels = np.array([0, 0, 0, 1, -1, -1])
+        result = min_bout_filter(labels, min_frames=2)
+        np.testing.assert_array_equal(result, [0, 0, 0, 0, -1, -1])
+
+    def test_all_valid_behaviour_unchanged(self):
+        """No -1 present → identical to the pre-fix mode/min-bout behaviour."""
+        labels = np.array([1, 1, 2, 1, 1, 3, 1, 1, 1])
+        np.testing.assert_array_equal(
+            median_smooth(labels, window=3), [1, 1, 1, 1, 1, 1, 1, 1, 1]
+        )

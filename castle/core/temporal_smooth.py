@@ -39,13 +39,25 @@ def median_smooth(labels: np.ndarray, window: int = 5) -> np.ndarray:
     result = np.empty_like(labels)
 
     for i in range(n):
+        # -1 marks an unlabeled gap (DBSCAN noise / dropped frame), not a
+        # behavioral state: never fill a gap with a neighbouring label, and
+        # never let -1 win the mode vote and demote a real label to a gap.
+        if labels[i] == -1:
+            result[i] = labels[i]
+            continue
         lo = max(0, i - half)
         hi = min(n, i + half + 1)
         segment = labels[lo:hi]
+        # Vote only among real labels in the window (ignore -1 gaps). For a
+        # window with no -1 this is identical to the previous behaviour.
+        valid = [x for x in segment.tolist() if x != -1]
+        if not valid:
+            result[i] = labels[i]
+            continue
         # mode = most common label; ties broken by the label that appears
         # first (Counter.most_common order is stable for equal counts in
-        # CPython ≥ 3.7, but we sort to be safe).
-        counts = Counter(segment.tolist())
+        # CPython ≥ 3.7).
+        counts = Counter(valid)
         result[i] = counts.most_common(1)[0][0]
 
     return result
@@ -90,9 +102,21 @@ def min_bout_filter(labels: np.ndarray, min_frames: int = 3) -> np.ndarray:
             i += 1
             continue
 
-        # Determine replacement label from immediate neighbours.
+        # -1 is an unlabeled gap, not a short bout to be absorbed: leave it as
+        # a separator so smoothing never deletes a gap.
+        if lbl == -1:
+            i += 1
+            continue
+
+        # Determine replacement label from immediate neighbours. A -1 neighbour
+        # is a gap, not a valid replacement — treat it as absent so a short bout
+        # is never relabelled into a gap.
         prev_lbl = bouts[i - 1][0] if i > 0 else None
         next_lbl = bouts[i + 1][0] if i < len(bouts) - 1 else None
+        if prev_lbl == -1:
+            prev_lbl = None
+        if next_lbl == -1:
+            next_lbl = None
 
         if prev_lbl is None and next_lbl is None:
             # Single bout spanning the whole array — nothing to merge into.

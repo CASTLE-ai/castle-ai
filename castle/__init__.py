@@ -1,3 +1,10 @@
+# Set must-be-early env defaults (e.g. HDF5_USE_FILE_LOCKING) BEFORE any heavy
+# library can be imported through a CASTLE submodule. Kept stdlib-only so it
+# never breaks the "import castle pulls in no torch/numpy/h5py" invariant.
+from castle.core._early_env import apply_early_env as _apply_early_env
+
+_apply_early_env()
+
 __version__ = "0.0.18"
 
 # Lazy-load heavy model generators to avoid importing torch/torchvision/SAM/AOT

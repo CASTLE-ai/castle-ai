@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, Subset
 # Import from our new Core modules
 from castle.core.data import OnFrameError, VideoDataset, Preprocess
 from castle.core.config import SUPPORTED_MODELS, ERROR_MESSAGES
-from castle.core.environment import get_num_workers
+from castle.core.environment import get_device, get_num_workers
 from castle.core.logging_config import setup_logger
 from castle.core.models import get_visual_encoder
 from castle.core.project import get_project_config, save_project_config
@@ -35,6 +35,41 @@ from castle.utils.video_align import center_roi, get_roi_closest_point_safe, bla
 
 # Setup logger
 logger = setup_logger(__name__)
+
+
+def _apply_extraction_thread_cap(device: Optional[str] = None) -> None:
+    """Cap main-process torch intra-op threads to avoid oversubscription.
+
+    On a many-core box (cloud) or a cgroup-limited container, torch otherwise
+    defaults its intra-op pool to the *host* core count (e.g. 64), which fights
+    the DataLoader workers and BLAS for cores while the GPU does the real work.
+    We only intervene for CUDA inference on a big/limited box; the dev machine
+    (usable == host, modest core count) and CPU inference are left untouched.
+    ``CASTLE_TORCH_THREADS`` overrides. Idempotent in effect — re-calling with an
+    unchanged target is a no-op and logs nothing.
+    """
+    try:
+        from castle.core import runtime_env
+        if device is None:
+            device = get_device()
+        usable = runtime_env.usable_cpu_count()
+        host = os.cpu_count() or usable
+        override = os.environ.get("CASTLE_TORCH_THREADS", "").strip()
+        if override:
+            target = max(1, int(override))
+        elif "cuda" in str(device) and (usable != host or usable > 32):
+            target = max(1, min(usable, 8))
+        else:
+            return  # dev box / CPU inference: keep torch defaults
+        if torch.get_num_threads() != target:
+            torch.set_num_threads(target)
+            logger.info(
+                "Capped torch intra-op threads to %d (usable_cpus=%d, host=%d) "
+                "to avoid CPU oversubscription while feeding the GPU.",
+                target, usable, host,
+            )
+    except Exception:  # pragma: no cover - best-effort tuning, never fatal
+        pass
 
 
 # --- Protocol Definition ---
@@ -470,6 +505,7 @@ def extract_roi_latent_from_video(
 
     # PERF-07: honour strict_cuda; otherwise turn on cudnn benchmark for speed.
     _enable_cudnn_benchmark_if_not_strict()
+    _apply_extraction_thread_cap(device)
 
     # 1. Setup paths
     project_path, config = get_project_config(storage_path, project_name)
@@ -843,6 +879,7 @@ def extract_roi_rotation_latent_from_video(
     roi_id = int(roi_id)
 
     _enable_cudnn_benchmark_if_not_strict()
+    _apply_extraction_thread_cap()  # rotation path has no device param; resolves default
 
     # 1. Setup paths
     project_path, config = get_project_config(storage_path, project_name)
@@ -1148,6 +1185,7 @@ def extract_roi_latent_from_video_2gpu(
     batch_size = int(batch_size)
     roi_id = int(roi_id)
     _enable_cudnn_benchmark_if_not_strict()
+    _apply_extraction_thread_cap("cuda")
 
     project_path, _config = get_project_config(storage_path, project_name)
     latent_dir_path = os.path.join(project_path, 'latent', model_name)

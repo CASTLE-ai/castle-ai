@@ -6,6 +6,7 @@ before any heavy library — which means `import castle` must NOT pull in torch 
 numpy / h5py itself.
 """
 
+import os
 import subprocess
 import sys
 
@@ -42,3 +43,30 @@ def test_import_castle_sets_hdf5_locking_and_stays_light():
     out = subprocess.check_output([sys.executable, "-c", code], text=True).splitlines()
     assert out[0] == "FALSE"
     assert out[1] == "False False False"
+
+
+# --- Freeze diagnostics (SIGUSR1 → all-thread stack dump) --------------------
+# Run in subprocesses so we never mutate the test process's own faulthandler
+# state (pytest installs its own). `faulthandler.unregister(sig)` returns True
+# iff a handler was registered for that signal.
+
+
+def test_import_castle_registers_sigusr1_dump():
+    code = (
+        "import faulthandler, signal, castle\n"
+        "print(faulthandler.is_enabled())\n"
+        "print(faulthandler.unregister(signal.SIGUSR1))\n"
+    )
+    out = subprocess.check_output([sys.executable, "-c", code], text=True).splitlines()
+    assert out[0] == "True"   # dumps on fatal signals (SIGSEGV/SIGABRT)
+    assert out[1] == "True"   # SIGUSR1 thread-dump handler was registered
+
+
+def test_castle_faulthandler_opt_out():
+    env = {**os.environ, "CASTLE_FAULTHANDLER": "0"}
+    code = (
+        "import faulthandler, signal, castle\n"
+        "print(faulthandler.unregister(signal.SIGUSR1))\n"
+    )
+    out = subprocess.check_output([sys.executable, "-c", code], text=True, env=env).splitlines()
+    assert out[0] == "False"  # opt-out → no SIGUSR1 handler registered

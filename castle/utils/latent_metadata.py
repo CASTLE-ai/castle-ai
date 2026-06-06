@@ -65,6 +65,37 @@ def _build_metadata(
     return meta
 
 
+def _atomic_savez(dest: "str | Path", *, compressed: bool, **arrays: Any) -> None:
+    """Write an ``.npz`` atomically: tmp in the same dir → fsync → ``os.replace``.
+
+    The temp file MUST live in ``dest``'s directory so the final rename is a
+    same-filesystem (atomic) operation. A crash / ``kill -9`` / power loss
+    mid-write then leaves at most an ignored ``*.tmp``, never a truncated
+    ``.npz`` that ``skip_existing`` would mistake for a finished extraction
+    (which is exactly how a torn write on flaky CephFS could silently corrupt a
+    resume). We write through an explicit file handle rather than a path so
+    numpy does not append a second ``.npz`` suffix to the temp name.
+    """
+    import os
+    import tempfile
+
+    p = Path(dest)
+    save = np.savez_compressed if compressed else np.savez
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            save(f, **arrays)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def save_latent_with_metadata(
     latent_path: str,
     latent_array: np.ndarray,
@@ -144,7 +175,7 @@ def save_latent_with_metadata(
             cast.flush()
             src = cast
         try:
-            np.savez(latent_path, latent=src, metadata=np.array([meta_json]))
+            _atomic_savez(latent_path, compressed=False, latent=src, metadata=np.array([meta_json]))
         finally:
             if cast is not None:
                 del cast
@@ -155,8 +186,9 @@ def save_latent_with_metadata(
     else:
         if dtype is not None and latent_array.dtype != np.dtype(dtype):
             latent_array = latent_array.astype(dtype)
-        np.savez_compressed(
+        _atomic_savez(
             latent_path,
+            compressed=True,
             latent=latent_array,
             metadata=np.array([meta_json]),
         )

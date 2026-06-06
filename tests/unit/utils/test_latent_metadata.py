@@ -103,3 +103,60 @@ def test_saved_npz_still_loadable_by_safe_load(tmp_path: Path) -> None:
     save_latent_with_metadata(str(npz), arr, video_name="v", roi_id=5, model_name="m")
     out = load_latent_safe(npz)
     np.testing.assert_array_equal(out, arr)
+
+
+# --- Atomic write (crash-safe) ----------------------------------------------
+# A torn .npz on a flaky CephFS would be mistaken for a finished extraction by
+# skip_existing. The write must go tmp -> fsync -> os.replace so the final path
+# is never partial.
+
+
+def test_memmap_branch_round_trips(tmp_path: Path) -> None:
+    """The uncompressed (memmap-backed) np.savez streaming path stays correct."""
+    backing = tmp_path / "backing.dat"
+    mm = np.memmap(backing, dtype=np.float32, mode="w+", shape=(40, 6))
+    mm[:] = np.random.default_rng(1).standard_normal((40, 6)).astype(np.float32)
+    mm.flush()
+    npz = tmp_path / "mm_ROI_1_dinov3_vitb16.npz"
+    save_latent_with_metadata(
+        str(npz), mm, video_name="m.mp4", roi_id=1, model_name="dinov3_vitb16",
+    )
+    assert npz.exists()
+    np.testing.assert_allclose(np.load(npz)["latent"], np.asarray(mm))
+
+
+def test_failed_write_leaves_no_torn_npz(tmp_path: Path, monkeypatch) -> None:
+    import castle.utils.latent_metadata as lm
+
+    def boom(*_a, **_k):
+        raise RuntimeError("storage vanished mid-write")
+
+    monkeypatch.setattr(lm.np, "savez_compressed", boom)
+    npz = tmp_path / "fail_ROI_1_m.npz"
+    with pytest.raises(RuntimeError):
+        save_latent_with_metadata(str(npz), _latent(), video_name="v", roi_id=1, model_name="m")
+
+    # No truncated final file, no orphaned temp, no sidecar — skip_existing is safe.
+    assert not npz.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_write_uses_same_dir_tmp_then_replace(tmp_path: Path, monkeypatch) -> None:
+    """The temp file must sit in the destination dir so os.replace is atomic."""
+    import os
+
+    seen: dict = {}
+    real_replace = os.replace
+
+    def spy_replace(src, dst):
+        seen["src"], seen["dst"] = src, dst
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy_replace)
+    npz = tmp_path / "loc_ROI_1_m.npz"
+    save_latent_with_metadata(str(npz), _latent(), video_name="v", roi_id=1, model_name="m")
+
+    assert Path(seen["src"]).parent == npz.parent  # same filesystem → atomic rename
+    assert Path(seen["dst"]) == npz
+    assert npz.exists()

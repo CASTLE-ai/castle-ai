@@ -53,7 +53,6 @@
 │  auto_batch.py         — VRAM-aware batch size + OOM retry ⚡  │
 │  pipeline.py           — Full pipeline orchestrator with GPU  │
 │                          cleanup between stages ⚡             │
-│  pipeline_parallel.py  — 3-stage threaded extractor ⚡         │
 │  cache.py              — Content-hash PipelineCache ⚡         │
 │  ── Phase 3 Simplification Modules 🔷 ──────────────────────── │
 │  project_data.py       — ProjectData + VideoInfo dataclasses   │
@@ -206,7 +205,6 @@ Clean separation between frontends and business logic. Both frontends (CLI, Grad
 | `model_registry.py` ⚡ | `ModelRegistry` singleton — lazy load, explicit unload, and CUDA memory accounting for SAM / DeAOT / DINOv2 / DINOv3 |
 | `auto_batch.py` ⚡ | `compute_optimal_batch_size()` — VRAM-aware batch size; `auto_retry_on_oom()` — automatic OOM retry with halved batch |
 | `pipeline.py` ⚡ | `Pipeline` + `PipelineConfig` — full tracking → extraction orchestrator with per-stage GPU cleanup and VRAM logging |
-| `pipeline_parallel.py` ⚡ | `ParallelExtractor` — 3-stage producer-consumer pipeline (I/O thread → CPU preprocess thread → GPU inference) |
 | `cache.py` ⚡ | `PipelineCache` — SHA-256 content-addressed cache; manifest persisted as JSON; stale-entry auto-invalidation |
 | `project_data.py` 🔷 | `ProjectData` + `VideoInfo` dataclasses — unified project path computation, eliminating scattered `os.path.join` calls |
 | `cluster_data.py` 🔷 | `ClusterData` dataclass — consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, `annotations.csv` into one typed container |
@@ -427,19 +425,6 @@ result = auto_retry_on_oom(extract_fn, frames, batch_size=batch)
 ```
 
 `compute_optimal_batch_size` uses conservative per-model weight estimates and a 25 % VRAM safety margin. Falls back to **4** on CPU or when VRAM information is unavailable.
-
-### ParallelExtractor (3-Stage Pipeline)
-
-```
-Thread 1 (I/O)       Thread 2 (CPU)       Main thread (GPU)
-VideoReader.get_frame  StabilizedCamera     DINOv3 batched
-      │   → frame_queue →   .generate_frame   inference
-      │                      │  → tensor_queue → np.concatenate → (N, D)
-```
-
-- Uses `threading` (not `multiprocessing`) to avoid CUDA fork issues.
-- Bounded `queue.Queue(maxsize=32)` controls peak memory.
-- Preprocessing errors produce zero-filled frames; inference errors produce zero-filled latents — both logged as warnings so a single bad frame never aborts the run.
 
 ### PipelineCache
 

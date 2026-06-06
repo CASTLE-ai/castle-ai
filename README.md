@@ -62,7 +62,6 @@
   - **ModelRegistry**: Thread-safe singleton for lazy model loading and explicit VRAM cleanup between pipeline stages (`castle/core/model_registry.py`)
   - **Auto Batch Size**: VRAM-aware `compute_optimal_batch_size()` + `auto_retry_on_oom()` wrapper that halves batch size on GPU OOM and retries automatically (`castle/core/auto_batch.py`)
   - **Pipeline Orchestrator**: `Pipeline` class with per-stage GPU memory cleanup — tracking cleanup before extraction, extraction cleanup after (`castle/core/pipeline.py`)
-  - **Parallel Extractor**: 3-stage threaded producer-consumer pipeline (I/O → CPU preprocess → GPU inference) for maximum throughput (`castle/core/pipeline_parallel.py`)
   - **Content-Hash Cache**: `PipelineCache` with SHA-256 keying and atomic JSON manifest — skip already-computed extractions across runs (`castle/core/cache.py`)
   - **Incremental Processing**: `get_unprocessed_videos()` and `cleanup_deleted_videos()` for efficient batch runs and orphan cleanup (`castle/service/incremental_service.py`)
 
@@ -230,27 +229,6 @@ batch = compute_optimal_batch_size("dinov3_vitb16", frame_size=(592, 592, 3))
 
 # If an OOM error occurs, halves the batch and retries automatically
 result = auto_retry_on_oom(extract_fn, frames, initial_batch=batch)
-```
-
-### Parallel Pipeline
-
-The `ParallelExtractor` runs video decoding, preprocessing, and GPU inference concurrently across three threads, saturating the GPU while the CPU prepares the next batch:
-
-```
-Thread 1 (I/O)       Thread 2 (CPU preprocess)      Main thread (GPU)
-VideoReader ──────▶ StabilizedCamera ──────────────▶ DINOv3 inference
-                     frame_queue (bounded)             tensor_queue (bounded)
-```
-
-```python
-from castle.core.pipeline_parallel import ParallelExtractor
-
-extractor = ParallelExtractor(
-    video_path="animal.mp4",
-    model=visual_encoder,
-    batch_size=8,
-)
-latents = extractor.run()   # → np.ndarray (N, D)
 ```
 
 ### Content-Hash Cache

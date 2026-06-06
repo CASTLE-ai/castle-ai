@@ -487,50 +487,6 @@ results = pipeline.run()
 
 ---
 
-### Parallel Extractor
-
-Three-stage threaded pipeline for high-throughput feature extraction.
-
-::: castle.core.pipeline_parallel
-    options:
-      show_root_heading: true
-      show_source: true
-      members:
-        - ParallelExtractor
-        - ParallelExtractor.run
-
-Quick reference:
-
-```python
-from castle.core.pipeline_parallel import ParallelExtractor
-
-extractor = ParallelExtractor(
-    video_path="/data/animal.mp4",
-    stabilized_camera=camera,  # optional StabilizedCamera instance
-    model=visual_encoder,      # must implement extract_tensor_batch or extract_batch_latent
-    batch_size=8,
-    queue_size=32,
-    roi_id=1,
-)
-
-latents = extractor.run(
-    progress_callback=lambda cur, total, stage: print(f"{stage}: {cur}/{total}")
-)
-# → np.ndarray shape (N, D), dtype float32
-```
-
-**Pipeline stages:**
-
-| Stage | Thread | Work |
-|-------|--------|------|
-| 1 — I/O | Background | `VideoReader.get_frame()` → `frame_queue` |
-| 2 — Preprocess | Background | `StabilizedCamera.generate_frame()` → `tensor_queue` |
-| 3 — Inference | Main (GPU) | Batched `model.extract_tensor_batch()` → latent list |
-
-Uses `threading` (not `multiprocessing`) to avoid CUDA fork issues. Bounded queues (`maxsize=32`) prevent unbounded memory growth.
-
----
-
 ### Pipeline Cache
 
 Content-addressed cache for pipeline outputs.

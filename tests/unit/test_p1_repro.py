@@ -70,37 +70,22 @@ def _make_local_latent(data):
     return LocalLatent(data, np.ones(len(data), dtype=bool), set(), "cpu")
 
 
-def test_umap_standardize_default_on():
-    rng = np.random.default_rng(0)
-    # Columns with wildly different scales (the case standardization addresses).
-    data = rng.random((50, 6)) * np.array([1.0, 1000.0, 1.0, 1000.0, 1.0, 1000.0])
-
-    ll = _make_local_latent(data)
-    ll.build_embedding(
-        [{"n_neighbors": 10, "min_dist": 0.0, "n_components": 2}],
-        base_seed=42,
-        reducer_factory=lambda cfg: _RecordingReducer(cfg),
-    )
-
-    X = _RecordingReducer.last_X
-    assert np.allclose(X.mean(axis=0), 0.0, atol=1e-6)   # standardized
-    assert np.allclose(X.std(axis=0), 1.0, atol=1e-3)
-    assert ll.configs[0].get("standardize") is True       # recorded for reproducibility
-
-
-def test_umap_standardize_off_passes_raw():
+def test_umap_no_feature_standardization():
+    # Per-feature z-score was removed (it never existed on main and amplified
+    # noise dims for distance-based UMAP/DBSCAN). build_embedding must pass raw
+    # features through untouched even if a legacy ``standardize`` key is present.
     rng = np.random.default_rng(0)
     data = rng.random((50, 4)) * np.array([1.0, 500.0, 1.0, 500.0])
 
     ll = _make_local_latent(data)
     ll.build_embedding(
-        [{"n_neighbors": 10, "min_dist": 0.0, "n_components": 2, "standardize": False}],
+        [{"n_neighbors": 10, "min_dist": 0.0, "n_components": 2, "standardize": True}],
         base_seed=42,
         reducer_factory=lambda cfg: _RecordingReducer(cfg),
     )
 
-    assert np.allclose(_RecordingReducer.last_X, data)    # raw features, untouched
-    assert ll.configs[0].get("standardize") is False
+    # Raw features reach the reducer un-standardized despite standardize=True.
+    assert np.allclose(_RecordingReducer.last_X, data)
 
 
 def test_umapreducer_drops_standardize_kwarg():

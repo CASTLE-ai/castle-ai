@@ -91,6 +91,15 @@ def get_bin_video_info(aggregator: Any, bin_index: int) -> Tuple[Optional[str], 
         ``(video_name, frame_idx)`` or ``(None, None)`` if ``bin_index``
         falls past the last video.
     """
+    # Route through the aggregator's FrameIndexMap so legacy (bin) and prepared
+    # (decimated window) datapoints both map to the correct original frame.
+    fim = getattr(aggregator, "frame_index_map", None)
+    if fim is not None:
+        try:
+            video_idx, frame_idx = fim.dp_to_orig_frame(int(bin_index))
+            return fim.base.video_names[video_idx], frame_idx
+        except (IndexError, ValueError):
+            return None, None
     idx = bin_index
     for n_bins_in_video, video_name in aggregator.videos_meta:
         if idx >= n_bins_in_video:

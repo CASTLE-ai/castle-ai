@@ -26,6 +26,10 @@ class SessionInfo:
     total_frames: int
     status: str               # "in_progress" or "completed"
     description: str = ""
+    # Prepared-cache provenance (None for the legacy raw-latent path). roi_id is
+    # not meaningful when a prepared cache pools across ROIs/fields.
+    prepare_id: Optional[str] = None
+    k_prime: Optional[int] = None
 
 
 class SessionManager:
@@ -89,8 +93,10 @@ class SessionManager:
         with open(active_file, 'w') as f:
             f.write(session_id)
     
-    def create_session(self, model: str, roi_id: int, bin_size: int, 
-                       total_frames: int, name: str = "") -> SessionInfo:
+    def create_session(self, model: str, roi_id: int, bin_size: int,
+                       total_frames: int, name: str = "",
+                       prepare_id: Optional[str] = None,
+                       k_prime: Optional[int] = None) -> SessionInfo:
         """Create a new session."""
         # Generate ID — use max existing numeric ID + 1 to avoid collisions
         # after deletions.  Skip non-numeric / malformed session_ids (e.g. a
@@ -124,6 +130,8 @@ class SessionManager:
             n_clusters=0,
             total_frames=total_frames,
             status="in_progress",
+            prepare_id=prepare_id,
+            k_prime=k_prime,
         )
         
         session_dir = os.path.join(self.sessions_path, session_id)

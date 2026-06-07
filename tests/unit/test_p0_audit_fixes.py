@@ -153,6 +153,7 @@ def test_restore_accepts_intact_time_series(tmp_path):
 def test_generate_subtitles_uses_per_video_fps(tmp_path):
     """Each video's .srt must use its own fps, not the first video's."""
     from castle.core.cluster import LatentAggregator, frame_to_timestamp
+    from castle.core.prepare import build_legacy_index_map
 
     agg = object.__new__(LatentAggregator)
     agg._video_reader_cache = {}  # __del__/close() touches this; we skipped __init__
@@ -161,6 +162,10 @@ def test_generate_subtitles_uses_per_video_fps(tmp_path):
     agg.videos_meta = [(2, "fast.mp4"), (2, "slow.mp4")]
     agg.fps = 30.0  # first-video fallback that the OLD code wrongly used for all
     agg.fps_per_video = {"fast.mp4": 60.0, "slow.mp4": 24.0}
+    agg.frame_index_map = build_legacy_index_map(
+        agg.videos_meta, agg.bin_size, agg.fps_per_video,
+        {"fast.mp4": 1, "slow.mp4": 1},
+    ).for_window(1)
 
     # 4 bins (1 frame/bin): video1 bins [0,1], video2 bins [2,3].
     syllables = np.array([0, 1, 0, 1], dtype=int)

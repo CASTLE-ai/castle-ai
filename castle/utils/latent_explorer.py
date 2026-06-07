@@ -447,19 +447,13 @@ class LocalLatent:
             base_seed = secrets.randbits(32)
             _logger.info("UMAP master seed drawn: %d", base_seed)
 
-        # P1-2: per-feature standardization of the RAW features before stage 0.
-        # Default ON (set ``"standardize": false`` in the stage-0 config to
-        # disable, e.g. to reproduce a pre-standardization layout). Only stage 0
-        # sees the raw high-dim DINOv3 features; later stages run on low-dim UMAP
-        # output where z-scoring is not meaningful, so we standardize Z once here.
-        standardize = bool(configs[0].get('standardize', True)) if configs else True
-        if standardize:
-            from castle.utils.numeric_safe import safe_zscore
-            Z = safe_zscore(Z)
-            _logger.info(
-                "UMAP: standardized %d features (z-score) before stage 0.", Z.shape[1]
-            )
-
+        # NOTE: per-feature z-score standardization was intentionally removed
+        # (it never existed on main; it amplified low-variance / noise feature
+        # dimensions for distance-based UMAP/DBSCAN). Normalisation, when wanted,
+        # is now a per-sample L2 step inside the Prepare cache
+        # (:mod:`castle.core.prepare`), applied before PCA. A legacy
+        # ``"standardize"`` key in a saved config is harmless — UMAPReducer
+        # drops it before constructing UMAP.
         resolved_seeds: List[int] = []
         resolved_configs: List[dict] = []
         total_stages = len(configs)
@@ -467,10 +461,6 @@ class LocalLatent:
             seed, source = _resolve_umap_seed(raw_cfg, base_seed, i)
             stage_cfg = dict(raw_cfg)
             stage_cfg['random_state'] = seed
-            if i == 0:
-                # Record whether standardization was applied so the saved session
-                # / umap_log is reproducible.
-                stage_cfg.setdefault('standardize', standardize)
             resolved_configs.append(stage_cfg)
             resolved_seeds.append(seed)
 

@@ -17,6 +17,12 @@ from castle.utils.safe_load import load_latent_safe
 from castle.utils.latent_metadata import load_latent_metadata
 from castle.core.project import get_project_config
 from castle.utils.latent_explorer import Latent
+from castle.core.prepare import (
+    WindowedFrameIndexMap,
+    build_legacy_index_map,
+    k_prime_for_variance,
+    load_prepare,
+)
 
 logger = setup_logger(__name__)
 
@@ -227,8 +233,9 @@ class LatentAggregator:
         fps: Frames per second from first loaded video
         bin_size: Number of frames per bin
     """
-    def __init__(self, storage_path: str, project_name: str, select_roi_id: int, bin_size: int, 
-                 model_name: str, notify: Optional[NotificationCallback] = None) -> None:
+    def __init__(self, storage_path: str, project_name: str, select_roi_id: int, bin_size: int,
+                 model_name: str, notify: Optional[NotificationCallback] = None,
+                 prepare_id: Optional[str] = None, k_prime: Optional[int] = None) -> None:
         """
         Initialize the LatentAggregator.
         
@@ -260,7 +267,21 @@ class LatentAggregator:
         # check→fetch→insert sequence (3-E) while still calling helpers
         # like _get_cached_reader that re-acquire the same lock.
         self._cache_lock = threading.RLock()
-        
+
+        # FrameIndexMap unifies datapoint<->original-frame mapping for both the
+        # legacy (bin) and prepared (decimated+windowed) paths; set below.
+        self.frame_index_map: Optional["WindowedFrameIndexMap"] = None
+        self._prepared: bool = False
+
+        # Prepared-cache path: load a pre-reduced (decimated + per-sample L2 +
+        # PCA) cache instead of aggregating raw latents. ``bin_size`` doubles as
+        # the time window W applied to the cached datapoints; ``k_prime`` slices
+        # the PCA basis (default = 95%-variance width). See castle.core.prepare.
+        if prepare_id:
+            self.select_roi_id = int(select_roi_id) if select_roi_id else 1
+            self._init_prepared(prepare_id, window=int(bin_size), k_prime=k_prime)
+            return
+
         # Load project configuration
         project_path, project_config = get_project_config(storage_path, project_name)
         self.project_path = project_path
@@ -384,6 +405,54 @@ class LatentAggregator:
         else:
             self.notify("Warning: No latents loaded.", "warning")
 
+        # Unified frame mapping for the legacy (bin) path: a bin is bin_size
+        # contiguous original frames, so for_window(1) reproduces the historical
+        # idx*bin_size+bin_size//2 / np.repeat(., bin_size) contract exactly.
+        self.frame_index_map = build_legacy_index_map(
+            self.videos_meta, self.bin_size, self.fps_per_video,
+            {v: int(self.select_roi_id) for _, v in self.videos_meta},
+        ).for_window(1)
+
+    def _init_prepared(self, prepare_id: str, *, window: int, k_prime: Optional[int]) -> None:
+        """Load a prepared cache and set up the explore-ready state.
+
+        Per-video windowing (stride W, never straddling a video boundary):
+        slice the first ``k'`` PCA columns, truncate each video to a multiple
+        of W, reshape to ``(n_dp_v//W, k'*W)``, concatenate. Hands an already
+        windowed array to ``Latent`` (time_window=1) and exposes a window-aware
+        FrameIndexMap so the legacy/ prepared consumption paths share one seam.
+        """
+        prepared_dir = os.path.join(self.project_path, 'cluster', 'prepared', prepare_id)
+        pd = load_prepare(prepared_dir)
+        base = pd.index_map
+        W = max(1, int(window))
+        kp = int(k_prime) if k_prime else k_prime_for_variance(pd.meta, 0.95)
+        kp = max(1, min(kp, pd.width))
+
+        parts: List[np.ndarray] = []
+        win_counts: List[int] = []
+        for v in range(base.n_videos):
+            s, e = int(base.dp_offsets[v]), int(base.dp_offsets[v + 1])
+            sub = np.asarray(pd.reduced[s:e, :kp], dtype=np.float32)
+            n_win = sub.shape[0] // W
+            win_counts.append(n_win)
+            if n_win:
+                parts.append(sub[: n_win * W].reshape(n_win, kp * W))
+        self.latents = (
+            np.concatenate(parts, axis=0) if parts else np.zeros((0, kp * W), dtype=np.float32)
+        )
+        self.frame_index_map = base.for_window(W)
+        self.videos_meta = [(win_counts[v], base.video_names[v]) for v in range(base.n_videos)]
+        self.fps_per_video = {base.video_names[v]: float(base.raw_fps[v]) for v in range(base.n_videos)}
+        self.fps = float(base.raw_fps[0]) if base.n_videos else 30.0
+        self._prepared = True
+        self._prepared_window = W
+        self._prepared_k = kp
+        self.notify(
+            f"Prepared cache {prepare_id}: {len(self.latents)} windows "
+            f"(k'={kp}, W={W}) from {base.n_videos} videos."
+        )
+
     def _get_cached_reader(self, video_path: str) -> VideoReader:
         """Get or create a cached VideoReader for a video path.
 
@@ -440,36 +509,34 @@ class LatentAggregator:
             return frame
 
     def get_frame(self, index: int) -> Optional[np.ndarray]:
-        """Retrieve the representative frame for a given global bin index.
+        """Retrieve the representative original frame for a global datapoint.
 
-        The frame is taken from the centre of the bin (``bin_size // 2``).
-        Uses an LRU reader pool + frame cache (see [PERF-03]) so repeated
-        clicks / hovers on the same cluster don't re-decode.
+        Routes through :class:`FrameIndexMap` so legacy (bin centre) and
+        prepared (decimated window centre) paths share one mapping. Uses an
+        LRU reader pool + frame cache (see [PERF-03]).
 
         Args:
-            index: Global bin index across all aggregated videos.
+            index: Global datapoint index across all aggregated videos.
 
         Returns:
-            ``(H, W, 3)`` numpy frame, or ``None`` if retrieval fails or
-            the index is out of bounds (an error is surfaced via
-            :attr:`notify` in those cases).
+            ``(H, W, 3)`` numpy frame, or ``None`` on failure / out of bounds.
         """
-        for n_bins_in_video, video_name in self.videos_meta:
-            if index >= n_bins_in_video:
-                index -= n_bins_in_video
-                continue
-
-            video_path = os.path.join(self.source_path, video_name)
-            frame_idx = index * self.bin_size + self.bin_size // 2
-            logger.debug('Retrieving frame from %s at index %d', video_name, frame_idx)
-            try:
-                return self._get_cached_frame(video_path, frame_idx)
-            except Exception as e:
-                self.notify(f"Error reading frame: {e}", "error")
-                return None
-
-        self.notify('Error: Index out of bounds in Aggregator', "error")
-        return None
+        if self.frame_index_map is None:
+            self.notify('Error: aggregator has no frame index map', "error")
+            return None
+        try:
+            video_idx, frame_idx = self.frame_index_map.dp_to_orig_frame(index)
+            video_name = self.frame_index_map.base.video_names[video_idx]
+        except (IndexError, ValueError):
+            self.notify('Error: Index out of bounds in Aggregator', "error")
+            return None
+        video_path = os.path.join(self.source_path, video_name)
+        logger.debug('Retrieving frame from %s at index %d', video_name, frame_idx)
+        try:
+            return self._get_cached_frame(video_path, frame_idx)
+        except Exception as e:
+            self.notify(f"Error reading frame: {e}", "error")
+            return None
 
     def close(self) -> None:
         """Close all cached VideoReader instances and release resources.
@@ -490,10 +557,16 @@ class LatentAggregator:
         self.close()
 
     def get_latent_object(self) -> Latent:
-        """Returns the high-level Latent explorer object."""
+        """Returns the high-level Latent explorer object.
+
+        Prepared caches are already windowed (per-video, in ``_init_prepared``),
+        so the Latent windowing is a no-op (``time_window=1``). The legacy path
+        windows here by ``bin_size`` as before.
+        """
         if self.latents is None:
             raise ValueError("No latents loaded. Cannot create Latent object.")
-        return Latent(self.latents, self.bin_size)
+        time_window = 1 if self._prepared else self.bin_size
+        return Latent(self.latents, time_window)
 
     def generate_subtitles(self, syllables: np.ndarray, meta: Dict) -> List[str]:
         """
@@ -505,20 +578,18 @@ class LatentAggregator:
         generated_files = []
         cum_bins = 0
 
-        for n_bins_in_video, video_name in self.videos_meta:
+        for video_idx, (n_bins_in_video, video_name) in enumerate(self.videos_meta):
             # Use this video's own fps (a project may mix frame rates).
             video_fps = self.fps_per_video.get(video_name, self.fps)
 
-            # Extract syllables corresponding to this video
-            # Syllables are per-bin, so we repeat them to match frame-rate if we want per-frame arrays,
-            # BUT the logic here seems to iterate changes in bins.
-
+            # Per-datapoint syllables for this video, expanded back to original
+            # frames via the FrameIndexMap (handles both bin and decimated paths).
             this_video_syllables_bins = syllables[cum_bins : cum_bins + n_bins_in_video]
-            
-            # Expand bins to frames for precision? 
-            # The original code repeated: data = np.repeat(this_video_syllabels, self.bin_size)
-            data = np.repeat(this_video_syllables_bins, self.bin_size)
-            
+            if self.frame_index_map is not None:
+                data = self.frame_index_map.expand_labels_to_orig(this_video_syllables_bins, video_idx)
+            else:
+                data = np.repeat(this_video_syllables_bins, self.bin_size)
+
             srt_entries = []
             n_frames = len(data)
             

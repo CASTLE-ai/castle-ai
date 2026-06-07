@@ -46,7 +46,8 @@ class ClusteringSession:
     
     def __init__(self, storage_path: str, project_name: str, roi: int,
                  bin_size: int, model: str,
-                 notify: Optional[Callable] = None):
+                 notify: Optional[Callable] = None,
+                 prepare_id: Optional[str] = None, k_prime: Optional[int] = None):
         """
         Initialize clustering session by loading and aggregating latents.
         
@@ -66,11 +67,13 @@ class ClusteringSession:
         self._notify = notify or (lambda msg, level='info': logger.log(
             logging.WARNING if level == 'error' else logging.INFO, msg))
         
-        # Initialize aggregator
+        # Initialize aggregator (prepared cache when prepare_id is given)
         self.aggregator = LatentAggregator(
             storage_path, project_name, roi, bin_size,
             model_name=model,
             notify=self._notify,
+            prepare_id=prepare_id,
+            k_prime=k_prime,
         )
         
         # Create Latent explorer object
@@ -245,31 +248,28 @@ class ClusteringSession:
         id_csv_path = os.path.join(cluster_path, 'id.csv')
         df1.to_csv(id_csv_path, index=False)
         
-        # Generate per-video time_series CSVs.
-        # Invariant: the per-frame expansion below assumes time_window frames per
-        # bin == aggregator bin_size. They are coupled by construction today
-        # (Latent(latents, bin_size)); guard so a future divergence fails loud
-        # rather than silently mis-aligning frame↔label (cf. P0-3).
-        if self.latents.time_window != self.aggregator.bin_size:
-            raise CastleDataError(
-                f"time_window ({self.latents.time_window}) != aggregator bin_size "
-                f"({self.aggregator.bin_size}); refusing to write mis-aligned "
-                f"time_series CSVs."
-            )
-        # Per-bin exclusion reason persisted alongside the label (contract C-1,
-        # docs/behavior_data_contract.md). nonfinite_latent vs dbscan_noise are
-        # distinguished from the latent data. tracking_loss (3) is added in PR2
-        # once empty masks become NaN; manual_exclude (4) when a UI hook exists.
+        # Generate per-video time_series CSVs at ORIGINAL-frame resolution.
+        # Expansion goes through the aggregator's FrameIndexMap, which maps each
+        # datapoint (legacy bin OR prepared decimated-window) back to the
+        # original frames it covers. The legacy map (for_window(1)) reproduces
+        # np.repeat(., bin_size) exactly; the prepared map handles decimation +
+        # windowing. Both cover [0, n_orig) with no gaps, so this replaces the
+        # old time_window==bin_size invariant guard.
         from castle.core.ethogram import derive_exclude_reason
         reason_bins = derive_exclude_reason(self.latents.cluster, self.latents.data)
 
+        fim = self.aggregator.frame_index_map
         ts_paths = []
         cum = 0
-        for vn, v in self.aggregator.videos_meta:
+        for video_idx, (vn, v) in enumerate(self.aggregator.videos_meta):
             video_cluster = self.latents.cluster[cum:cum + vn]
             video_reason = reason_bins[cum:cum + vn]
-            video_frames = np.repeat(video_cluster, self.latents.time_window)
-            video_reason_frames = np.repeat(video_reason, self.latents.time_window)
+            if fim is not None:
+                video_frames = fim.expand_labels_to_orig(video_cluster, video_idx)
+                video_reason_frames = fim.expand_labels_to_orig(video_reason, video_idx)
+            else:
+                video_frames = np.repeat(video_cluster, self.latents.time_window)
+                video_reason_frames = np.repeat(video_reason, self.latents.time_window)
             df2 = pd.DataFrame({
                 'behavior': video_frames,
                 'exclude_reason': video_reason_frames,
@@ -801,6 +801,28 @@ def save_project_cluster_model(
     from castle.core.cluster_transfer import save_cluster_model
     import glob
 
+    # Prepared (PCA-reduced) sessions are not supported by this exporter yet: it
+    # globs ALL raw per-frame latents and pairs them with per-bin labels to train
+    # a raw-feature classifier. Under a prepared session the clustering ran on
+    # decimated + L2 + PCA-reduced features, so a faithful transfer model must
+    # bundle the PCA basis (raw -> L2 -> PCA -> cluster) instead of mapping raw
+    # features directly. Refuse clearly rather than emit a mis-aligned model.
+    try:
+        from castle.service.session_manager import SessionManager
+        _mgr = SessionManager(os.path.dirname(project_path), os.path.basename(project_path))
+        _sid = _mgr.get_active_session_id()
+        _sinfo = _mgr.get_session(_sid) if _sid else None
+        _prepared_session = _sinfo is not None and bool(getattr(_sinfo, "prepare_id", None))
+    except Exception:  # noqa: BLE001 — never block legacy export on a probe error
+        _prepared_session = False
+    if _prepared_session:
+        raise CastleDataError(
+            "save_project_cluster_model does not yet support prepared (PCA-reduced) "
+            "clustering sessions: the transfer model needs the PCA basis bundled "
+            "(raw -> L2 -> PCA -> cluster), a planned follow-up. Export from a "
+            "legacy (non-prepared) session instead."
+        )
+
     cluster_dir = os.path.join(project_path, "cluster")
     if not os.path.isdir(cluster_dir):
         raise FileNotFoundError(f"No cluster directory found: {cluster_dir}")
@@ -1183,17 +1205,17 @@ def submit_local_to_global(
     id_csv_path = os.path.join(cluster_path, 'id.csv')
     df1.to_csv(id_csv_path, index=False)
 
-    # Invariant guard (see submit()): time_window frames per bin == bin_size.
-    if latents.time_window != aggregator.bin_size:
-        raise CastleDataError(
-            f"time_window ({latents.time_window}) != aggregator bin_size "
-            f"({aggregator.bin_size}); refusing to write mis-aligned time_series CSVs."
-        )
+    # Original-frame expansion via the FrameIndexMap (see submit()); replaces
+    # the old time_window==bin_size guard (the map handles legacy + prepared).
+    fim = aggregator.frame_index_map
     df2_paths: List[str] = []
     cum = 0
-    for vn, v in aggregator.videos_meta:
+    for video_idx, (vn, v) in enumerate(aggregator.videos_meta):
         video_cluster = latents.cluster[cum:cum + vn]
-        video_frames = np.repeat(video_cluster, latents.time_window)
+        if fim is not None:
+            video_frames = fim.expand_labels_to_orig(video_cluster, video_idx)
+        else:
+            video_frames = np.repeat(video_cluster, latents.time_window)
         df2 = pd.DataFrame({'behavior': video_frames})
         video_basename = os.path.splitext(os.path.basename(v))[0]
         df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
@@ -1457,6 +1479,8 @@ def init_clustering_aggregator(
     bin_size: Any,
     select_model: str,
     notify: Optional[Callable[[str, str], None]] = None,
+    prepare_id: Optional[str] = None,
+    k_prime: Optional[int] = None,
 ) -> InitAggregatorArtifacts:
     """Build a :class:`LatentAggregator` + record a new session row.
 
@@ -1487,6 +1511,8 @@ def init_clustering_aggregator(
         storage_path, project_name, select_roi_id, int(bin_size),
         model_name=select_model,
         notify=notify,
+        prepare_id=prepare_id,
+        k_prime=k_prime,
     )
     latents = aggregator.get_latent_object()
 
@@ -1498,6 +1524,8 @@ def init_clustering_aggregator(
             len(aggregator.latents)
             if aggregator.latents is not None else 0
         ),
+        prepare_id=prepare_id,
+        k_prime=k_prime,
     )
 
     return InitAggregatorArtifacts(aggregator=aggregator, latents=latents)

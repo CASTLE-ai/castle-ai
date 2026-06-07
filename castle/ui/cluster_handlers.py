@@ -653,9 +653,15 @@ def import_info_from_local_latent(
             artifacts.embedding_path)
 
 
-def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model):
+def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model,
+                  data_source=None, k_prime=0):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.init_clustering_aggregator`.
+
+    ``data_source`` is the Data-source dropdown value: a label starting with
+    ``"(legacy"`` selects the raw-latent path; any other value is a prepared-cache
+    ``prepare_id``. ``k_prime`` (0 = auto 95% variance) applies only to the
+    prepared path.
 
     Returns ``(aggregator, latents, session_info)`` — the cluster_tree_select
     auto-select to "init" is handled by the UI chain (.then lambda in
@@ -665,6 +671,14 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
 
     if not project_name:
         return None, None, None
+
+    prepare_id = None
+    if data_source and not str(data_source).startswith("(legacy"):
+        prepare_id = str(data_source)
+    try:
+        kp = int(k_prime) if k_prime and int(k_prime) > 0 else None
+    except (TypeError, ValueError):
+        kp = None
 
     def notify_callback(msg: str, level: str = "info"):
         if level == "error":
@@ -677,6 +691,7 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             storage_path, project_name,
             select_roi_id=select_roi_id, bin_size=bin_size,
             select_model=select_model, notify=notify_callback,
+            prepare_id=prepare_id, k_prime=kp,
         )
         session_info = check_session_exists(storage_path, project_name)
         return artifacts.aggregator, artifacts.latents, session_info
@@ -844,3 +859,70 @@ def export_representatives(storage_path, project_name, latents, aggregator,
         f"Bundle: `{zip_path}`."
     )
     return gr.update(value=zip_path, visible=True), status_md
+
+
+# ---------------------------
+# Prepare-cache handlers (clustering Prepare sub-tab)
+# ---------------------------
+def list_latent_choices(storage_path, project_name, model):
+    """CheckboxGroup choices + all_state for the Prepare file selector.
+
+    Returns ``(group_update, all_keys)``. ``model`` is accepted for future
+    per-model filtering; today the config['latent'] keys already encode model.
+    """
+    import gradio as gr
+    from castle.core.project import get_project_config
+    if not project_name:
+        return gr.update(choices=[], value=[]), []
+    try:
+        _, config = get_project_config(storage_path, project_name)
+        keys = sorted(config.get("latent", {}).keys())
+    except Exception:  # noqa: BLE001
+        keys = []
+    return gr.update(choices=keys, value=[]), keys
+
+
+def list_prepare_choices(storage_path, project_name):
+    """Data-source dropdown choices: the legacy sentinel + each prepared cache."""
+    choices = ["(legacy raw — no cache)"]
+    if not project_name:
+        return choices
+    try:
+        from castle.service import prepare_service
+        reg = prepare_service.list_prepared(storage_path, project_name)
+        for pid, meta in sorted(reg.items()):
+            label = (f"{pid} · {meta.get('n_sources', '?')} files · "
+                     f"{meta.get('n_dp_total', '?')} dp · K{meta.get('K', '?')}")
+            choices.append((label, pid))
+    except Exception:  # noqa: BLE001
+        pass
+    return choices
+
+
+def build_prepare_handler(storage_path, project_name, model, selected_keys,
+                          downsample, target_fps, normalize, pca, K, fit_fraction):
+    """Build a prepared cache from the selected latent files.
+
+    Returns ``(status_markdown, data_source_dropdown_update)`` — the dropdown is
+    refreshed and the freshly-built cache auto-selected.
+    """
+    import gradio as gr
+    if not selected_keys:
+        return "⚠️ Select at least one latent file to include.", gr.update()
+    msgs = []
+    try:
+        from castle.service import prepare_service
+        pid = prepare_service.build_prepare(
+            storage_path, project_name, model, list(selected_keys),
+            downsample=bool(downsample), target_fps_cap=float(target_fps),
+            normalize=str(normalize), pca=bool(pca), K=int(K),
+            fit_fraction=float(fit_fraction), notify=lambda m: msgs.append(str(m)),
+        )
+        gr.Info(f"Prepared cache {pid} ready.")
+        tail = msgs[-1] if msgs else ""
+        return f"✅ Built cache **{pid}**. {tail}", gr.update(
+            choices=list_prepare_choices(storage_path, project_name), value=pid,
+        )
+    except Exception as e:  # noqa: BLE001
+        gr.Warning(f"Prepare build failed: {e}")
+        return f"❌ Build failed: {e}", gr.update()

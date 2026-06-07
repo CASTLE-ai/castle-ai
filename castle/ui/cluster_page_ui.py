@@ -32,9 +32,16 @@ from castle.ui.cluster_handlers import (
     save_cluster_model,
     apply_cluster_model,
     export_representatives,
+    list_latent_choices,
+    build_prepare_handler,
+    list_prepare_choices,
 )
+from castle.ui.video_select import build_video_selector, wire_video_selector
 
 logger = logging.getLogger(__name__)
+
+# Sentinel dropdown label for the legacy (no prepared cache) raw-latent path.
+LEGACY_SOURCE_LABEL = "(legacy raw — no cache)"
 
 # ---------------------------
 # Templates & Presets (UI Config)
@@ -45,8 +52,7 @@ umap_config_template = '''[
         "n_neighbors": 100,
         "min_dist": 0.0,
         "n_components": 2,
-        "n_epochs": 5000,
-        "standardize": true
+        "n_epochs": 5000
     }
 ]'''
 
@@ -146,8 +152,7 @@ def update_umap_config_text_with_preset(preset_dropdown):
                 "n_neighbors": n_neighbors,
                 "min_dist": 0.0,
                 "n_components": 2,
-                "n_epochs": 5000,
-                "standardize": True
+                "n_epochs": 5000
             }]
             return json.dumps(config, indent=4)
     
@@ -157,7 +162,7 @@ def update_umap_config_text_with_preset(preset_dropdown):
             n_neighbors_1 = int(numbers[0])
             n_neighbors_2 = int(numbers[1])
             config = [
-                {"n_neighbors": n_neighbors_1, "min_dist": 0.0, "n_components": 5, "n_epochs": 5000, "standardize": True},
+                {"n_neighbors": n_neighbors_1, "min_dist": 0.0, "n_components": 5, "n_epochs": 5000},
                 {"n_neighbors": n_neighbors_2, "min_dist": 0.0, "n_components": 2, "n_epochs": 5000}
             ]
             return json.dumps(config, indent=4)
@@ -169,7 +174,7 @@ def update_umap_config_text_with_preset(preset_dropdown):
             n_neighbors_2 = int(numbers[1])
             n_neighbors_3 = int(numbers[2])
             config = [
-                {"n_neighbors": n_neighbors_1, "min_dist": 0.0, "n_components": 15, "n_epochs": 5000, "standardize": True},
+                {"n_neighbors": n_neighbors_1, "min_dist": 0.0, "n_components": 15, "n_epochs": 5000},
                 {"n_neighbors": n_neighbors_2, "min_dist": 0.0, "n_components": 5, "n_epochs": 5000},
                 {"n_neighbors": n_neighbors_3, "min_dist": 0.0, "n_components": 2, "n_epochs": 5000}
             ]
@@ -181,7 +186,7 @@ def update_umap_config_text_with_preset(preset_dropdown):
             n_neighbors_1 = int(numbers[0])
             n_neighbors_2 = int(numbers[1])
             config = [
-                {"n_neighbors": n_neighbors_1, "min_dist": 0.0, "n_components": 10, "n_epochs": 5000, "standardize": True},
+                {"n_neighbors": n_neighbors_1, "min_dist": 0.0, "n_components": 10, "n_epochs": 5000},
                 {"n_neighbors": n_neighbors_2, "min_dist": 0.0, "n_components": 2, "n_epochs": 5000}
             ]
             return json.dumps(config, indent=4)
@@ -196,194 +201,239 @@ def update_umap_config_text_with_preset(preset_dropdown):
 def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui = dict()
     
-    # Section 1: Previous Sessions
-    with gr.Accordion("📂 Previous Sessions", open=True) as ui['previous_sessions_accordion']:
-        ui['session_status'] = gr.Markdown("*Checking for previous sessions...*")
-        ui['session_dropdown'] = gr.Dropdown(label="Select Session", choices=[], interactive=True, visible=False)
-        with gr.Row():
-            ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
-            ui['delete_session_btn'] = gr.Button("🗑 Delete Session", variant="secondary", interactive=True, visible=True)
-        ui['delete_warning_md'] = gr.Markdown("", visible=False)
-        ui['delete_confirm_btn'] = gr.Button("⚠️ Confirm Delete", variant="stop", visible=False)
+    with gr.Tabs():
+        with gr.Tab("Prepare"):
+            gr.Markdown(
+                "**Prepare** — build a reduced latent cache once (downsample → "
+                "per-sample L2 → PCA), then explore it many times. Each settings "
+                "combo is a separate cache; changing settings makes a new one."
+            )
+            ui['prep_model'] = gr.Dropdown(
+                label="Model",
+                choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
+                value="dinov3_vitb16", interactive=True,
+            )
+            ui['prep_files'] = build_video_selector(
+                label="Latent files (mice) to include", visible=True,
+            )
+            with gr.Row():
+                ui['prep_downsample'] = gr.Checkbox(value=True, label="Downsample")
+                ui['prep_target_fps'] = gr.Number(value=60, label="Target fps cap")
+                ui['prep_normalize'] = gr.Radio(
+                    choices=["l2", "none"], value="l2", label="Per-sample normalize",
+                )
+            with gr.Row():
+                ui['prep_pca'] = gr.Checkbox(value=True, label="PCA (center-only)")
+                ui['prep_K'] = gr.Number(value=1024, label="PCA K (wide basis)")
+                ui['prep_fit_fraction'] = gr.Number(
+                    value=1.0, label="PCA fit fraction", minimum=0.01, maximum=1.0, step=0.01,
+                )
+            with gr.Row():
+                ui['prep_refresh_btn'] = gr.Button("↻ Refresh file list")
+                ui['prep_build_btn'] = gr.Button("⚙️ Build cache", variant="primary")
+            ui['prep_status'] = gr.Markdown("")
+        with gr.Tab("Explore (UMAP/DBSCAN)"):
+            # Section 1: Previous Sessions
+            with gr.Accordion("📂 Previous Sessions", open=True) as ui['previous_sessions_accordion']:
+                ui['session_status'] = gr.Markdown("*Checking for previous sessions...*")
+                ui['session_dropdown'] = gr.Dropdown(label="Select Session", choices=[], interactive=True, visible=False)
+                with gr.Row():
+                    ui['restore_btn'] = gr.Button("Restore Previous Session", interactive=False, visible=True)
+                    ui['delete_session_btn'] = gr.Button("🗑 Delete Session", variant="secondary", interactive=True, visible=True)
+                ui['delete_warning_md'] = gr.Markdown("", visible=False)
+                ui['delete_confirm_btn'] = gr.Button("⚠️ Confirm Delete", variant="stop", visible=False)
     
-    # Section 2: New Session
-    with gr.Accordion("⚙️ New Session", open=False) as ui['cluster_input_accordion']:
-        ui['select_model'] = gr.Dropdown(
-            label="Select Visual Model",
-            choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
-            value="dinov3_vitb16",
-            interactive=True,
-            visible=True
-        )
-        ui['select_roi_id'] = gr.Textbox(
-            label="Enter ROI ID",
-            value="1",
-            info=(
-                "ROI (Region of Interest) ID(s) for clustering. "
-                "Use the same ROI as used during feature extraction (Step 3). "
-                "Example: 1, or 1,2,3 for multiple ROIs."
-            ),
-            visible=True,
-        )
-        ui['bin_size'] = gr.Number(
-            label='Time window (frame)',
-            value=1,
-            interactive=True,
-            visible=True,
-            info=(
-                "Number of frames aggregated into one behavior bin. Default: 1. "
-                "Larger values create smoother but less temporally precise analysis. "
-                "Use the same value for all sessions in a project."
-            ),
-        )
-        ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
-        
-    # State Holders
-    latents = gr.State(None)
-    local_latents = gr.State(None)
-    local_embedding_plot = gr.State(None)
-    mulvideo = gr.State(None)  # Holds LatentAggregator instance
-    session_info = gr.State(None)
-    overwrite_state = gr.State(False)  # Submit-overwrite confirmation gate
-    # Last temp clip path from this Gradio session — replaces the
-    # module-level _last_clip_path global so two concurrent users do not
-    # race to delete each other's clip (3-A).
-    last_clip_path_state = gr.State(None)
+            # Section 2: New Session
+            with gr.Accordion("⚙️ New Session", open=False) as ui['cluster_input_accordion']:
+                ui['select_model'] = gr.Dropdown(
+                    label="Select Visual Model",
+                    choices=["dinov2_vitb14_reg4_pretrain", "dinov3_vitb16", "dinov3_vitl16"],
+                    value="dinov3_vitb16",
+                    interactive=True,
+                    visible=True
+                )
+                ui['select_roi_id'] = gr.Textbox(
+                    label="Enter ROI ID",
+                    value="1",
+                    info=(
+                        "ROI (Region of Interest) ID(s) for clustering. "
+                        "Use the same ROI as used during feature extraction (Step 3). "
+                        "Example: 1, or 1,2,3 for multiple ROIs."
+                    ),
+                    visible=True,
+                )
+                ui['bin_size'] = gr.Number(
+                    label='Time window (frame)',
+                    value=1,
+                    interactive=True,
+                    visible=True,
+                    info=(
+                        "Number of frames aggregated into one behavior bin. Default: 1. "
+                        "Larger values create smoother but less temporally precise analysis. "
+                        "Use the same value for all sessions in a project."
+                    ),
+                )
+                ui['data_source'] = gr.Dropdown(
+                    label="Data source",
+                    choices=[LEGACY_SOURCE_LABEL],
+                    value=LEGACY_SOURCE_LABEL,
+                    interactive=True,
+                    info="Pick a prepared cache (built in the Prepare tab), or legacy raw (no cache).",
+                )
+                ui['k_prime'] = gr.Number(
+                    label="k' (PCA dims into UMAP)",
+                    value=0,
+                    interactive=True,
+                    info="Prepared cache only. 0 = auto (95% explained variance). Ignored for legacy.",
+                )
+                ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
 
-    with gr.Row(visible=True) as ui['cluster_row_main']:
-        with gr.Column(scale=2):
-            ui['cluster_tree_html'] = gr.HTML(
-                value="<em style='color:#888;font-size:12px'>No clusters yet.</em>",
-                label="Cluster Tree",
-            )
-            # Hidden textbox — JS onclick on tree nodes writes here via native
-            # value setter + input/change event dispatch (castleTreeClick in
-            # main_ui.py).  We use CSS to hide rather than visible=False
-            # because hidden Gradio components occasionally swallow
-            # synthetic .change() / .input() events, which breaks the
-            # auto-restore handler bound below.
-            ui['cluster_tree_select'] = gr.Textbox(
-                value="",
-                interactive=True,
-                elem_id="castle-tree-select",
-                elem_classes=["castle-tree-select-hidden"],
-                show_label=False,
-                container=False,
-            )
-            gr.HTML(
-                "<style>.castle-tree-select-hidden{position:absolute!important;"
-                "left:-9999px!important;width:1px!important;height:1px!important;"
-                "overflow:hidden!important;}</style>"
-            )
-            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
-            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
-            ui['umap_seed'] = gr.Textbox(
-                label='UMAP seed',
-                value='',
-                placeholder='Empty = randomize each run',
-                interactive=True,
-                info=(
-                    "Leave blank to draw a fresh seed each run. "
-                    "Paste a seed from the status line below to reproduce a layout."
-                ),
-            )
-            ui['umap_device'] = gr.Radio(
-                choices=["GPU", "CPU"],
-                value="GPU",
-                label="UMAP backend",
-                info="GPU (cuML): fast, layout may vary slightly run-to-run. "
-                     "CPU (umap-learn): slower but layout is reproducible with the same seed.",
-            )
-            ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
-            ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
-            ui['eps'] = gr.Number(
-                label='epsilon-neighborhood radius',
-                interactive=True,
-                visible=True,
-                value=1,
-                step=0.1,
-                minimum=0.1,
-                maximum=10,
-                info=(
-                    "DBSCAN neighborhood radius. Larger values = fewer, bigger clusters; "
-                    "smaller values = more, finer-grained clusters. Default: 1.0. "
-                    "Adjust based on the density of the embedding scatter plot."
-                ),
-            )
-            ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
-            ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
-            ui['overwrite_confirm_btn'] = gr.Button(
-                "⚠️ Confirm Overwrite", variant="stop", visible=False,
-            )
-            ui['overwrite_warning_md'] = gr.Markdown("", visible=False)
-            ui['submit_status'] = gr.Markdown("", visible=True)
-        with gr.Column(scale=8):
-            ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
-            ui['display'] = gr.Video(label='Display', interactive=False, visible=True, autoplay=True, loop=True)  
-            ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
+            # State Holders
+            latents = gr.State(None)
+            local_latents = gr.State(None)
+            local_embedding_plot = gr.State(None)
+            mulvideo = gr.State(None)  # Holds LatentAggregator instance
+            session_info = gr.State(None)
+            overwrite_state = gr.State(False)  # Submit-overwrite confirmation gate
+            # Last temp clip path from this Gradio session — replaces the
+            # module-level _last_clip_path global so two concurrent users do not
+            # race to delete each other's clip (3-A).
+            last_clip_path_state = gr.State(None)
+
+            with gr.Row(visible=True) as ui['cluster_row_main']:
+                with gr.Column(scale=2):
+                    ui['cluster_tree_html'] = gr.HTML(
+                        value="<em style='color:#888;font-size:12px'>No clusters yet.</em>",
+                        label="Cluster Tree",
+                    )
+                    # Hidden textbox — JS onclick on tree nodes writes here via native
+                    # value setter + input/change event dispatch (castleTreeClick in
+                    # main_ui.py).  We use CSS to hide rather than visible=False
+                    # because hidden Gradio components occasionally swallow
+                    # synthetic .change() / .input() events, which breaks the
+                    # auto-restore handler bound below.
+                    ui['cluster_tree_select'] = gr.Textbox(
+                        value="",
+                        interactive=True,
+                        elem_id="castle-tree-select",
+                        elem_classes=["castle-tree-select-hidden"],
+                        show_label=False,
+                        container=False,
+                    )
+                    gr.HTML(
+                        "<style>.castle-tree-select-hidden{position:absolute!important;"
+                        "left:-9999px!important;width:1px!important;height:1px!important;"
+                        "overflow:hidden!important;}</style>"
+                    )
+                    ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
+                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
+                    ui['umap_seed'] = gr.Textbox(
+                        label='UMAP seed',
+                        value='',
+                        placeholder='Empty = randomize each run',
+                        interactive=True,
+                        info=(
+                            "Leave blank to draw a fresh seed each run. "
+                            "Paste a seed from the status line below to reproduce a layout."
+                        ),
+                    )
+                    ui['umap_device'] = gr.Radio(
+                        choices=["GPU", "CPU"],
+                        value="GPU",
+                        label="UMAP backend",
+                        info="GPU (cuML): fast, layout may vary slightly run-to-run. "
+                             "CPU (umap-learn): slower but layout is reproducible with the same seed.",
+                    )
+                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
+                    ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
+                    ui['eps'] = gr.Number(
+                        label='epsilon-neighborhood radius',
+                        interactive=True,
+                        visible=True,
+                        value=1,
+                        step=0.1,
+                        minimum=0.1,
+                        maximum=10,
+                        info=(
+                            "DBSCAN neighborhood radius. Larger values = fewer, bigger clusters; "
+                            "smaller values = more, finer-grained clusters. Default: 1.0. "
+                            "Adjust based on the density of the embedding scatter plot."
+                        ),
+                    )
+                    ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
+                    ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
+                    ui['overwrite_confirm_btn'] = gr.Button(
+                        "⚠️ Confirm Overwrite", variant="stop", visible=False,
+                    )
+                    ui['overwrite_warning_md'] = gr.Markdown("", visible=False)
+                    ui['submit_status'] = gr.Markdown("", visible=True)
+                with gr.Column(scale=8):
+                    ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
+                    ui['display'] = gr.Video(label='Display', interactive=False, visible=True, autoplay=True, loop=True)  
+                    ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
             
-    ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)
+            ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)
 
-    # ---- HITL warning banner ----
-    gr.Markdown(
-        "⚠️ **Cluster labels are only meaningful after human validation.** "
-        "Before exporting or training downstream models: "
-        "(1) inspect representative frames for each cluster, "
-        "(2) verify cluster boundaries by adjusting `eps`, and "
-        "(3) assign behaviorally meaningful labels. "
-        "CASTLE intentionally provides no \"one-click cluster\" entry point."
-    )
-
-    # ---- Cluster representatives export (UX-02) ----
-    with gr.Accordion("🖼️ Export Cluster Representatives", open=False):
-        gr.Markdown(
-            "Save N representative frames per labelled cluster — useful as "
-            "paper figures or as the 'face validity' check before submitting."
-        )
-        with gr.Row():
-            ui['representatives_n'] = gr.Number(
-                label="Frames per cluster", value=9, minimum=1, maximum=64, step=1,
+            # ---- HITL warning banner ----
+            gr.Markdown(
+                "⚠️ **Cluster labels are only meaningful after human validation.** "
+                "Before exporting or training downstream models: "
+                "(1) inspect representative frames for each cluster, "
+                "(2) verify cluster boundaries by adjusting `eps`, and "
+                "(3) assign behaviorally meaningful labels. "
+                "CASTLE intentionally provides no \"one-click cluster\" entry point."
             )
-            ui['representatives_selection'] = gr.Dropdown(
-                label="Selection",
-                choices=["medoid", "random"],
-                value="medoid",
-                info="medoid = closest to cluster centroid (most representative); random = uniform sample.",
-            )
-        ui['representatives_btn'] = gr.Button(
-            "🖼️ Export Representatives", variant="secondary",
-        )
-        ui['representatives_file'] = gr.File(
-            label="⬇️ Download (.zip)", visible=False, interactive=False,
-        )
-        ui['representatives_status'] = gr.Markdown("")
 
-    # ---- Save / Apply Cluster Model Section ----
-    with gr.Accordion("💾 Save / Apply Cluster Model", open=False) as ui['model_transfer_accordion']:
-        gr.Markdown(
-            "Transfer a trained cluster model to another project. "
-            "Equivalent to `castle cluster save-model` / `castle cluster apply-model`."
-        )
-        with gr.Row():
-            ui['save_model_btn'] = gr.Button("💾 Save Model", variant="secondary")
-            ui['save_model_file'] = gr.File(
-                label="⬇️ Download Model", visible=False, interactive=False
-            )
-        ui['save_model_status'] = gr.Markdown("")
-        gr.Markdown("---")
-        ui['apply_model_file'] = gr.File(
-            label="📂 Upload Cluster Model (.npz)", file_types=[".npz"], interactive=True
-        )
-        ui['apply_model_btn'] = gr.Button("📂 Apply Model", variant="secondary")
-        ui['apply_model_status'] = gr.Markdown("")
+            # ---- Cluster representatives export (UX-02) ----
+            with gr.Accordion("🖼️ Export Cluster Representatives", open=False):
+                gr.Markdown(
+                    "Save N representative frames per labelled cluster — useful as "
+                    "paper figures or as the 'face validity' check before submitting."
+                )
+                with gr.Row():
+                    ui['representatives_n'] = gr.Number(
+                        label="Frames per cluster", value=9, minimum=1, maximum=64, step=1,
+                    )
+                    ui['representatives_selection'] = gr.Dropdown(
+                        label="Selection",
+                        choices=["medoid", "random"],
+                        value="medoid",
+                        info="medoid = closest to cluster centroid (most representative); random = uniform sample.",
+                    )
+                ui['representatives_btn'] = gr.Button(
+                    "🖼️ Export Representatives", variant="secondary",
+                )
+                ui['representatives_file'] = gr.File(
+                    label="⬇️ Download (.zip)", visible=False, interactive=False,
+                )
+                ui['representatives_status'] = gr.Markdown("")
 
-    with gr.Row(visible=True) as ui['cluster_row_files']:
-        with gr.Column(scale=2):
-            ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=True)
-        with gr.Column(scale=2):
-            ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=True, file_count="multiple")
-        with gr.Column(scale=2):
-            ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=True)
+            # ---- Save / Apply Cluster Model Section ----
+            with gr.Accordion("💾 Save / Apply Cluster Model", open=False) as ui['model_transfer_accordion']:
+                gr.Markdown(
+                    "Transfer a trained cluster model to another project. "
+                    "Equivalent to `castle cluster save-model` / `castle cluster apply-model`."
+                )
+                with gr.Row():
+                    ui['save_model_btn'] = gr.Button("💾 Save Model", variant="secondary")
+                    ui['save_model_file'] = gr.File(
+                        label="⬇️ Download Model", visible=False, interactive=False
+                    )
+                ui['save_model_status'] = gr.Markdown("")
+                gr.Markdown("---")
+                ui['apply_model_file'] = gr.File(
+                    label="📂 Upload Cluster Model (.npz)", file_types=[".npz"], interactive=True
+                )
+                ui['apply_model_btn'] = gr.Button("📂 Apply Model", variant="secondary")
+                ui['apply_model_status'] = gr.Markdown("")
+
+            with gr.Row(visible=True) as ui['cluster_row_files']:
+                with gr.Column(scale=2):
+                    ui['behavior_id_csv'] = gr.File(label="Behavior ID", interactive=False, visible=True)
+                with gr.Column(scale=2):
+                    ui['behavior_time_series_csv'] = gr.File(label="Behavior time series", interactive=False, visible=True, file_count="multiple")
+                with gr.Column(scale=2):
+                    ui['behavior_time_series_srt'] = gr.File(label="Behavior time series (SRT)", interactive=False, visible=True)
 
     # --- Event Bindings ---
 
@@ -401,7 +451,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # Initialize: create aggregator + check for previous session
     ui['reset'].click(
         fn=init_mulvideo,
-        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model']],
+        inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'],
+                ui['data_source'], ui['k_prime']],
         outputs=[mulvideo, latents, session_info]
     ).then(
         fn=_format_session_status,
@@ -581,6 +632,29 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             ui['representatives_n'], ui['representatives_selection'],
         ],
         outputs=[ui['representatives_file'], ui['representatives_status']],
+    )
+
+    # --- Prepare sub-tab bindings ---
+    wire_video_selector(ui['prep_files'])
+    _prep_files_io = dict(
+        inputs=[storage_path, project_name, ui['prep_model']],
+        outputs=[ui['prep_files']['group'], ui['prep_files']['all_state']],
+    )
+    ui['prep_refresh_btn'].click(fn=list_latent_choices, **_prep_files_io)
+    ui['prep_model'].change(fn=list_latent_choices, **_prep_files_io)
+    ui['prep_build_btn'].click(
+        fn=build_prepare_handler,
+        inputs=[storage_path, project_name, ui['prep_model'], ui['prep_files']['group'],
+                ui['prep_downsample'], ui['prep_target_fps'], ui['prep_normalize'],
+                ui['prep_pca'], ui['prep_K'], ui['prep_fit_fraction']],
+        outputs=[ui['prep_status'], ui['data_source']],
+    )
+    # Populate the file list + refresh the data-source dropdown on tab entry.
+    cluster_page_tab.select(fn=list_latent_choices, **_prep_files_io)
+    cluster_page_tab.select(
+        fn=lambda sp, pn: gr.update(choices=list_prepare_choices(sp, pn)),
+        inputs=[storage_path, project_name],
+        outputs=[ui['data_source']],
     )
 
     # Expose shared state for Annotator tab (A-04)

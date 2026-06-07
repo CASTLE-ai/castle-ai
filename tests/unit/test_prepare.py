@@ -160,6 +160,32 @@ def test_run_prepare_nan_passthrough(tmp_path):
     assert meta["pca"]["n_finite_fit_rows"] == 49  # 50 decimated - 1 nan
 
 
+def test_run_prepare_float16_builds_float32_cache(tmp_path):
+    """float16 latents build without upcasting the whole array to float32: the
+    cache output is float32, correct shape, finite, and deterministic. Embedded
+    metadata supplies geometry so no full array load is needed for shapes."""
+    import json as _json
+    data = np.random.default_rng(1).standard_normal((300, 24)).astype(np.float16)
+    md = _json.dumps({"n_frames": 300, "feature_dim": 24, "model_name": "m"})
+    p = str(tmp_path / "f16.npz")
+    np.savez(p, latent=data, metadata=np.array([md]))
+
+    out = str(tmp_path / "c")
+    meta = run_prepare(out, [_src(p, "v.mp4")], downsample=True, target_fps_cap=60.0,
+                       normalize="l2", pca=True, K=8, model_name="m")
+    pd = load_prepare(out)
+    assert meta["n_dp_total"] == 150          # 300 @120fps -> 60fps = 150
+    assert meta["n_features"] == 24           # from metadata sidecar, not a full load
+    assert pd.reduced.dtype == np.float32     # cache is always float32 regardless of input dtype
+    assert pd.reduced.shape == (150, 8)
+    assert np.isfinite(np.asarray(pd.reduced)).all()
+
+    out2 = str(tmp_path / "c2")
+    run_prepare(out2, [_src(p, "v.mp4")], downsample=True, target_fps_cap=60.0,
+                normalize="l2", pca=True, K=8, model_name="m")
+    assert np.array_equal(np.asarray(pd.reduced), np.asarray(load_prepare(out2).reduced))
+
+
 def test_run_prepare_k_greater_than_rank_clamps(tmp_path, two_videos):
     out = str(tmp_path / "cache")
     meta = run_prepare(out, two_videos, downsample=False, normalize="none",

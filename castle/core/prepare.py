@@ -37,11 +37,12 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import numpy.typing as npt
 
+from castle.utils.latent_metadata import load_latent_metadata
 from castle.utils.safe_load import load_latent_safe
 
 FloatArr = npt.NDArray[np.float32]
@@ -438,27 +439,60 @@ class PreparedData:
         return int(self.reduced.shape[1])
 
 
-def _iter_decimated(
-    sources: Sequence[SourceSpec],
-    *,
-    downsample: bool,
-    target_fps_cap: float,
-    normalize: str,
-) -> Iterator[Tuple[SourceSpec, IntArr, int, FloatArr]]:
-    """Yield ``(src, dec_idx, n_orig, dec_rows)`` per video: decimated (+L2) rows.
+_BLOCK_ROWS = 8192  # rows per processing block; the float32 upcast + L2 happen here
 
-    ``dec_rows`` is float32, L2-normalised when requested; NaN rows preserved.
+
+def _load_decimated(
+    s: SourceSpec, *, downsample: bool, target_fps_cap: float
+) -> Tuple[npt.NDArray[Any], IntArr, int]:
+    """Load + decimate one source at its NATIVE dtype (NO float32 upcast).
+
+    Keeps the bulk array in its stored precision (e.g. float16) so a whole
+    project's latents are never doubled to float32 in RAM — the upcast happens
+    per row-block in :func:`_prep_block`. A no-op decimation (raw_fps <= target)
+    returns the array itself (no copy). ``Inf`` is already ``NaN`` and NaN rows
+    are preserved.
     """
-    for s in sources:
-        arr = load_latent_safe(s.npz_path)  # (n_orig, F), Inf already -> NaN
-        n_orig = arr.shape[0]
-        tgt = effective_target_fps(s.raw_fps, target_fps_cap) if downsample else None
+    arr = load_latent_safe(s.npz_path)  # (n_orig, F) native dtype, Inf already -> NaN
+    n_orig = int(arr.shape[0])
+    tgt = effective_target_fps(s.raw_fps, target_fps_cap) if downsample else None
+    if tgt is not None and s.raw_fps is not None and s.raw_fps > tgt:
         dec_idx = decimate_indices(n_orig, s.raw_fps, tgt)
-        dec = np.asarray(arr[dec_idx], dtype=np.float32)
-        del arr
-        if normalize == "l2":
-            dec = l2_normalize_rows(dec)
-        yield s, dec_idx, n_orig, dec
+        dec = arr[dec_idx]            # native-dtype copy of the kept rows
+    else:
+        dec_idx = np.arange(n_orig, dtype=np.int64)
+        dec = arr                     # no decimation -> no copy
+    return dec, dec_idx, n_orig
+
+
+def _prep_block(block: npt.ArrayLike, normalize: str) -> Tuple[FloatArr, npt.NDArray[np.bool_]]:
+    """Upcast one native-dtype row block to float32 (+ optional L2); flag finite rows.
+
+    The ONLY place a float32 copy is made, and it is at most ``_BLOCK_ROWS`` wide,
+    so peak RAM stays ~(native array + one block) rather than a whole float32
+    duplicate. NaN rows pass through as NaN and report as non-finite.
+    """
+    b = np.asarray(block, dtype=np.float32)
+    if normalize == "l2":
+        b = l2_normalize_rows(b)  # NaN rows stay NaN; finite rows eps-guarded
+    finite = np.isfinite(b).all(axis=1)
+    return b, finite
+
+
+def _source_geometry(s: SourceSpec) -> Tuple[int, int]:
+    """``(n_orig_frames, n_features)`` for a source, cheaply from its metadata.
+
+    Avoids decompressing the (multi-GB) latent array just to learn its shape
+    (the old geometry pass did a full load per file). Falls back to a full load
+    only for legacy npz that predate the metadata sidecar.
+    """
+    md = load_latent_metadata(s.npz_path)
+    if md and md.get("n_frames") is not None and md.get("feature_dim") is not None:
+        return int(md["n_frames"]), int(md["feature_dim"])
+    arr = load_latent_safe(s.npz_path)
+    n0, nf = int(arr.shape[0]), int(arr.shape[1])
+    del arr
+    return n0, nf
 
 
 def run_prepare(
@@ -491,6 +525,8 @@ def run_prepare(
     os.makedirs(out_dir, exist_ok=True)
 
     # --- Geometry pass: per-video decimated counts + the index map ----------
+    # Shapes come from the metadata sidecar, so NO latent array is decompressed
+    # here (one fewer full read per file than the old three-pass design).
     names: List[str] = []
     offsets = [0]
     orig_idx_parts: List[IntArr] = []
@@ -499,11 +535,9 @@ def run_prepare(
     roi_list: List[int] = []
     n_features: Optional[int] = None
     for s in sources:
-        arr = load_latent_safe(s.npz_path)
-        n_orig = arr.shape[0]
+        n_orig, nf = _source_geometry(s)
         if n_features is None:
-            n_features = int(arr.shape[1])
-        del arr
+            n_features = nf
         tgt = effective_target_fps(s.raw_fps, target_fps_cap) if downsample else None
         dec_idx = decimate_indices(n_orig, s.raw_fps, tgt)
         names.append(s.video_name)
@@ -555,19 +589,22 @@ def run_prepare(
                     break
 
         notify("Prepare: fitting IncrementalPCA (pass 1/2)...")
-        for s, dec_idx, n_orig, dec in _iter_decimated(
-            sources, downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize
-        ):
-            finite = np.isfinite(dec).all(axis=1)
-            rows = dec[finite]
-            if fit_fraction < 1.0 and rows.shape[0] > 0:
-                k = max(1, int(round(fit_fraction * rows.shape[0])))
-                sel = rng.choice(rows.shape[0], size=k, replace=False)
-                rows = rows[np.sort(sel)]
-            if rows.shape[0]:
-                buf.append(rows)
-                buf_n += rows.shape[0]
-                _flush(force=False)
+        for s in sources:
+            dec, _dec_idx, _n_orig = _load_decimated(
+                s, downsample=downsample, target_fps_cap=target_fps_cap
+            )
+            for i in range(0, dec.shape[0], _BLOCK_ROWS):
+                b, finite = _prep_block(dec[i:i + _BLOCK_ROWS], normalize)
+                rows = b[finite]
+                if fit_fraction < 1.0 and rows.shape[0] > 0:
+                    k = max(1, int(round(fit_fraction * rows.shape[0])))
+                    sel = rng.choice(rows.shape[0], size=k, replace=False)
+                    rows = rows[np.sort(sel)]
+                if rows.shape[0]:
+                    buf.append(rows)
+                    buf_n += rows.shape[0]
+                    _flush(force=False)
+            del dec
         _flush(force=True)
 
         if n_finite_fit < K_eff:
@@ -585,20 +622,24 @@ def run_prepare(
     reduced = np.memmap(reduced_path, dtype=np.float32, mode="w+", shape=(n_dp, width))
     notify(f"Prepare: writing reduced cache {n_dp}x{width} ({'pass 2/2' if pca else 'single pass'})...")
     cursor = 0
-    for s, dec_idx, n_orig, dec in _iter_decimated(
-        sources, downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize
-    ):
+    for s in sources:
+        dec, _dec_idx, _n_orig = _load_decimated(
+            s, downsample=downsample, target_fps_cap=target_fps_cap
+        )
         m = dec.shape[0]
-        if pca:
-            assert ipca is not None  # set in the fit pass above when pca is on
-            out = np.full((m, width), np.nan, dtype=np.float32)
-            finite = np.isfinite(dec).all(axis=1)
-            if finite.any():
-                out[finite] = ipca.transform(dec[finite])
-            reduced[cursor:cursor + m] = out
-        else:
-            reduced[cursor:cursor + m] = dec  # raw (decimated, maybe L2'd), NaN preserved
+        for i in range(0, m, _BLOCK_ROWS):
+            b, finite = _prep_block(dec[i:i + _BLOCK_ROWS], normalize)
+            nb = b.shape[0]
+            if pca:
+                assert ipca is not None  # set in the fit pass above when pca is on
+                out = np.full((nb, width), np.nan, dtype=np.float32)
+                if finite.any():
+                    out[finite] = ipca.transform(b[finite])
+                reduced[cursor + i:cursor + i + nb] = out
+            else:
+                reduced[cursor + i:cursor + i + nb] = b  # raw (decimated, maybe L2'd), NaN preserved
         cursor += m
+        del dec
     reduced.flush()
     del reduced
 

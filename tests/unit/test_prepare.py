@@ -262,3 +262,50 @@ def test_prepared_reuse_returns_same_id(tmp_path):
     pid1 = prepare_service.build_prepare(storage, proj, model, keys, **kw)
     pid2 = prepare_service.build_prepare(storage, proj, model, keys, **kw)  # reuse
     assert pid1 == pid2
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3+: prepared annotator restore (frame map attached, npz cls direct)    #
+# --------------------------------------------------------------------------- #
+def test_prepared_annotator_loader_uses_frame_map(tmp_path, monkeypatch):
+    storage, proj, model, keys = _make_project(tmp_path)
+    from castle.service import prepare_service
+    from castle.service.session_manager import SessionManager
+    from castle.service.annotator_loader import load_annotator_data
+
+    pid = prepare_service.build_prepare(
+        storage, proj, model, keys, downsample=False, normalize="none",
+        pca=True, K=8, notify=lambda *a: None,
+    )
+    pdir = prepare_service.prepared_dir(storage, proj, pid)
+    # mirror cache into cluster/prepared/<pid> where the loader looks
+    import shutil
+    cl_prepared = os.path.join(storage, proj, "cluster", "prepared", pid)
+    if os.path.abspath(pdir) != os.path.abspath(cl_prepared):
+        os.makedirs(os.path.dirname(cl_prepared), exist_ok=True)
+        if not os.path.exists(cl_prepared):
+            shutil.copytree(pdir, cl_prepared)
+
+    pd_obj = prepare_service.load_prepared(storage, proj, pid)
+    n_dp = pd_obj.reduced.shape[0]
+
+    cluster_dir = os.path.join(storage, proj, "cluster")
+    os.makedirs(cluster_dir, exist_ok=True)
+    import pandas as pd
+    pd.DataFrame({"Id": [0, 1], "Name": ["a", "b"], "Color": ["#fff", "#000"]}).to_csv(
+        os.path.join(cluster_dir, "id.csv"), index=False)
+    np.savez(os.path.join(cluster_dir, "cluster_x.npz"),
+             emb=np.zeros((n_dp, 2), np.float64),
+             cls=(np.arange(n_dp) % 2).astype(np.int32))
+
+    mgr = SessionManager(storage, proj)
+    info = mgr.create_session(model=model, roi_id=1, bin_size=1, total_frames=n_dp,
+                              prepare_id=pid, k_prime=8)
+    # snapshot the cluster root into the session so activate_session restores it
+    mgr.snapshot_to_session(info.session_id)
+
+    data = load_annotator_data(storage, proj, session_id=info.session_id)
+    assert data.frame_index_map is not None
+    assert len(data.cluster) == n_dp          # per-datapoint cls (not per-frame)
+    v, orig = data.frame_index_map.dp_to_orig_frame(0)
+    assert 0 <= v < 2 and orig >= 0

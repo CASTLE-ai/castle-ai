@@ -481,8 +481,18 @@ def generate_grid_video(
                             and os.path.exists(mask_h5_path)
                             and bout_start <= bin_idx < bout_end
                         ):
-                            # Map bin → representative video frame index
-                            video_frame_idx = int(bin_idx) * bin_size + bin_size // 2
+                            # Map datapoint -> representative original frame via
+                            # the FrameIndexMap (legacy bin centre OR prepared
+                            # decimated-window centre), so the mask contour lines
+                            # up with the frame get_annotator_frame returned.
+                            _fim = getattr(annotator_data, "frame_index_map", None)
+                            if _fim is not None:
+                                try:
+                                    _, video_frame_idx = _fim.dp_to_orig_frame(int(bin_idx))
+                                except (IndexError, ValueError):
+                                    video_frame_idx = int(bin_idx) * bin_size + bin_size // 2
+                            else:
+                                video_frame_idx = int(bin_idx) * bin_size + bin_size // 2
                             result = _load_mask_contours(mask_h5_path, video_frame_idx)
                             if result is not None:
                                 contours, (mask_h_dim, mask_w_dim) = result

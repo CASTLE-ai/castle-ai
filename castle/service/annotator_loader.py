@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from castle.core.prepare import WindowedFrameIndexMap
 from castle.core.project import get_project_config
 from castle.utils.video_io import VideoReader
 
@@ -51,6 +52,9 @@ class AnnotatorData:
     videos_meta: List[Tuple[int, str]]
     fps: float
     session_id: Optional[str] = None
+    # Window-aware datapoint<->original-frame map (legacy or prepared); used by
+    # get_annotator_frame / bout grid so both paths share one mapping.
+    frame_index_map: Optional[WindowedFrameIndexMap] = None
 
     # Internal cache — excluded from repr / comparisons
     _reader_cache: Dict[str, VideoReader] = field(
@@ -101,6 +105,7 @@ def load_annotator_data(
 
     # --- Activate session if requested ---
     bin_size = 1
+    prepare_id = None  # set from the session manifest; non-None => prepared cache
     if session_id is not None:
         from castle.service.session_manager import SessionManager
 
@@ -108,6 +113,7 @@ def load_annotator_data(
         info = sm.activate_session(session_id)
         if info is not None:
             bin_size = int(info.bin_size)
+            prepare_id = getattr(info, "prepare_id", None)
         else:
             logger.warning("Session '%s' not found — loading from cluster/ root", session_id)
     else:
@@ -119,6 +125,7 @@ def load_annotator_data(
         if active_id:
             info = sm.get_session(active_id)
             if info is not None:
+                prepare_id = getattr(info, "prepare_id", None)
                 bin_size = int(info.bin_size)
 
     # --- Load cluster_meta from id.csv ---
@@ -257,6 +264,32 @@ def load_annotator_data(
             except Exception as exc:
                 logger.warning("Could not read fps from %s: %s", first_video_path, exc)
 
+    # --- Datapoint<->original-frame map (+ prepared-session override) ---
+    frame_index_map = None
+    if prepare_id:
+        try:
+            from castle.core.prepare import load_prepare
+            _pd = load_prepare(os.path.join(cluster_path, "prepared", prepare_id))
+            base_map = _pd.index_map
+            frame_index_map = base_map.for_window(max(1, int(bin_size)))
+            # Prepared datapoints are decimated windows, not uniform bins: use the
+            # per-datapoint cls/emb from the npz directly and rebuild videos_meta
+            # from the map, bypassing the legacy per-frame-CSV reconstruction.
+            cls_array = npz["cls"].astype(np.int32)
+            emb_array = npz["emb"].astype(np.float64)
+            videos_meta = [
+                (int(frame_index_map.n_windows_per_video[v]), base_map.video_names[v])
+                for v in range(base_map.n_videos)
+            ]
+            if base_map.n_videos:
+                fps = float(base_map.raw_fps[0])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Prepared annotator load failed (%s); using legacy reconstruction.", exc)
+            frame_index_map = None
+    if frame_index_map is None:
+        from castle.core.prepare import build_legacy_index_map
+        frame_index_map = build_legacy_index_map(videos_meta, bin_size).for_window(1)
+
     return AnnotatorData(
         cluster=cls_array,
         cluster_meta=cluster_meta,
@@ -267,6 +300,7 @@ def load_annotator_data(
         videos_meta=videos_meta,
         fps=fps,
         session_id=session_id,
+        frame_index_map=frame_index_map,
     )
 
 
@@ -361,6 +395,24 @@ def get_annotator_frame(
     if not annotator_data.videos_meta:
         logger.warning("videos_meta is empty — cannot retrieve frame")
         return None
+
+    # Prefer the FrameIndexMap (legacy bin centre OR prepared decimated-window
+    # centre); fall back to the old bin arithmetic if it is somehow absent.
+    fim = annotator_data.frame_index_map
+    if fim is not None:
+        try:
+            video_idx, frame_idx = fim.dp_to_orig_frame(int(bin_idx))
+            video_name = fim.base.video_names[video_idx]
+        except (IndexError, ValueError):
+            logger.warning("bin_idx %d out of range for frame map", bin_idx)
+            return None
+        video_path = os.path.join(annotator_data.source_path, video_name)
+        try:
+            reader = _get_cached_reader(annotator_data, video_path)
+            return reader.get_frame(frame_idx)
+        except Exception as exc:
+            logger.warning("Frame read failed for %s[%d]: %s", video_name, frame_idx, exc)
+            return None
 
     remaining = int(bin_idx)
     bin_size = annotator_data.bin_size

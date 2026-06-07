@@ -190,6 +190,29 @@ def test_empty_new_features(simple_model):
     assert result["cluster_names"] == simple_model.cluster_names
 
 
+def test_apply_tolerates_nan_rows(simple_model):
+    """NaN (tracking-loss) rows must not crash k-NN; they get label -1, conf 0,
+    and the output stays the same length as the input (frame-aligned)."""
+    new_features = np.random.randn(10, simple_model.feature_dim).astype(np.float64)
+    new_features[3] = np.nan
+    new_features[7] = np.nan
+
+    for method in ("knn_feature", "knn_umap"):
+        result = apply_cluster_model(simple_model, new_features, method=method)
+        assert len(result["labels"]) == 10
+        assert result["labels"][3] == -1 and result["labels"][7] == -1
+        assert result["confidence"][3] == 0.0 and result["confidence"][7] == 0.0
+        # finite rows still classify into real clusters
+        assert set(result["labels"][[0, 1, 2]]).issubset({0, 1})
+
+
+def test_apply_all_nan_rows(simple_model):
+    """An all-NaN input returns all -1 without touching sklearn k-NN."""
+    new_features = np.full((4, simple_model.feature_dim), np.nan)
+    result = apply_cluster_model(simple_model, new_features, method="knn_feature")
+    assert list(result["labels"]) == [-1, -1, -1, -1]
+
+
 def test_cluster_names_preserved(simple_model):
     """Test that cluster names are preserved through save/load/apply."""
     with tempfile.TemporaryDirectory() as tmpdir:

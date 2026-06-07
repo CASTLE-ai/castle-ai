@@ -10,7 +10,7 @@ import logging
 import subprocess
 import tempfile
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Avoid importing AnnotatorData at module level to keep dependency light;
 # the type is referenced only in generate_grid_video's signature.
@@ -332,6 +332,42 @@ def _load_mask_contours(
     return contours, mask.shape[:2]
 
 
+def _load_mask_contours_cached(
+    cache: Dict[str, Any],
+    mask_h5_path: str,
+    frame_idx: int,
+) -> Optional[Tuple[List[Any], Tuple[int, int]]]:
+    """Like :func:`_load_mask_contours` but reuses an open ``h5py.File`` handle.
+
+    A pooled (multi-mouse) cache draws each grid cell from a different video, so
+    the per-cell mask comes from a different ``mask_list.h5``. Re-opening the
+    file every frame is wasteful; ``cache`` maps path -> open handle (or None
+    when the file is absent/unreadable). Caller closes the handles afterwards.
+    """
+    import cv2
+
+    if mask_h5_path not in cache:
+        try:
+            import h5py
+            cache[mask_h5_path] = h5py.File(mask_h5_path, "r")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not open mask file %s: %s", mask_h5_path, exc)
+            cache[mask_h5_path] = None
+    f = cache[mask_h5_path]
+    if f is None:
+        return None
+    key = str(frame_idx)
+    if key not in f:
+        return None
+    mask = f[key][()]
+    if mask.max() == 0:
+        return None
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    return contours, mask.shape[:2]
+
+
 def generate_grid_video(
     annotator_data,
     cluster_id: int,
@@ -339,7 +375,7 @@ def generate_grid_video(
     output_dir: Optional[str] = None,
     target_fps: float = 30.0,
     cell_size: int = 192,
-    mask_h5_path: Optional[str] = None,
+    overlay_mask: bool = True,
 ) -> Optional[str]:
     """Generate a grid video of the most representative bouts for a cluster.
 
@@ -351,9 +387,11 @@ def generate_grid_video(
     immediately without re-rendering.
 
     For frames that fall within the *actual* bout window (not the pre/post
-    padding), a thin green dashed rectangle is drawn around the ROI if a
-    ``mask_h5_path`` is provided.  The contour follows the mask shape
-    (not a bounding box).
+    padding), a thin green dashed contour of the ROI mask is drawn — so the box
+    simultaneously indicates the ROI extent and the real behaviour time span.
+    Each cell's mask is resolved from *its own* source video (a pooled
+    multi-mouse cache tiles bouts from different videos), keyed by the original
+    frame the cell shows. The contour follows the mask shape, not a bounding box.
 
     Args:
         annotator_data: :class:`~castle.service.annotator_loader.AnnotatorData`.
@@ -364,9 +402,10 @@ def generate_grid_video(
         target_fps: Base frame-rate of the output video.
         cell_size: Each grid cell is resized so its longest side equals
             *cell_size* pixels before tiling.
-        mask_h5_path: Optional path to a ``mask_list.h5`` file.  When
-            supplied, frames within the actual bout window receive a green
-            dashed ROI contour outline.
+        overlay_mask: When True (default), draw the per-cell ROI mask contour on
+            frames inside the actual bout window. Masks are read per cell from
+            ``<project>/track/<video>/mask_list.h5``; cells whose mask file is
+            missing simply get no contour.
 
     Returns:
         Absolute path to the rendered (or cached) MP4, or *None* on failure.
@@ -448,6 +487,12 @@ def generate_grid_video(
 
     black_cell = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
 
+    # Per-cell mask handles (path -> open h5 file); pooled caches draw cells
+    # from different videos, so each needs its own mask_list.h5.
+    _fim = getattr(annotator_data, "frame_index_map", None)
+    _mask_cache: Dict[str, Any] = {}
+    _track_dir = os.path.join(annotator_data.project_path, "track")
+
     for frame_offset in range(n_frames):
         grid_rows_imgs = []
         for row in range(grid_cols):
@@ -475,25 +520,24 @@ def generate_grid_video(
                         cell_img = black_cell.copy()
                         cell_img[:rh, :rw] = frame_resized
 
-                        # --- ROI contour overlay for actual bout frames ---
-                        if (
-                            mask_h5_path
-                            and os.path.exists(mask_h5_path)
-                            and bout_start <= bin_idx < bout_end
-                        ):
-                            # Map datapoint -> representative original frame via
-                            # the FrameIndexMap (legacy bin centre OR prepared
-                            # decimated-window centre), so the mask contour lines
-                            # up with the frame get_annotator_frame returned.
-                            _fim = getattr(annotator_data, "frame_index_map", None)
-                            if _fim is not None:
-                                try:
-                                    _, video_frame_idx = _fim.dp_to_orig_frame(int(bin_idx))
-                                except (IndexError, ValueError):
-                                    video_frame_idx = int(bin_idx) * bin_size + bin_size // 2
-                            else:
-                                video_frame_idx = int(bin_idx) * bin_size + bin_size // 2
-                            result = _load_mask_contours(mask_h5_path, video_frame_idx)
+                        # --- ROI contour overlay for ACTUAL bout frames only ---
+                        # (pre/post padding frames get no contour, so the box
+                        # marks the real behaviour span as well as the ROI).
+                        if overlay_mask and _fim is not None and bout_start <= bin_idx < bout_end:
+                            # Map datapoint -> (source video, representative
+                            # original frame) so the contour comes from THIS
+                            # cell's own video and lines up with the shown frame.
+                            try:
+                                cell_v, video_frame_idx = _fim.dp_to_orig_frame(int(bin_idx))
+                                cell_video = _fim.base.video_names[cell_v]
+                            except (IndexError, ValueError):
+                                cell_video, video_frame_idx = None, None
+                            result = None
+                            if cell_video is not None:
+                                cell_mask_path = os.path.join(_track_dir, cell_video, "mask_list.h5")
+                                result = _load_mask_contours_cached(
+                                    _mask_cache, cell_mask_path, video_frame_idx,
+                                )
                             if result is not None:
                                 contours, (mask_h_dim, mask_w_dim) = result
                                 # Scale: mask space → frame space → cell space
@@ -528,6 +572,12 @@ def generate_grid_video(
         writer.write(grid_frame)
 
     writer.release()
+    for _h in _mask_cache.values():
+        if _h is not None:
+            try:
+                _h.close()
+            except Exception:  # noqa: BLE001 — cleanup only
+                pass
     logger.info(
         "Grid video written: %s (%d cells × %d frames)",
         raw_path, len(selected), n_frames,

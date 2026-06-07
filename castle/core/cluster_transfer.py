@@ -150,36 +150,51 @@ def apply_cluster_model(model, new_features, method="knn_feature") -> dict:
     new_features = _transform_new_features(model, new_features)
     if new_features.shape[1] != model.training_features.shape[1]:
         raise ValueError(f"Feature dim mismatch: {new_features.shape[1]} vs {model.training_features.shape[1]}")
-    if len(new_features) == 0:
+    n = len(new_features)
+    if n == 0:
         return {"labels": np.array([], dtype=int), "confidence": np.array([]), "cluster_names": model.cluster_names}
-    
+
+    # Tracking-loss frames arrive as whole-NaN rows (and the prepared transform
+    # propagates that NaN). sklearn k-NN rejects NaN, so classify only the finite
+    # rows and leave the rest as -1 (unclustered), keeping the output the same
+    # length as the input so transferred_labels.csv stays frame-aligned.
+    valid = np.isfinite(np.asarray(new_features)).all(axis=1)
+    labels = np.full(n, -1, dtype=int)
+    confidence = np.zeros(n, dtype=float)
+    if not valid.any():
+        out = {"labels": labels, "confidence": confidence, "cluster_names": model.cluster_names}
+        if method == "knn_umap":
+            out["umap_projection"] = np.full((n, 2), np.nan)
+        return out
+
+    feats = np.asarray(new_features)[valid]
     nn = NearestNeighbors(n_neighbors=model.k, metric='cosine')
     nn.fit(model.training_features)
-    distances, indices = nn.kneighbors(new_features)
-    
+    distances, indices = nn.kneighbors(feats)
+
     if method == "knn_feature":
-        predicted, confidences = [], []
-        for i in range(len(new_features)):
-            label, conf = _majority_vote_excluding_noise(model.cluster_labels[indices[i]])
-            predicted.append(label)
-            confidences.append(conf)
-        return {"labels": np.array(predicted), "confidence": np.array(confidences), "cluster_names": model.cluster_names}
-    
+        for j, i in enumerate(np.where(valid)[0]):
+            label, conf = _majority_vote_excluding_noise(model.cluster_labels[indices[j]])
+            labels[i] = label
+            confidence[i] = conf
+        return {"labels": labels, "confidence": confidence, "cluster_names": model.cluster_names}
+
     elif method == "knn_umap":
         weights = 1.0 / (distances + 1e-8)
         weights /= weights.sum(axis=1, keepdims=True)
-        projected = np.zeros((len(new_features), 2))
-        for i in range(len(new_features)):
-            projected[i] = np.average(model.umap_embedding[indices[i]], weights=weights[i], axis=0)
+        projected_v = np.zeros((len(feats), 2))
+        for j in range(len(feats)):
+            projected_v[j] = np.average(model.umap_embedding[indices[j]], weights=weights[j], axis=0)
         nn_umap = NearestNeighbors(n_neighbors=model.k)
         nn_umap.fit(model.umap_embedding)
-        _, umap_indices = nn_umap.kneighbors(projected)
-        predicted, confidences = [], []
-        for i in range(len(new_features)):
-            label, conf = _majority_vote_excluding_noise(model.cluster_labels[umap_indices[i]])
-            predicted.append(label)
-            confidences.append(conf)
-        return {"labels": np.array(predicted), "confidence": np.array(confidences),
+        _, umap_indices = nn_umap.kneighbors(projected_v)
+        for j, i in enumerate(np.where(valid)[0]):
+            label, conf = _majority_vote_excluding_noise(model.cluster_labels[umap_indices[j]])
+            labels[i] = label
+            confidence[i] = conf
+        projected = np.full((n, 2), np.nan)
+        projected[valid] = projected_v
+        return {"labels": labels, "confidence": confidence,
                 "umap_projection": projected, "cluster_names": model.cluster_names}
     else:
         raise ValueError(f"Unknown method: {method}")

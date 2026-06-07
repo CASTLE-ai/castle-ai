@@ -188,10 +188,12 @@ def generate_clip_with_roi_overlay(
         if frame is None:
             continue
         video_name, frame_idx = get_bin_video_info(aggregator, int(i))
-        if video_name is not None:
-            video_base = os.path.splitext(os.path.basename(video_name))[0]
+        if video_name is not None and frame_idx is not None:
+            # track/ subdirs are named with the full video filename (incl.
+            # extension), so do NOT strip it — splitext here pointed the overlay
+            # at a non-existent dir and it silently never drew.
             mask_path = os.path.join(
-                aggregator.project_path, "track", video_base, "mask_list.h5",
+                aggregator.project_path, "track", os.path.basename(video_name), "mask_list.h5",
             )
             frame = apply_roi_overlay(frame, mask_path, frame_idx)
         frames.append(frame)

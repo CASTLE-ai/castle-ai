@@ -16,10 +16,7 @@ import logging
 import gradio as gr
 import numpy as np
 
-from castle.service.annotator_loader import (
-    AnnotatorData,
-    load_annotator_data,
-)
+from castle.service.annotator_loader import load_annotator_data
 from castle.service.bout_service import find_bouts, generate_grid_video
 from castle.service.annotation_service import (
     list_schemes,
@@ -76,27 +73,6 @@ def _find_cluster_id_by_name(annotator_data, name):
     for cid, meta in annotator_data.cluster_meta.items():
         if meta["name"] == name:
             return cid
-    return None
-
-
-def _resolve_mask_h5_path(annotator_data: AnnotatorData) -> str | None:
-    """Attempt to find the mask_list.h5 for the first video in the project.
-
-    Looks for ``{project_path}/track/{video_name}/mask_list.h5``.
-
-    Args:
-        annotator_data: Loaded :class:`AnnotatorData`.
-
-    Returns:
-        Absolute path to the H5 file if it exists, else *None*.
-    """
-    if not annotator_data.videos_meta:
-        return None
-    _, first_video = annotator_data.videos_meta[0]
-    video_name = os.path.basename(first_video)
-    mask_path = os.path.join(annotator_data.project_path, "track", video_name, "mask_list.h5")
-    if os.path.exists(mask_path):
-        return mask_path
     return None
 
 
@@ -193,16 +169,15 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
         annotator_data.project_path, "cluster", "grid_videos"
     )
 
-    # Resolve mask path for ROI overlay
-    mask_h5_path = _resolve_mask_h5_path(annotator_data)
-
     gr.Info(f"Generating {cols}×{cols} grid video for '{cluster_name}'…")
+    # ROI mask is resolved per cell inside generate_grid_video (each cell from
+    # its own source video), drawn only on the actual bout frames.
     video_path = generate_grid_video(
         annotator_data=annotator_data,
         cluster_id=cluster_id,
         grid_cols=cols,
         output_dir=output_dir,
-        mask_h5_path=mask_h5_path,
+        overlay_mask=True,
     )
 
     info_text = (

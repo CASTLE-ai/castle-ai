@@ -270,7 +270,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                     info=(
                         "Number of frames aggregated into one behavior bin. Default: 1. "
                         "Larger values create smoother but less temporally precise analysis. "
-                        "Use the same value for all sessions in a project."
+                        "Use the same value for all sessions in a project. "
+                        "For a prepared cache the window is counted in DOWNSAMPLED frames "
+                        "(e.g. W=2 on a 60 fps cache ≈ 33 ms), not raw frames."
                     ),
                 )
                 ui['data_source'] = gr.Dropdown(

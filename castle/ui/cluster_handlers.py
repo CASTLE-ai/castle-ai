@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 
 import gradio as gr
-import numpy as np
 
 from castle.service.session_manager import SessionManager
 
@@ -901,28 +900,67 @@ def list_prepare_choices(storage_path, project_name):
 
 def build_prepare_handler(storage_path, project_name, model, selected_keys,
                           downsample, target_fps, normalize, pca, K, fit_fraction):
-    """Build a prepared cache from the selected latent files.
+    """Build a prepared cache from the selected latent files (streams progress).
 
-    Returns ``(status_markdown, data_source_dropdown_update)`` — the dropdown is
-    refreshed and the freshly-built cache auto-selected.
+    A cache build is minutes-long (two passes over many GB + IncrementalPCA), so
+    this is a **generator**: it runs the build on a worker thread and yields the
+    live ``notify`` lines to ``prep_status`` as they arrive (and logs each to the
+    terminal), then a final ``(status, data_source_dropdown_update)`` with the
+    freshly-built cache auto-selected. Without this the UI sat silent for the
+    whole build with no log, progress, or feedback.
     """
+    import queue
+    import threading
+
     import gradio as gr
+
     if not selected_keys:
-        return "⚠️ Select at least one latent file to include.", gr.update()
-    msgs = []
-    try:
-        from castle.service import prepare_service
-        pid = prepare_service.build_prepare(
-            storage_path, project_name, model, list(selected_keys),
-            downsample=bool(downsample), target_fps_cap=float(target_fps),
-            normalize=str(normalize), pca=bool(pca), K=int(K),
-            fit_fraction=float(fit_fraction), notify=lambda m: msgs.append(str(m)),
-        )
-        gr.Info(f"Prepared cache {pid} ready.")
-        tail = msgs[-1] if msgs else ""
-        return f"✅ Built cache **{pid}**. {tail}", gr.update(
-            choices=list_prepare_choices(storage_path, project_name), value=pid,
-        )
-    except Exception as e:  # noqa: BLE001
-        gr.Warning(f"Prepare build failed: {e}")
-        return f"❌ Build failed: {e}", gr.update()
+        yield "⚠️ Select at least one latent file to include.", gr.update()
+        return
+
+    q: "queue.Queue[str | None]" = queue.Queue()
+    result: dict = {}
+
+    def _run():
+        try:
+            from castle.service import prepare_service
+            result["pid"] = prepare_service.build_prepare(
+                storage_path, project_name, model, list(selected_keys),
+                downsample=bool(downsample), target_fps_cap=float(target_fps),
+                normalize=str(normalize), pca=bool(pca), K=int(K),
+                fit_fraction=float(fit_fraction), notify=lambda m: q.put(str(m)),
+            )
+        except Exception as e:  # noqa: BLE001 — surfaced to the UI below
+            result["error"] = e
+        finally:
+            q.put(None)  # sentinel: build finished
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+
+    def _panel(header: str, lines: list) -> str:
+        body = "\n".join(f"- {ln}" for ln in lines[-8:])
+        return f"{header}\n\n{body}" if body else header
+
+    lines: list = []
+    yield "⏳ Building cache… (this can take minutes — see the lines below)", gr.update()
+    while True:
+        msg = q.get()
+        if msg is None:
+            break
+        lines.append(msg)
+        logger.info("[prepare] %s", msg)  # terminal / log feedback
+        yield _panel("⏳ Building cache…", lines), gr.update()
+    worker.join()
+
+    if "error" in result:
+        gr.Warning(f"Prepare build failed: {result['error']}")
+        yield _panel(f"❌ Build failed: {result['error']}", lines), gr.update()
+        return
+
+    pid = result.get("pid")
+    gr.Info(f"Prepared cache {pid} ready.")
+    yield (
+        _panel(f"✅ Built cache **{pid}**.", lines),
+        gr.update(choices=list_prepare_choices(storage_path, project_name), value=pid),
+    )

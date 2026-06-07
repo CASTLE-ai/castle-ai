@@ -589,7 +589,9 @@ def run_prepare(
                     break
 
         notify("Prepare: fitting IncrementalPCA (pass 1/2)...")
-        for s in sources:
+        n_src = len(sources)
+        for si, s in enumerate(sources):
+            notify(f"Prepare: PCA fit {si + 1}/{n_src} — {s.video_name}")
             dec, _dec_idx, _n_orig = _load_decimated(
                 s, downsample=downsample, target_fps_cap=target_fps_cap
             )
@@ -622,7 +624,9 @@ def run_prepare(
     reduced = np.memmap(reduced_path, dtype=np.float32, mode="w+", shape=(n_dp, width))
     notify(f"Prepare: writing reduced cache {n_dp}x{width} ({'pass 2/2' if pca else 'single pass'})...")
     cursor = 0
-    for s in sources:
+    n_src = len(sources)
+    for si, s in enumerate(sources):
+        notify(f"Prepare: transform+write {si + 1}/{n_src} — {s.video_name}")
         dec, _dec_idx, _n_orig = _load_decimated(
             s, downsample=downsample, target_fps_cap=target_fps_cap
         )

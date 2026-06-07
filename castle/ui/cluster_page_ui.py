@@ -34,9 +34,9 @@ from castle.ui.cluster_handlers import (
     export_representatives,
     list_latent_choices,
     build_prepare_handler,
-    cancel_prepare_handler,
     list_prepare_choices,
 )
+from castle.ui.progress_ui import init_cancel_event, request_cancel
 from castle.ui.video_select import build_video_selector, wire_video_selector
 
 logger = logging.getLogger(__name__)
@@ -231,9 +231,17 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 )
             with gr.Row():
                 ui['prep_refresh_btn'] = gr.Button("↻ Refresh file list")
-                ui['prep_build_btn'] = gr.Button("⚙️ Build cache", variant="primary")
-                ui['prep_cancel_btn'] = gr.Button("✖ Cancel", variant="stop", visible=False)
-            ui['prep_status'] = gr.Markdown("")
+                ui['prep_build_btn'] = gr.Button("⚙️ Build cache", variant="primary", scale=4)
+                ui['prep_cancel_btn'] = gr.Button(
+                    "Cancel", variant="secondary", interactive=False, scale=1,
+                )
+            # Frame-granular progress bar in its own component (never overlaps the
+            # log), rendered by us → Gradio's overlay disabled on the click. Same
+            # look as the Extract / Pre-process tabs (shared progress_ui.status_md).
+            ui['prep_status'] = gr.Markdown(value="")
+            # Per-run cancel flag, created fresh before the build generator runs.
+            ui['prep_cancel_event'] = gr.State(None)
+            ui['prep_log'] = gr.Textbox(label="Log", value="", interactive=False, lines=12)
         with gr.Tab("Explore (UMAP/DBSCAN)"):
             # Section 1: Previous Sessions
             with gr.Accordion("📂 Previous Sessions", open=True) as ui['previous_sessions_accordion']:
@@ -646,19 +654,31 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['prep_refresh_btn'].click(fn=list_latent_choices, **_prep_files_io)
     ui['prep_model'].change(fn=list_latent_choices, **_prep_files_io)
-    _prep_build_evt = ui['prep_build_btn'].click(
+    # Build: fresh cancel flag → generator (live log + status bar). Same chain as
+    # the Extract / Pre-process tabs. show_progress="hidden" because we render our
+    # own bar into prep_status.
+    ui['prep_build_btn'].click(
+        fn=init_cancel_event,
+        outputs=ui['prep_cancel_event'],
+        queue=False,
+    ).then(
         fn=build_prepare_handler,
         inputs=[storage_path, project_name, ui['prep_model'], ui['prep_files']['group'],
                 ui['prep_downsample'], ui['prep_target_fps'], ui['prep_normalize'],
-                ui['prep_pca'], ui['prep_K'], ui['prep_fit_fraction']],
-        outputs=[ui['prep_status'], ui['data_source'], ui['prep_cancel_btn']],
+                ui['prep_pca'], ui['prep_K'], ui['prep_fit_fraction'], ui['prep_cancel_event']],
+        outputs=[ui['prep_log'], ui['prep_build_btn'], ui['prep_cancel_btn'],
+                 ui['prep_status'], ui['data_source']],
+        show_progress="hidden",
     )
-    # Cancel: cancels= stops the build generator's UI stream; cancel_prepare_handler
-    # sets the cooperative flag so the worker thread actually aborts + cleans up.
+    # Cancel: set the flag + relabel; the generator's final yield restores the
+    # idle label and aborts the build at its next checkpoint (partial cache
+    # removed). queue=False so it runs while the generator owns the queue. NO
+    # cancels=[…] — an abrupt cancel would skip the reset yield.
     ui['prep_cancel_btn'].click(
-        fn=cancel_prepare_handler,
-        outputs=[ui['prep_status'], ui['prep_cancel_btn']],
-        cancels=[_prep_build_evt],
+        fn=lambda ce: request_cancel(ce, "Canceling (stopping current step)…"),
+        inputs=ui['prep_cancel_event'],
+        outputs=ui['prep_cancel_btn'],
+        queue=False,
     )
     # Populate the file list + refresh the data-source dropdown on tab entry.
     cluster_page_tab.select(fn=list_latent_choices, **_prep_files_io)

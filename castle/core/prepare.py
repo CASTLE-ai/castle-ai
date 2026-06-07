@@ -37,7 +37,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -414,16 +414,104 @@ def compute_prepare_id(
 
 
 # --------------------------------------------------------------------------- #
-# IncrementalPCA batch sizing                                                 #
+# I/O prefetch + device selection                                             #
 # --------------------------------------------------------------------------- #
-def _pca_batch_size(K: int, n_features: int, avail_bytes: Optional[int]) -> int:
-    """Streaming batch size: >= K (sklearn requirement), RAM-bounded, capped."""
-    floor = max(int(K), 1)
-    if avail_bytes:
-        by_ram = int(0.25 * avail_bytes / (n_features * 4))
-    else:
-        by_ram = 8192
-    return int(min(max(floor, by_ram), 16384))
+def _prefetch_decimated(
+    sources: Sequence[SourceSpec],
+    *,
+    downsample: bool,
+    target_fps_cap: float,
+    should_cancel: Callable[[], bool],
+) -> Iterator[Tuple[SourceSpec, npt.NDArray[Any]]]:
+    """Yield ``(source, decimated_array)`` with the NEXT file loaded one step ahead.
+
+    Decompressing a CASTLE latent npz is single-threaded and slow (zlib releases
+    the GIL), so a background loader thread overlaps the next file's
+    load+decimate with the current file's compute (matmul / GPU). Queue depth is
+    1, so at most ~two decimated arrays are resident — bounded so the build that
+    exists *because* of RAM limits does not itself blow the budget. Disable with
+    ``CASTLE_PREPARE_PREFETCH=0`` (falls back to serial load).
+    """
+    serial = os.environ.get("CASTLE_PREPARE_PREFETCH", "").strip() in ("0", "false", "no")
+    if serial:
+        for s in sources:
+            if should_cancel():
+                return
+            dec, _idx, _n = _load_decimated(s, downsample=downsample, target_fps_cap=target_fps_cap)
+            yield s, dec
+        return
+
+    import queue
+    import threading
+
+    q: "queue.Queue[Any]" = queue.Queue(maxsize=1)
+    sentinel = object()
+
+    def _producer() -> None:
+        try:
+            for s in sources:
+                if should_cancel():
+                    break
+                dec, _idx, _n = _load_decimated(
+                    s, downsample=downsample, target_fps_cap=target_fps_cap
+                )
+                q.put((s, dec))
+        except Exception as exc:  # noqa: BLE001 — surfaced to the consumer
+            q.put(("__error__", exc))
+            return
+        finally:
+            q.put(sentinel)
+
+    t = threading.Thread(target=_producer, daemon=True, name="prepare-loader")
+    t.start()
+    while True:
+        item = q.get()
+        if item is sentinel:
+            break
+        if isinstance(item, tuple) and item and item[0] == "__error__":
+            raise item[1]
+        yield item
+
+
+def _select_pca_device(n_features: int, notify: Callable[[str], None]) -> str:
+    """Pick 'cuda:N' (largest free VRAM) when there's room for the D×D solve, else 'cpu'.
+
+    The covariance + ``eigh`` solve needs roughly the Gram matrix plus the
+    eigensolver workspace on the device (~2·D²·4 bytes + a few GB). When no GPU
+    has that free (e.g. llama-server is resident), fall back to CPU. Honour
+    ``CASTLE_PREPARE_DEVICE=cpu|cuda`` to force.
+    """
+    forced = os.environ.get("CASTLE_PREPARE_DEVICE", "").strip().lower()
+    try:
+        import torch
+    except Exception:  # noqa: BLE001 — torch missing -> CPU
+        return "cpu"
+    if forced == "cpu":
+        return "cpu"
+    if not torch.cuda.is_available():
+        if forced == "cuda":
+            notify("Prepare: CUDA requested but unavailable; using CPU.")
+        return "cpu"
+    try:
+        from castle.core import runtime_env
+        # (free_bytes, index) per visible GPU; gpu_info values are typed `object`.
+        gpus = [(int(cast(int, d["free_bytes"])), int(cast(int, d["index"])))
+                for d in runtime_env.gpu_info()]
+    except Exception:  # noqa: BLE001
+        gpus = []
+    best = max(gpus, default=None) if gpus else None  # (free_bytes, index)
+    need = 2 * n_features * n_features * 4 + (3 << 30)  # ~2·Gram(f32) + 3 GiB slack
+    if forced == "cuda":
+        return f"cuda:{best[1]}" if best else "cuda"
+    if best and best[0] >= need:
+        return f"cuda:{best[1]}"
+    if best:
+        notify(
+            f"Prepare: largest GPU has {best[0] / 1e9:.1f} GB free "
+            f"(< ~{need / 1e9:.1f} GB needed for {n_features}-d PCA); using CPU. "
+            f"Stop other GPU jobs (or set CASTLE_PREPARE_DEVICE=cuda) to force GPU."
+        )
+    return "cpu"
 
 
 # --------------------------------------------------------------------------- #
@@ -517,7 +605,7 @@ def run_prepare(
     seed: int = 0,
     avail_ram_bytes: Optional[int] = None,
     notify: Callable[[str], None] = logger.info,
-    progress_cb: Optional[Callable[[float, str], None]] = None,
+    progress_cb: Optional[Callable[[int, int, int, int], None]] = None,
     should_cancel: Callable[[], bool] = lambda: False,
 ) -> Dict[str, Any]:
     """Run the (toggleable) Prepare pipeline and write the cache into ``out_dir``.
@@ -528,10 +616,10 @@ def run_prepare(
     NaN rows (tracking loss) are excluded from the PCA fit and pass through
     transform as NaN so downstream marks them ``cluster = -1``.
 
-    ``progress_cb(fraction, phase)`` is called after each source in each pass
-    (fraction in ``[0, 1]`` over fit+transform); ``should_cancel()`` is polled
-    per source and per block — when it turns True a :class:`BuildCancelled` is
-    raised so the caller can clean up the partial cache.
+    ``progress_cb(frames_done, total_frames, steps_done, total_steps)`` is called
+    after each source in each pass (total = n_dp x passes / n_sources x passes);
+    ``should_cancel()`` is polled per source and per block — when it turns True a
+    :class:`BuildCancelled` is raised so the caller can clean up the partial cache.
     """
     if normalize not in ("l2", "none"):
         raise ValueError(f"normalize must be 'l2' or 'none', got {normalize!r}")
@@ -574,56 +662,59 @@ def run_prepare(
     notify(f"Prepare: {len(sources)} videos -> {n_dp} datapoints x {n_features} features.")
 
     # Progress accounting: the fit and transform passes each scan all decimated
-    # rows, so total work = n_dp x (2 with PCA, 1 without). done_work advances by
-    # a source's decimated-row count as each source finishes a pass.
+    # rows, so total "frames" = n_dp x (2 with PCA, 1 without) and total "steps"
+    # = n_sources x passes. progress_cb(frames_done, total_frames, steps_done,
+    # total_steps) lets the UI render the same frames/sources/bar/ETA as the
+    # extract & pre-process tabs.
     dp_per_source = [int(offsets[i + 1] - offsets[i]) for i in range(len(sources))]
     pass_count = 2 if pca else 1
-    total_work = max(1, n_dp * pass_count)
-    done_work = 0
+    total_frames_units = max(1, n_dp * pass_count)
+    total_steps = max(1, len(sources) * pass_count)
+    done_frames = 0
+    done_steps = 0
 
-    def _emit_progress(phase: str) -> None:
+    def _emit_progress() -> None:
         if progress_cb is not None:
-            progress_cb(min(1.0, done_work / total_work), phase)
+            progress_cb(done_frames, total_frames_units, done_steps, total_steps)
+
+    _emit_progress()  # show 0 / total immediately
+    n_src = len(sources)
 
     width = int(n_features)
     evr: List[float] = []
     n_components_kept = width
     rank_limited = False
     n_finite_fit = 0
-    ipca = None
+    components: Optional[FloatArr] = None  # (n_components_kept, D) float32
+    mean_vec: Optional[FloatArr] = None    # (D,) float32
 
     if pca:
-        from sklearn.decomposition import IncrementalPCA
+        # Streaming PCA by accumulating the mean + Gram (XᵀX) over the (finite,
+        # optionally sub-sampled) fit rows, then a single top-K eigendecomposition
+        # of the covariance. The accumulation is one big matmul per block — GPU
+        # BLAS (or multi-threaded CPU BLAS) instead of sklearn's serial-ish
+        # per-batch SVD — and the eigh runs on-device. Mathematically equivalent
+        # to centre-only, no-whiten PCA (components are eigenvectors of the
+        # covariance, ordered by descending eigenvalue).
+        import torch
 
         K_eff = int(min(K, n_features))
-        batch = _pca_batch_size(K_eff, n_features, avail_ram_bytes)
-        ipca = IncrementalPCA(n_components=K_eff)
+        device = _select_pca_device(n_features, notify)
+        dev = torch.device(device)
+        # GPUs are slow at float64; use float32 there. CPU float64 is cheap + safer.
+        acc_dtype = torch.float32 if device.startswith("cuda") else torch.float64
+        S1 = torch.zeros(n_features, dtype=acc_dtype, device=dev)
+        S2 = torch.zeros((n_features, n_features), dtype=acc_dtype, device=dev)
         rng = np.random.default_rng(seed)
-        buf: List[FloatArr] = []
-        buf_n = 0
 
-        def _flush(force: bool = False) -> None:
-            nonlocal buf, buf_n, n_finite_fit
-            while buf_n >= batch or (force and buf_n >= K_eff):
-                chunk = np.concatenate(buf, axis=0) if len(buf) > 1 else buf[0]
-                take = chunk[:batch] if not force else chunk
-                ipca.partial_fit(take)
-                n_finite_fit += take.shape[0]
-                rest = chunk[take.shape[0]:]
-                buf = [rest] if rest.shape[0] else []
-                buf_n = rest.shape[0]
-                if force:
-                    break
-
-        notify("Prepare: fitting IncrementalPCA (pass 1/2)...")
-        n_src = len(sources)
-        for si, s in enumerate(sources):
+        notify(f"Prepare: fitting PCA on {device} (pass 1/2)…")
+        for si, (s, dec) in enumerate(_prefetch_decimated(
+            sources, downsample=downsample, target_fps_cap=target_fps_cap,
+            should_cancel=should_cancel,
+        )):
             if should_cancel():
                 raise BuildCancelled()
             notify(f"Prepare: PCA fit {si + 1}/{n_src} — {s.video_name}")
-            dec, _dec_idx, _n_orig = _load_decimated(
-                s, downsample=downsample, target_fps_cap=target_fps_cap
-            )
             for i in range(0, dec.shape[0], _BLOCK_ROWS):
                 if should_cancel():
                     raise BuildCancelled()
@@ -634,37 +725,60 @@ def run_prepare(
                     sel = rng.choice(rows.shape[0], size=k, replace=False)
                     rows = rows[np.sort(sel)]
                 if rows.shape[0]:
-                    buf.append(rows)
-                    buf_n += rows.shape[0]
-                    _flush(force=False)
+                    xb = torch.from_numpy(np.ascontiguousarray(rows)).to(dev, dtype=acc_dtype)
+                    S1 += xb.sum(dim=0)
+                    S2 += xb.T @ xb
+                    n_finite_fit += int(rows.shape[0])
+                    del xb
             del dec
-            done_work += dp_per_source[si]
-            _emit_progress("PCA fit")
-        _flush(force=True)
+            done_frames += dp_per_source[si]
+            done_steps += 1
+            _emit_progress()
 
         if n_finite_fit < K_eff:
             raise ValueError(
                 f"Too few finite frames ({n_finite_fit}) to fit PCA with K={K_eff}. "
                 f"Lower K, raise fit_fraction, or select more / less-decimated videos."
             )
-        n_components_kept = int(ipca.n_components_)
+        notify("Prepare: solving principal components (eigendecomposition)…")
+        n_fit_f = float(n_finite_fit)
+        mean_t = S1 / n_fit_f
+        cov = (S2 - n_fit_f * torch.outer(mean_t, mean_t)) / (n_fit_f - 1.0)
+        cov = 0.5 * (cov + cov.T)  # enforce exact symmetry before eigh
+        evals, evecs = torch.linalg.eigh(cov)             # ascending eigenvalues
+        order = torch.argsort(evals, descending=True)[:K_eff]
+        comp_t = evecs[:, order].T.contiguous()           # (K_eff, D), desc. variance
+        ev_top = torch.clamp(evals[order], min=0.0)
+        total_var = float(torch.clamp(evals, min=0.0).sum().item()) or 1.0
+        evr = [float(x) for x in (ev_top / total_var).cpu().numpy()]
+        components = comp_t.to("cpu", dtype=torch.float32).numpy()
+        mean_vec = mean_t.to("cpu", dtype=torch.float32).numpy()
+        n_components_kept = int(components.shape[0])
         rank_limited = n_components_kept < K
-        evr = [float(x) for x in np.asarray(ipca.explained_variance_ratio_)]
         width = n_components_kept
+        del S1, S2, cov, evals, evecs, comp_t, mean_t
+        if device.startswith("cuda"):
+            torch.cuda.empty_cache()
 
     # --- Transform / write pass --------------------------------------------
     reduced_path = os.path.join(out_dir, PCA_FILENAME)
     reduced = np.memmap(reduced_path, dtype=np.float32, mode="w+", shape=(n_dp, width))
     notify(f"Prepare: writing reduced cache {n_dp}x{width} ({'pass 2/2' if pca else 'single pass'})...")
+    comp_dev = None
+    mean_dev = None
+    if pca:
+        assert components is not None and mean_vec is not None
+        import torch
+        comp_dev = torch.from_numpy(components).to(dev)   # (K, D) float32
+        mean_dev = torch.from_numpy(mean_vec).to(dev)     # (D,)  float32
     cursor = 0
-    n_src = len(sources)
-    for si, s in enumerate(sources):
+    for si, (s, dec) in enumerate(_prefetch_decimated(
+        sources, downsample=downsample, target_fps_cap=target_fps_cap,
+        should_cancel=should_cancel,
+    )):
         if should_cancel():
             raise BuildCancelled()
         notify(f"Prepare: transform+write {si + 1}/{n_src} — {s.video_name}")
-        dec, _dec_idx, _n_orig = _load_decimated(
-            s, downsample=downsample, target_fps_cap=target_fps_cap
-        )
         m = dec.shape[0]
         for i in range(0, m, _BLOCK_ROWS):
             if should_cancel():
@@ -672,29 +786,36 @@ def run_prepare(
             b, finite = _prep_block(dec[i:i + _BLOCK_ROWS], normalize)
             nb = b.shape[0]
             if pca:
-                assert ipca is not None  # set in the fit pass above when pca is on
+                assert comp_dev is not None and mean_dev is not None
                 out = np.full((nb, width), np.nan, dtype=np.float32)
                 if finite.any():
-                    out[finite] = ipca.transform(b[finite])
+                    xb = torch.from_numpy(np.ascontiguousarray(b[finite])).to(comp_dev.device, dtype=comp_dev.dtype)
+                    proj = (xb - mean_dev) @ comp_dev.T
+                    out[finite] = proj.to("cpu", dtype=torch.float32).numpy()
+                    del xb, proj
                 reduced[cursor + i:cursor + i + nb] = out
             else:
                 reduced[cursor + i:cursor + i + nb] = b  # raw (decimated, maybe L2'd), NaN preserved
         cursor += m
         del dec
-        done_work += dp_per_source[si]
-        _emit_progress("Transform")
+        done_frames += dp_per_source[si]
+        done_steps += 1
+        _emit_progress()
     reduced.flush()
     del reduced
+    if pca:
+        del comp_dev, mean_dev
+        import torch
+        if device.startswith("cuda"):
+            torch.cuda.empty_cache()
 
     index_map.save(os.path.join(out_dir, INDEX_MAP_FILENAME))
 
     # Persist the PCA basis so a transfer model can reproduce the transform
     # (raw -> L2 -> centre -> PCA -> k') on a new project's raw latents.
-    if pca and ipca is not None:
-        np.save(os.path.join(out_dir, PCA_COMPONENTS_FILENAME),
-                np.asarray(ipca.components_, dtype=np.float32))
-        np.save(os.path.join(out_dir, PCA_MEAN_FILENAME),
-                np.asarray(ipca.mean_, dtype=np.float32))
+    if pca and components is not None and mean_vec is not None:
+        np.save(os.path.join(out_dir, PCA_COMPONENTS_FILENAME), np.asarray(components, dtype=np.float32))
+        np.save(os.path.join(out_dir, PCA_MEAN_FILENAME), np.asarray(mean_vec, dtype=np.float32))
 
     meta = {
         "prepare_schema_version": PREPARE_SCHEMA_VERSION,

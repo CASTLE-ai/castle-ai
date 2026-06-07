@@ -187,17 +187,19 @@ def test_run_prepare_float16_builds_float32_cache(tmp_path):
 
 
 def test_run_prepare_progress_callback(tmp_path, two_videos):
-    """progress_cb fires per source in both passes and reaches 1.0 at the end."""
+    """progress_cb fires per source across both passes and reaches 100%/all steps."""
     out = str(tmp_path / "cache")
-    fracs = []
+    events = []  # (frames_done, total_frames, steps_done, total_steps)
     run_prepare(out, two_videos, downsample=True, target_fps_cap=60.0,
                 normalize="l2", pca=True, K=8, model_name="m",
-                progress_cb=lambda f, ph: fracs.append((f, ph)))
-    assert fracs                                    # progress was reported
-    assert fracs[-1][0] == pytest.approx(1.0, abs=1e-6)   # ends at 100%
-    assert all(0.0 <= f <= 1.0 for f, _ in fracs)
-    phases = {ph for _, ph in fracs}
-    assert "PCA fit" in phases and "Transform" in phases
+                progress_cb=lambda fd, tf, sd, ts: events.append((fd, tf, sd, ts)))
+    assert events                                       # progress was reported
+    fd, tf, sd, ts = events[-1]
+    assert tf == 160 * 2 and ts == 2 * 2                # n_dp=160, 2 sources, 2 passes
+    assert fd == tf and sd == ts                        # ends fully done
+    # monotonic non-decreasing frames + steps
+    assert all(a[0] <= b[0] for a, b in zip(events, events[1:]))
+    assert all(a[2] <= b[2] for a, b in zip(events, events[1:]))
 
 
 def test_run_prepare_cancel_raises(tmp_path, two_videos):

@@ -9,7 +9,6 @@ They take Gradio state values as input and return updated values.
 import logging
 import os
 import json
-import threading
 from pathlib import Path
 
 import gradio as gr
@@ -899,49 +898,61 @@ def list_prepare_choices(storage_path, project_name):
     return choices
 
 
-# Cooperative-cancel flag for the Prepare build. A module-level singleton is
-# fine for this single-user local app (one build at a time): the Cancel button
-# sets it and run_prepare polls it. Gradio's cancels= stops the UI stream, but
-# only this flag actually stops the CPU work on the worker thread.
-_PREP_CANCEL = threading.Event()
-
-
-def _fmt_duration(seconds: float) -> str:
-    s = int(max(0, seconds))
-    if s < 60:
-        return f"{s}s"
-    if s < 3600:
-        return f"{s // 60}m {s % 60:02d}s"
-    return f"{s // 3600}h {(s % 3600) // 60:02d}m"
+_PREP_CANCEL_BTN_IDLE = "Cancel"
 
 
 def build_prepare_handler(storage_path, project_name, model, selected_keys,
                           downsample, target_fps, normalize, pca, K, fit_fraction,
-                          progress=gr.Progress()):
-    """Build a prepared cache from the selected latent files (streams progress).
+                          cancel_event=None):
+    """Build a prepared cache — same live UX as the Extract / Pre-process tabs.
 
-    A cache build is minutes-long (two passes over many GB + IncrementalPCA), so
-    this is a **generator** that runs the build on a worker thread and:
-      * yields live notify lines to ``prep_status`` (and logs each to terminal),
-      * drives a ``gr.Progress`` bar + ETA from per-source progress callbacks,
-      * shows/hides the Cancel button (3rd output).
-    Cancellation is cooperative: the Cancel button sets ``_PREP_CANCEL`` (and
-    Gradio cancels the stream); run_prepare aborts at its next checkpoint and the
-    partial cache is removed.
+    Generator that runs the build on a background thread and **polls** every
+    ~0.5 s, yielding ``(log, build_btn, cancel_btn, status_md, data_source)``.
+    The frame-granular bar + ETA is rendered with the shared
+    :func:`castle.ui.progress_ui.status_md` into its own ``prep_status`` Markdown
+    (Gradio's overlay disabled via ``show_progress="hidden"``); log lines stream
+    into the ``prep_log`` textbox (last 14) and to the terminal. A set
+    ``cancel_event`` aborts the build at its next checkpoint (partial cache
+    removed). Button states are owned here: first yield → running, final → reset.
     """
-    import queue
+    import threading
     import time
 
-    hide_cancel = gr.update(visible=False)
-    show_cancel = gr.update(visible=True)
+    from castle.ui.progress_ui import status_md
+
+    # First yield: running state. Build disabled, Cancel enabled.
+    yield (
+        "",
+        gr.update(interactive=False),
+        gr.update(value=_PREP_CANCEL_BTN_IDLE, interactive=True),
+        "🚀 Building cache…",
+        gr.update(),
+    )
 
     if not selected_keys:
-        yield "⚠️ Select at least one latent file to include.", gr.update(), hide_cancel
+        gr.Warning("Select at least one latent file to include.")
+        yield (
+            "⛔ Select at least one latent file to include.",
+            gr.update(interactive=True),
+            gr.update(value=_PREP_CANCEL_BTN_IDLE, interactive=False),
+            "",
+            gr.update(),
+        )
         return
 
-    _PREP_CANCEL.clear()
-    q: "queue.Queue" = queue.Queue()
+    messages: list = []
+    prog = {"frames": 0, "total_frames": 0, "steps": 0, "total_steps": 0}
+    lock = threading.Lock()
     result: dict = {}
+    done = threading.Event()
+
+    def _note(m) -> None:
+        messages.append(str(m))
+        logger.info("[prepare] %s", m)  # mirror to terminal / log file
+
+    def _progress(fd: int, tf: int, sd: int, ts: int) -> None:
+        with lock:
+            prog.update(frames=fd, total_frames=tf, steps=sd, total_steps=ts)
 
     def _run():
         try:
@@ -951,77 +962,61 @@ def build_prepare_handler(storage_path, project_name, model, selected_keys,
                 downsample=bool(downsample), target_fps_cap=float(target_fps),
                 normalize=str(normalize), pca=bool(pca), K=int(K),
                 fit_fraction=float(fit_fraction),
-                notify=lambda m: q.put(("log", str(m))),
-                progress_cb=lambda f, ph: q.put(("progress", float(f), str(ph))),
-                should_cancel=_PREP_CANCEL.is_set,
+                notify=_note, progress_cb=_progress,
+                should_cancel=(cancel_event.is_set if cancel_event is not None else (lambda: False)),
             )
         except Exception as e:  # noqa: BLE001 — surfaced to the UI below
             from castle.core.prepare import BuildCancelled
             result["cancelled" if isinstance(e, BuildCancelled) else "error"] = e
         finally:
-            q.put(None)  # sentinel: build finished
+            done.set()
 
-    worker = threading.Thread(target=_run, daemon=True)
-    start = time.time()
+    worker = threading.Thread(target=_run, daemon=True, name="prepare-build")
+    t0 = time.time()
     worker.start()
 
-    def _panel(header, lines, frac=None, eta=None):
-        bar = ""
-        if frac is not None:
-            filled = int(round(frac * 24))
-            bar = f"\n\n`[{'█' * filled}{'·' * (24 - filled)}]` {frac * 100:.0f}%"
-            if eta is not None:
-                bar += f" · ~{_fmt_duration(eta)} left"
-        body = "\n".join(f"- {ln}" for ln in lines[-8:])
-        return f"{header}{bar}" + (f"\n\n{body}" if body else "")
+    # Poll loop: status bar every ~0.5 s; log textbox only on new lines.
+    last_msg_count = 0
+    try:
+        while not done.wait(timeout=0.5):
+            cancelling = cancel_event is not None and cancel_event.is_set()
+            with lock:
+                fd, tf, sd, ts = (prog["frames"], prog["total_frames"],
+                                  prog["steps"], prog["total_steps"])
+            status = status_md(fd, tf, sd, ts, t0, cancelling)
+            if len(messages) != last_msg_count:
+                last_msg_count = len(messages)
+                log_update = "\n".join(messages[-14:])
+            else:
+                log_update = gr.update()
+            yield (log_update, gr.update(), gr.update(), status, gr.update())
+    except GeneratorExit:
+        if cancel_event is not None:
+            cancel_event.set()
+        raise
 
-    lines: list = []
-    frac = 0.0
-    eta = None
-    progress(0.0, desc="Starting…")
-    yield "⏳ Building cache… (this can take minutes)", gr.update(), show_cancel
-    while True:
-        item = q.get()
-        if item is None:
-            break
-        if item[0] == "log":
-            lines.append(item[1])
-            logger.info("[prepare] %s", item[1])  # terminal / log feedback
-            yield _panel("⏳ Building cache…", lines, frac, eta), gr.update(), show_cancel
-        elif item[0] == "progress":
-            frac = max(0.0, min(1.0, item[1]))
-            phase = item[2]
-            elapsed = time.time() - start
-            eta = (elapsed * (1 - frac) / frac) if frac > 0.02 else None
-            desc = f"{phase} {frac * 100:.0f}%" + (f" · ~{_fmt_duration(eta)} left" if eta else "")
-            progress(frac, desc=desc)
-            yield _panel("⏳ Building cache…", lines, frac, eta), gr.update(), show_cancel
     worker.join()
+    idle_cancel = gr.update(value=_PREP_CANCEL_BTN_IDLE, interactive=False)
+    enable_build = gr.update(interactive=True)
 
     if "cancelled" in result:
         gr.Info("Prepare build cancelled.")
-        yield _panel("⏹ Cancelled — partial cache removed.", lines), gr.update(), hide_cancel
+        messages.append("🛑 Cancelled — partial cache removed.")
+        yield ("\n".join(messages), enable_build, idle_cancel, "🛑 Cancelled.", gr.update())
         return
     if "error" in result:
         gr.Warning(f"Prepare build failed: {result['error']}")
-        yield _panel(f"❌ Build failed: {result['error']}", lines), gr.update(), hide_cancel
+        messages.append(f"❌ Build failed: {result['error']}")
+        yield ("\n".join(messages), enable_build, idle_cancel, "❌ Build failed.", gr.update())
         return
 
     pid = result.get("pid")
     gr.Info(f"Prepared cache {pid} ready.")
+    messages.append(f"✅ Built cache {pid}.")
     yield (
-        _panel(f"✅ Built cache **{pid}**.", lines, 1.0),
+        "\n".join(messages),
+        enable_build,
+        idle_cancel,
+        f"✅ Done — cache {pid}.",
         gr.update(choices=list_prepare_choices(storage_path, project_name), value=pid),
-        hide_cancel,
     )
-
-
-def cancel_prepare_handler():
-    """Cancel an in-flight Prepare build.
-
-    Sets the cooperative-cancel flag so run_prepare aborts at its next checkpoint
-    and removes the partial cache. Bound with ``cancels=`` so Gradio also stops
-    the build generator's UI stream immediately.
-    """
-    _PREP_CANCEL.set()
-    return "⏹ Cancelling — finishing the current step and cleaning up…", gr.update(visible=False)

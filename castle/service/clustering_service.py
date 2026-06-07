@@ -773,6 +773,84 @@ def restore_local_latent_from_npz(
 # Cluster-transfer helpers (project-level)
 # ---------------------------------------------------------------------------
 
+def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_info,
+                                 output_path, model_name, k) -> str:
+    """Export a transfer model for a prepared (PCA-reduced) session.
+
+    training_features are the per-decimated-frame reduced vectors (k' dims);
+    each frame inherits its window's cluster label/embedding. The Prepare
+    transform (L2 + PCA basis + k') is bundled so apply() can map a new
+    project's RAW latents into the same space. See cluster_transfer.ClusterModel.
+    """
+    import glob
+    from castle.core.cluster_transfer import save_cluster_model
+    from castle.core.prepare import load_prepare, k_prime_for_variance
+
+    # --- cluster names (id.csv) + per-window emb/cls (most recent npz) ---
+    id_csv_path = os.path.join(cluster_dir, "id.csv")
+    if not os.path.exists(id_csv_path):
+        raise FileNotFoundError(f"No id.csv found: {id_csv_path}")
+    id_df = pd.read_csv(id_csv_path)
+    cluster_names = {int(r["Id"]): r["Name"] for _, r in id_df.iterrows()}
+    emb_files = glob.glob(os.path.join(cluster_dir, "cluster_*.npz"))
+    if not emb_files:
+        raise FileNotFoundError(f"No embedding .npz found in {cluster_dir}")
+    emb_data = np.load(max(emb_files, key=os.path.getmtime), allow_pickle=True)
+    emb_full = emb_data["emb"].astype(np.float64)   # (n_windows, 2)
+    cls_full = emb_data["cls"].astype(np.int32)     # (n_windows,)
+
+    # --- prepared cache: reduced features + PCA basis ---
+    prep_dir = os.path.join(cluster_dir, "prepared", prepare_id)
+    pd_obj = load_prepare(prep_dir)
+    if pd_obj.pca_components is None:
+        raise CastleDataError(
+            f"Prepared cache {prepare_id} has no PCA basis (PCA was off, or it "
+            f"predates basis persistence). Rebuild the cache with PCA enabled to "
+            f"export a transfer model."
+        )
+    W = int(getattr(session_info, "bin_size", 1) or 1)
+    kp = int(getattr(session_info, "k_prime", 0) or 0) or k_prime_for_variance(pd_obj.meta, 0.95)
+    kp = max(1, min(kp, pd_obj.width))
+
+    wmap = pd_obj.index_map.for_window(W)
+    if wmap.n_windows != len(cls_full):
+        raise CastleDataError(
+            f"Window count mismatch: cache has {wmap.n_windows} windows but the "
+            f"saved embedding has {len(cls_full)}. Re-run clustering on this cache."
+        )
+    dp_win = wmap.datapoint_window_ids()            # (N_dp,) global window id or -1
+    n_dp = int(pd_obj.reduced.shape[0])
+    feats = np.asarray(pd_obj.reduced[:, :kp], dtype=np.float32)
+    labels = np.full(n_dp, -1, dtype=np.int32)
+    emb2 = np.full((n_dp, 2), np.nan, dtype=np.float64)
+    valid = dp_win >= 0
+    labels[valid] = cls_full[dp_win[valid]]
+    emb2[valid] = emb_full[dp_win[valid]]
+    keep = valid & np.isfinite(feats).all(axis=1) & np.isfinite(emb2).all(axis=1)
+
+    transform = {
+        "components": pd_obj.pca_components,        # (K_full, D_raw)
+        "mean": pd_obj.pca_mean,                    # (D_raw,)
+        "normalize": pd_obj.meta.get("normalize", "l2"),
+        "k_prime": kp,
+        "raw_feature_dim": int(pd_obj.meta.get("n_features", pd_obj.pca_components.shape[1])),
+    }
+    fps = float(pd_obj.index_map.raw_fps[0]) if pd_obj.index_map.n_videos else 30.0
+    if output_path is None:
+        output_path = os.path.join(cluster_dir, "cluster_model.npz")
+    return save_cluster_model(
+        output_path=output_path,
+        umap_embedding=emb2[keep],
+        training_features=feats[keep],
+        cluster_labels=labels[keep],
+        cluster_names=cluster_names,
+        model_name=model_name,
+        fps=fps,
+        k=k,
+        transform=transform,
+    )
+
+
 def save_project_cluster_model(
     project_path: str,
     output_path: Optional[str] = None,
@@ -801,31 +879,26 @@ def save_project_cluster_model(
     from castle.core.cluster_transfer import save_cluster_model
     import glob
 
-    # Prepared (PCA-reduced) sessions are not supported by this exporter yet: it
-    # globs ALL raw per-frame latents and pairs them with per-bin labels to train
-    # a raw-feature classifier. Under a prepared session the clustering ran on
-    # decimated + L2 + PCA-reduced features, so a faithful transfer model must
-    # bundle the PCA basis (raw -> L2 -> PCA -> cluster) instead of mapping raw
-    # features directly. Refuse clearly rather than emit a mis-aligned model.
+    cluster_dir = os.path.join(project_path, "cluster")
+    if not os.path.isdir(cluster_dir):
+        raise FileNotFoundError(f"No cluster directory found: {cluster_dir}")
+
+    # Prepared (PCA-reduced) sessions take a dedicated export path: the transfer
+    # model bundles the Prepare transform (raw -> L2 -> PCA -> k') so a new
+    # project's raw latents can be mapped into the same reduced space at apply
+    # time (per-frame; the source's temporal windowing is not re-applied).
     try:
         from castle.service.session_manager import SessionManager
         _mgr = SessionManager(os.path.dirname(project_path), os.path.basename(project_path))
         _sid = _mgr.get_active_session_id()
         _sinfo = _mgr.get_session(_sid) if _sid else None
-        _prepared_session = _sinfo is not None and bool(getattr(_sinfo, "prepare_id", None))
+        _prepare_id = getattr(_sinfo, "prepare_id", None) if _sinfo else None
     except Exception:  # noqa: BLE001 — never block legacy export on a probe error
-        _prepared_session = False
-    if _prepared_session:
-        raise CastleDataError(
-            "save_project_cluster_model does not yet support prepared (PCA-reduced) "
-            "clustering sessions: the transfer model needs the PCA basis bundled "
-            "(raw -> L2 -> PCA -> cluster), a planned follow-up. Export from a "
-            "legacy (non-prepared) session instead."
+        _sinfo, _prepare_id = None, None
+    if _prepare_id:
+        return _save_prepared_cluster_model(
+            project_path, cluster_dir, _prepare_id, _sinfo, output_path, model_name, k,
         )
-
-    cluster_dir = os.path.join(project_path, "cluster")
-    if not os.path.isdir(cluster_dir):
-        raise FileNotFoundError(f"No cluster directory found: {cluster_dir}")
 
     # --- Load id.csv for cluster names ---
     id_csv_path = os.path.join(cluster_dir, "id.csv")

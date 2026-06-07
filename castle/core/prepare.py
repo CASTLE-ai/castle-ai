@@ -57,6 +57,8 @@ _L2_EPS = 1e-8
 META_FILENAME = "meta.json"
 PCA_FILENAME = "reduced.dat"
 INDEX_MAP_FILENAME = "frame_index_map.npz"
+PCA_COMPONENTS_FILENAME = "pca_components.npy"
+PCA_MEAN_FILENAME = "pca_mean.npy"
 
 
 # --------------------------------------------------------------------------- #
@@ -223,6 +225,26 @@ class WindowedFrameIndexMap:
         """Global windowed-datapoint row range ``[start, stop)`` for a video."""
         return int(self.win_offsets[video_idx]), int(self.win_offsets[video_idx + 1])
 
+    def datapoint_window_ids(self) -> IntArr:
+        """Global window id each decimated cache row belongs to (-1 for the tail).
+
+        Maps the per-decimated-frame cache (``dp_offsets`` order) to the
+        per-window label/embedding arrays (``win_offsets`` order). Rows in a
+        video's truncated tail (``n_decimated % W`` frames) get -1. Used to
+        expand per-window cluster labels/embeddings back to per-frame for the
+        transfer-model export.
+        """
+        base, W = self.base, self.window
+        out = np.full(base.n_datapoints, -1, dtype=np.int64)
+        for v in range(base.n_videos):
+            dp_s = int(base.dp_offsets[v])
+            nwin = int(self.n_windows_per_video[v])
+            win_s = int(self.win_offsets[v])
+            for u in range(nwin):
+                rs = dp_s + u * W
+                out[rs:rs + W] = win_s + u
+        return out
+
     def expand_labels_to_orig(self, per_window_labels: npt.ArrayLike, video_idx: int) -> IntArr:
         """Expand one video's per-window labels back to per-original-frame.
 
@@ -378,6 +400,11 @@ class PreparedData:
     reduced: FloatArr            # (N_dp, width) float32 memmap (or array)
     index_map: FrameIndexMap
     meta: Dict[str, Any]
+    # PCA basis (present only when pca was on AND the cache was built after the
+    # basis-persistence change); needed to bundle the transform into a transfer
+    # model. None for normalize/decimate-only caches or older caches.
+    pca_components: Optional[FloatArr] = None  # (K_full, n_features)
+    pca_mean: Optional[FloatArr] = None        # (n_features,)
 
     @property
     def width(self) -> int:
@@ -550,6 +577,14 @@ def run_prepare(
 
     index_map.save(os.path.join(out_dir, INDEX_MAP_FILENAME))
 
+    # Persist the PCA basis so a transfer model can reproduce the transform
+    # (raw -> L2 -> centre -> PCA -> k') on a new project's raw latents.
+    if pca and ipca is not None:
+        np.save(os.path.join(out_dir, PCA_COMPONENTS_FILENAME),
+                np.asarray(ipca.components_, dtype=np.float32))
+        np.save(os.path.join(out_dir, PCA_MEAN_FILENAME),
+                np.asarray(ipca.mean_, dtype=np.float32))
+
     meta = {
         "prepare_schema_version": PREPARE_SCHEMA_VERSION,
         "created_at": None,  # stamped by service (no clock in pure core)
@@ -608,7 +643,12 @@ def load_prepare(prepare_dir: str) -> PreparedData:
         os.path.join(prepare_dir, PCA_FILENAME), dtype=np.float32, mode="r", shape=(n_dp, width)
     )
     index_map = FrameIndexMap.load(os.path.join(prepare_dir, INDEX_MAP_FILENAME))
-    return PreparedData(reduced=reduced, index_map=index_map, meta=meta)
+    comp_path = os.path.join(prepare_dir, PCA_COMPONENTS_FILENAME)
+    mean_path = os.path.join(prepare_dir, PCA_MEAN_FILENAME)
+    pca_components = np.load(comp_path) if os.path.exists(comp_path) else None
+    pca_mean = np.load(mean_path) if os.path.exists(mean_path) else None
+    return PreparedData(reduced=reduced, index_map=index_map, meta=meta,
+                        pca_components=pca_components, pca_mean=pca_mean)
 
 
 def is_stale(prepare_dir: str, resolve_path: Callable[[str], Optional[str]]) -> bool:

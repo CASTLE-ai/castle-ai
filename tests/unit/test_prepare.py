@@ -309,3 +309,59 @@ def test_prepared_annotator_loader_uses_frame_map(tmp_path, monkeypatch):
     assert len(data.cluster) == n_dp          # per-datapoint cls (not per-frame)
     v, orig = data.frame_index_map.dp_to_orig_frame(0)
     assert 0 <= v < 2 and orig >= 0
+
+
+# --------------------------------------------------------------------------- #
+# Prepared transfer model: save bundles PCA basis, apply transforms raw        #
+# --------------------------------------------------------------------------- #
+def test_prepared_transfer_model_roundtrip(tmp_path):
+    """A prepared transfer model maps NEW raw features through L2+PCA+k' and
+    classifies them in the reduced space (dims line up; labels are sane)."""
+    from castle.core.cluster_transfer import (
+        save_cluster_model, load_cluster_model, apply_cluster_model,
+    )
+    rng = np.random.default_rng(0)
+    D_raw, K_full, kp, N = 32, 8, 5, 60
+    # fake PCA basis (orthonormal-ish) + mean
+    comp = rng.standard_normal((K_full, D_raw)).astype(np.float32)
+    mean = rng.standard_normal(D_raw).astype(np.float32)
+    training = rng.standard_normal((N, kp)).astype(np.float32)
+    labels = (np.arange(N) % 3).astype(np.int32)
+    emb = rng.standard_normal((N, 2)).astype(np.float64)
+    out = str(tmp_path / "model.npz")
+    save_cluster_model(
+        out, emb, training, labels, cluster_names={0: "a", 1: "b", 2: "c"},
+        model_name="m", fps=30.0, k=5,
+        transform={"components": comp, "mean": mean, "normalize": "l2",
+                   "k_prime": kp, "raw_feature_dim": D_raw},
+    )
+    model = load_cluster_model(out)
+    assert model.has_transform and model.k_prime == kp and model.raw_feature_dim == D_raw
+    assert model.training_features.shape == (N, kp)
+
+    # apply to NEW raw features (D_raw): must transform to kp then classify
+    new_raw = rng.standard_normal((10, D_raw)).astype(np.float32)
+    res = apply_cluster_model(model, new_raw, method="knn_feature")
+    assert res["labels"].shape == (10,)
+    assert set(np.unique(res["labels"])).issubset({-1, 0, 1, 2})
+
+    # wrong raw dim -> clear error
+    import pytest as _pt
+    with _pt.raises(ValueError, match="Raw feature dim mismatch"):
+        apply_cluster_model(model, rng.standard_normal((3, D_raw + 1)).astype(np.float32))
+
+
+def test_legacy_transfer_model_still_raw(tmp_path):
+    """A model without a transform (legacy) uses raw features directly."""
+    from castle.core.cluster_transfer import (
+        save_cluster_model, load_cluster_model, apply_cluster_model,
+    )
+    rng = np.random.default_rng(1)
+    training = rng.standard_normal((40, 16)).astype(np.float32)
+    out = str(tmp_path / "legacy.npz")
+    save_cluster_model(out, rng.standard_normal((40, 2)), training,
+                       (np.arange(40) % 2).astype(np.int32), cluster_names={0: "x", 1: "y"})
+    model = load_cluster_model(out)
+    assert not model.has_transform
+    res = apply_cluster_model(model, rng.standard_normal((5, 16)).astype(np.float32))
+    assert res["labels"].shape == (5,)

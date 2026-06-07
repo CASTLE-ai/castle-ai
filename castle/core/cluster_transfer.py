@@ -3,37 +3,72 @@ import numpy as np
 import json
 import logging
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class ClusterModel:
-    """Saved clustering model."""
+    """Saved clustering model.
+
+    ``training_features`` are in whatever space the source clustering used:
+    raw DINO features for a legacy session, or PCA-reduced features for a
+    prepared session. When the source was a *prepared* session, the model also
+    carries the Prepare transform (per-sample normalisation + PCA basis +
+    ``k_prime`` slice) so a new project's RAW latents can be mapped into the same
+    reduced space before k-NN. Transfer is per-frame (the source's temporal
+    windowing was smoothing for clustering; it is not re-applied here).
+    """
     umap_embedding: np.ndarray    # (N, 2)
-    training_features: np.ndarray  # (N, D)
+    training_features: np.ndarray  # (N, D) — raw (legacy) or reduced (prepared)
     cluster_labels: np.ndarray     # (N,)
     cluster_names: Dict[int, str]
     k: int = 5
     model_name: str = ""
     fps: float = 30.0
-    feature_dim: int = 768
+    feature_dim: int = 768         # dim of training_features (the k-NN space)
     n_clusters: int = 0
+    # --- Prepare transform (prepared sessions only; all None for legacy) ---
+    pca_components: Optional[np.ndarray] = None  # (K_full, D_raw)
+    pca_mean: Optional[np.ndarray] = None        # (D_raw,)
+    normalize: str = ""                          # "l2" | "none" | "" (legacy)
+    k_prime: int = 0                             # slice width into PCA dims (0 = none)
+    raw_feature_dim: int = 0                     # expected RAW input dim for apply
 
-def save_cluster_model(output_path, umap_embedding, training_features, cluster_labels, 
-                       cluster_names=None, model_name="", fps=30.0, k=5) -> str:
-    """Save as .npz with metadata JSON."""
-    metadata = json.dumps({
+    @property
+    def has_transform(self) -> bool:
+        return self.pca_components is not None
+
+
+def save_cluster_model(output_path, umap_embedding, training_features, cluster_labels,
+                       cluster_names=None, model_name="", fps=30.0, k=5,
+                       transform=None) -> str:
+    """Save as .npz with metadata JSON.
+
+    ``transform`` (prepared sessions): dict with ``components`` (K_full, D_raw),
+    ``mean`` (D_raw,), ``normalize`` ("l2"/"none"), ``k_prime`` (int),
+    ``raw_feature_dim`` (int). Omitted for legacy raw-feature models.
+    """
+    arrays = dict(
+        umap_embedding=umap_embedding,
+        training_features=training_features,
+        cluster_labels=cluster_labels,
+    )
+    meta = {
         "cluster_names": {str(k): v for k, v in (cluster_names or {}).items()},
         "model_name": model_name, "fps": fps, "k": k,
         "feature_dim": int(training_features.shape[1]),
         "n_clusters": int(len(set(cluster_labels[cluster_labels >= 0]))),
-    })
-    np.savez_compressed(output_path, 
-                        umap_embedding=umap_embedding,
-                        training_features=training_features,
-                        cluster_labels=cluster_labels,
-                        metadata=np.array([metadata]))
+        "has_transform": bool(transform),
+    }
+    if transform:
+        arrays["pca_components"] = np.asarray(transform["components"], dtype=np.float32)
+        arrays["pca_mean"] = np.asarray(transform["mean"], dtype=np.float32)
+        meta["normalize"] = str(transform.get("normalize", "l2"))
+        meta["k_prime"] = int(transform.get("k_prime", 0))
+        meta["raw_feature_dim"] = int(transform.get("raw_feature_dim", 0))
+    arrays["metadata"] = np.array([json.dumps(meta)])
+    np.savez_compressed(output_path, **arrays)
     return output_path
 
 def load_cluster_model(model_path) -> ClusterModel:
@@ -48,6 +83,11 @@ def load_cluster_model(model_path) -> ClusterModel:
         k=meta.get("k", 5), model_name=meta.get("model_name", ""),
         fps=meta.get("fps", 30.0), feature_dim=meta.get("feature_dim", 768),
         n_clusters=meta.get("n_clusters", 0),
+        pca_components=(data["pca_components"] if "pca_components" in data.files else None),
+        pca_mean=(data["pca_mean"] if "pca_mean" in data.files else None),
+        normalize=meta.get("normalize", ""),
+        k_prime=meta.get("k_prime", 0),
+        raw_feature_dim=meta.get("raw_feature_dim", 0),
     )
 
 def _majority_vote_excluding_noise(neighbor_labels: np.ndarray) -> tuple[int, float]:
@@ -69,15 +109,45 @@ def _majority_vote_excluding_noise(neighbor_labels: np.ndarray) -> tuple[int, fl
     return winner, confidence
 
 
+def _transform_new_features(model: "ClusterModel", new_features: np.ndarray) -> np.ndarray:
+    """Map RAW new-project features into the model's reduced space.
+
+    Reproduces the Prepare transform stored in the model: per-sample L2 (if
+    used) → centre → PCA basis → slice ``k_prime``. No-op when the model has no
+    transform (legacy raw-feature model). NaN rows pass through as NaN so they
+    are handled the same as during training.
+    """
+    if not model.has_transform:
+        return new_features
+    X = np.asarray(new_features, dtype=np.float32)
+    if X.shape[1] != model.raw_feature_dim:
+        raise ValueError(
+            f"Raw feature dim mismatch: {X.shape[1]} vs expected {model.raw_feature_dim} "
+            f"(the model was built from a prepared cache of {model.raw_feature_dim}-d latents)."
+        )
+    if model.normalize == "l2":
+        norm = np.linalg.norm(X, axis=1, keepdims=True)
+        X = X / np.maximum(norm, 1e-8)
+    reduced = (X - model.pca_mean) @ model.pca_components.T
+    if model.k_prime:
+        reduced = reduced[:, : model.k_prime]
+    return np.asarray(reduced, dtype=np.float32)
+
+
 def apply_cluster_model(model, new_features, method="knn_feature") -> dict:
     """Apply saved model to new features.
-    
+
+    For a prepared-session model the RAW ``new_features`` are first mapped into
+    the model's reduced space (L2 → PCA basis → k') before k-NN; legacy models
+    use the raw features directly.
+
     Methods:
-      knn_feature: k-NN in original D-dim feature space (cosine). Recommended.
+      knn_feature: k-NN in the model's feature space (cosine). Recommended.
       knn_umap: Approximate UMAP projection via weighted interpolation, then k-NN in 2D.
     """
     from sklearn.neighbors import NearestNeighbors
-    
+
+    new_features = _transform_new_features(model, new_features)
     if new_features.shape[1] != model.training_features.shape[1]:
         raise ValueError(f"Feature dim mismatch: {new_features.shape[1]} vs {model.training_features.shape[1]}")
     if len(new_features) == 0:

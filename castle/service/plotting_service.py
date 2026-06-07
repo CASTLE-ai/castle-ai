@@ -101,22 +101,30 @@ def plot_syllables_per_video(latents: Any, aggregator: Any):
             return cluster_meta[c]['color']
         return 'grey'
 
+    # Expand per-datapoint labels to ORIGINAL frames via the FrameIndexMap so the
+    # seconds-axis is correct for both legacy (bin) and prepared (decimated)
+    # paths; widths are then plain frame counts / fps (no bin_size factor).
+    fim = getattr(aggregator, 'frame_index_map', None)
     cum = 0
     for video_idx, (vn, video_name) in enumerate(videos_meta):
         ax = axes[video_idx]
         # Use this video's own fps so seconds-axis is correct in mixed-fps projects.
         video_fps = getattr(aggregator, 'fps_per_video', {}).get(video_name, fps)
         video_cluster = cluster[cum:cum + vn]
-        n = len(video_cluster)
+        if fim is not None:
+            frame_labels = fim.expand_labels_to_orig(video_cluster, video_idx)
+        else:
+            frame_labels = np.repeat(video_cluster, bin_size)
+        n = len(frame_labels)
         key_frames = (
             [0]
-            + [i + 1 for i in range(n - 1) if video_cluster[i] != video_cluster[i + 1]]
+            + [i + 1 for i in range(n - 1) if frame_labels[i] != frame_labels[i + 1]]
             + [n]
         )
-        widths = [(key_frames[j + 1] - key_frames[j]) * bin_size / video_fps for j in range(len(key_frames) - 1)]
-        colors = [palette(video_cluster[key_frames[j]]) for j in range(len(key_frames) - 1)]
-        lefts = [key_frames[j] * bin_size / video_fps for j in range(len(key_frames) - 1)]
-        total_seconds = n * bin_size / video_fps
+        widths = [(key_frames[j + 1] - key_frames[j]) / video_fps for j in range(len(key_frames) - 1)]
+        colors = [palette(frame_labels[key_frames[j]]) for j in range(len(key_frames) - 1)]
+        lefts = [key_frames[j] / video_fps for j in range(len(key_frames) - 1)]
+        total_seconds = n / video_fps
 
         ax.bar(lefts, height=[1] * len(widths), width=widths, color=colors,
                align='edge', edgecolor='none')

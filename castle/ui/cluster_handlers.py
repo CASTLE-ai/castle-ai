@@ -9,6 +9,7 @@ They take Gradio state values as input and return updated values.
 import logging
 import os
 import json
+import threading
 from pathlib import Path
 
 import gradio as gr
@@ -898,27 +899,48 @@ def list_prepare_choices(storage_path, project_name):
     return choices
 
 
+# Cooperative-cancel flag for the Prepare build. A module-level singleton is
+# fine for this single-user local app (one build at a time): the Cancel button
+# sets it and run_prepare polls it. Gradio's cancels= stops the UI stream, but
+# only this flag actually stops the CPU work on the worker thread.
+_PREP_CANCEL = threading.Event()
+
+
+def _fmt_duration(seconds: float) -> str:
+    s = int(max(0, seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s // 3600}h {(s % 3600) // 60:02d}m"
+
+
 def build_prepare_handler(storage_path, project_name, model, selected_keys,
-                          downsample, target_fps, normalize, pca, K, fit_fraction):
+                          downsample, target_fps, normalize, pca, K, fit_fraction,
+                          progress=gr.Progress()):
     """Build a prepared cache from the selected latent files (streams progress).
 
     A cache build is minutes-long (two passes over many GB + IncrementalPCA), so
-    this is a **generator**: it runs the build on a worker thread and yields the
-    live ``notify`` lines to ``prep_status`` as they arrive (and logs each to the
-    terminal), then a final ``(status, data_source_dropdown_update)`` with the
-    freshly-built cache auto-selected. Without this the UI sat silent for the
-    whole build with no log, progress, or feedback.
+    this is a **generator** that runs the build on a worker thread and:
+      * yields live notify lines to ``prep_status`` (and logs each to terminal),
+      * drives a ``gr.Progress`` bar + ETA from per-source progress callbacks,
+      * shows/hides the Cancel button (3rd output).
+    Cancellation is cooperative: the Cancel button sets ``_PREP_CANCEL`` (and
+    Gradio cancels the stream); run_prepare aborts at its next checkpoint and the
+    partial cache is removed.
     """
     import queue
-    import threading
+    import time
 
-    import gradio as gr
+    hide_cancel = gr.update(visible=False)
+    show_cancel = gr.update(visible=True)
 
     if not selected_keys:
-        yield "⚠️ Select at least one latent file to include.", gr.update()
+        yield "⚠️ Select at least one latent file to include.", gr.update(), hide_cancel
         return
 
-    q: "queue.Queue[str | None]" = queue.Queue()
+    _PREP_CANCEL.clear()
+    q: "queue.Queue" = queue.Queue()
     result: dict = {}
 
     def _run():
@@ -928,39 +950,78 @@ def build_prepare_handler(storage_path, project_name, model, selected_keys,
                 storage_path, project_name, model, list(selected_keys),
                 downsample=bool(downsample), target_fps_cap=float(target_fps),
                 normalize=str(normalize), pca=bool(pca), K=int(K),
-                fit_fraction=float(fit_fraction), notify=lambda m: q.put(str(m)),
+                fit_fraction=float(fit_fraction),
+                notify=lambda m: q.put(("log", str(m))),
+                progress_cb=lambda f, ph: q.put(("progress", float(f), str(ph))),
+                should_cancel=_PREP_CANCEL.is_set,
             )
         except Exception as e:  # noqa: BLE001 — surfaced to the UI below
-            result["error"] = e
+            from castle.core.prepare import BuildCancelled
+            result["cancelled" if isinstance(e, BuildCancelled) else "error"] = e
         finally:
             q.put(None)  # sentinel: build finished
 
     worker = threading.Thread(target=_run, daemon=True)
+    start = time.time()
     worker.start()
 
-    def _panel(header: str, lines: list) -> str:
+    def _panel(header, lines, frac=None, eta=None):
+        bar = ""
+        if frac is not None:
+            filled = int(round(frac * 24))
+            bar = f"\n\n`[{'█' * filled}{'·' * (24 - filled)}]` {frac * 100:.0f}%"
+            if eta is not None:
+                bar += f" · ~{_fmt_duration(eta)} left"
         body = "\n".join(f"- {ln}" for ln in lines[-8:])
-        return f"{header}\n\n{body}" if body else header
+        return f"{header}{bar}" + (f"\n\n{body}" if body else "")
 
     lines: list = []
-    yield "⏳ Building cache… (this can take minutes — see the lines below)", gr.update()
+    frac = 0.0
+    eta = None
+    progress(0.0, desc="Starting…")
+    yield "⏳ Building cache… (this can take minutes)", gr.update(), show_cancel
     while True:
-        msg = q.get()
-        if msg is None:
+        item = q.get()
+        if item is None:
             break
-        lines.append(msg)
-        logger.info("[prepare] %s", msg)  # terminal / log feedback
-        yield _panel("⏳ Building cache…", lines), gr.update()
+        if item[0] == "log":
+            lines.append(item[1])
+            logger.info("[prepare] %s", item[1])  # terminal / log feedback
+            yield _panel("⏳ Building cache…", lines, frac, eta), gr.update(), show_cancel
+        elif item[0] == "progress":
+            frac = max(0.0, min(1.0, item[1]))
+            phase = item[2]
+            elapsed = time.time() - start
+            eta = (elapsed * (1 - frac) / frac) if frac > 0.02 else None
+            desc = f"{phase} {frac * 100:.0f}%" + (f" · ~{_fmt_duration(eta)} left" if eta else "")
+            progress(frac, desc=desc)
+            yield _panel("⏳ Building cache…", lines, frac, eta), gr.update(), show_cancel
     worker.join()
 
+    if "cancelled" in result:
+        gr.Info("Prepare build cancelled.")
+        yield _panel("⏹ Cancelled — partial cache removed.", lines), gr.update(), hide_cancel
+        return
     if "error" in result:
         gr.Warning(f"Prepare build failed: {result['error']}")
-        yield _panel(f"❌ Build failed: {result['error']}", lines), gr.update()
+        yield _panel(f"❌ Build failed: {result['error']}", lines), gr.update(), hide_cancel
         return
 
     pid = result.get("pid")
     gr.Info(f"Prepared cache {pid} ready.")
     yield (
-        _panel(f"✅ Built cache **{pid}**.", lines),
+        _panel(f"✅ Built cache **{pid}**.", lines, 1.0),
         gr.update(choices=list_prepare_choices(storage_path, project_name), value=pid),
+        hide_cancel,
     )
+
+
+def cancel_prepare_handler():
+    """Cancel an in-flight Prepare build.
+
+    Sets the cooperative-cancel flag so run_prepare aborts at its next checkpoint
+    and removes the partial cache. Bound with ``cancels=`` so Gradio also stops
+    the build generator's UI stream immediately.
+    """
+    _PREP_CANCEL.set()
+    return "⏹ Cancelling — finishing the current step and cleaning up…", gr.update(visible=False)

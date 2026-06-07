@@ -186,6 +186,36 @@ def test_run_prepare_float16_builds_float32_cache(tmp_path):
     assert np.array_equal(np.asarray(pd.reduced), np.asarray(load_prepare(out2).reduced))
 
 
+def test_run_prepare_progress_callback(tmp_path, two_videos):
+    """progress_cb fires per source in both passes and reaches 1.0 at the end."""
+    out = str(tmp_path / "cache")
+    fracs = []
+    run_prepare(out, two_videos, downsample=True, target_fps_cap=60.0,
+                normalize="l2", pca=True, K=8, model_name="m",
+                progress_cb=lambda f, ph: fracs.append((f, ph)))
+    assert fracs                                    # progress was reported
+    assert fracs[-1][0] == pytest.approx(1.0, abs=1e-6)   # ends at 100%
+    assert all(0.0 <= f <= 1.0 for f, _ in fracs)
+    phases = {ph for _, ph in fracs}
+    assert "PCA fit" in phases and "Transform" in phases
+
+
+def test_run_prepare_cancel_raises(tmp_path, two_videos):
+    """should_cancel turning True aborts the build with BuildCancelled."""
+    from castle.core.prepare import BuildCancelled
+    out = str(tmp_path / "cache")
+    calls = {"n": 0}
+
+    def _cancel():
+        calls["n"] += 1
+        return calls["n"] >= 2  # let the first poll pass, cancel on the next
+
+    with pytest.raises(BuildCancelled):
+        run_prepare(out, two_videos, downsample=True, target_fps_cap=60.0,
+                    normalize="l2", pca=True, K=8, model_name="m",
+                    should_cancel=_cancel)
+
+
 def test_run_prepare_k_greater_than_rank_clamps(tmp_path, two_videos):
     out = str(tmp_path / "cache")
     meta = run_prepare(out, two_videos, downsample=False, normalize="none",

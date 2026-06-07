@@ -109,12 +109,16 @@ def build_prepare(
     seed: int = 0,
     force: bool = False,
     notify: Callable[[str], None] = logger.info,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
+    should_cancel: Callable[[], bool] = lambda: False,
 ) -> str:
     """Build (or reuse) a prepare cache; returns its ``prepare_id``.
 
     Atomic: builds into ``{id}.tmp/`` then ``os.replace`` to ``{id}/`` under a
     per-id ``FileLock`` so concurrent identical runs don't corrupt the dir.
-    Reuses an existing, non-stale cache unless ``force``.
+    Reuses an existing, non-stale cache unless ``force``. ``progress_cb`` and
+    ``should_cancel`` are forwarded to :func:`run_prepare`; on cancellation the
+    partial ``{id}.tmp`` dir is removed and :class:`BuildCancelled` propagates.
     """
     specs = resolve_sources(storage_path, project_name, model_name, selected_keys, notify)
     if not specs:
@@ -145,12 +149,18 @@ def build_prepare(
             return pid
         tmp_dir = final_dir + ".tmp"
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        meta = run_prepare(
-            tmp_dir, specs,
-            downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize,
-            pca=pca, K=K, fit_fraction=fit_fraction, model_name=model_name, seed=seed,
-            avail_ram_bytes=runtime_env.available_ram_bytes(), notify=notify,
-        )
+        try:
+            meta = run_prepare(
+                tmp_dir, specs,
+                downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize,
+                pca=pca, K=K, fit_fraction=fit_fraction, model_name=model_name, seed=seed,
+                avail_ram_bytes=runtime_env.available_ram_bytes(), notify=notify,
+                progress_cb=progress_cb, should_cancel=should_cancel,
+            )
+        except _prepare.BuildCancelled:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            notify(f"Prepare: build {pid} cancelled; partial cache removed.")
+            raise
         meta["created_at"] = datetime.now(timezone.utc).isoformat()
         with open(os.path.join(tmp_dir, _prepare.META_FILENAME), "w", encoding="utf-8") as f:
             import json

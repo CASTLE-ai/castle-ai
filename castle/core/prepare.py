@@ -54,6 +54,14 @@ logger = logging.getLogger(__name__)
 PREPARE_SCHEMA_VERSION = 1
 _L2_EPS = 1e-8
 
+
+class BuildCancelled(Exception):
+    """Raised inside :func:`run_prepare` when ``should_cancel()`` turns True.
+
+    The service layer catches it, removes the partial ``{id}.tmp`` dir, and
+    re-raises so the UI can report a clean cancellation.
+    """
+
 # meta.json / array filenames inside a prepare dir.
 META_FILENAME = "meta.json"
 PCA_FILENAME = "reduced.dat"
@@ -509,6 +517,8 @@ def run_prepare(
     seed: int = 0,
     avail_ram_bytes: Optional[int] = None,
     notify: Callable[[str], None] = logger.info,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
+    should_cancel: Callable[[], bool] = lambda: False,
 ) -> Dict[str, Any]:
     """Run the (toggleable) Prepare pipeline and write the cache into ``out_dir``.
 
@@ -517,6 +527,11 @@ def run_prepare(
 
     NaN rows (tracking loss) are excluded from the PCA fit and pass through
     transform as NaN so downstream marks them ``cluster = -1``.
+
+    ``progress_cb(fraction, phase)`` is called after each source in each pass
+    (fraction in ``[0, 1]`` over fit+transform); ``should_cancel()`` is polled
+    per source and per block — when it turns True a :class:`BuildCancelled` is
+    raised so the caller can clean up the partial cache.
     """
     if normalize not in ("l2", "none"):
         raise ValueError(f"normalize must be 'l2' or 'none', got {normalize!r}")
@@ -558,6 +573,18 @@ def run_prepare(
     )
     notify(f"Prepare: {len(sources)} videos -> {n_dp} datapoints x {n_features} features.")
 
+    # Progress accounting: the fit and transform passes each scan all decimated
+    # rows, so total work = n_dp x (2 with PCA, 1 without). done_work advances by
+    # a source's decimated-row count as each source finishes a pass.
+    dp_per_source = [int(offsets[i + 1] - offsets[i]) for i in range(len(sources))]
+    pass_count = 2 if pca else 1
+    total_work = max(1, n_dp * pass_count)
+    done_work = 0
+
+    def _emit_progress(phase: str) -> None:
+        if progress_cb is not None:
+            progress_cb(min(1.0, done_work / total_work), phase)
+
     width = int(n_features)
     evr: List[float] = []
     n_components_kept = width
@@ -591,11 +618,15 @@ def run_prepare(
         notify("Prepare: fitting IncrementalPCA (pass 1/2)...")
         n_src = len(sources)
         for si, s in enumerate(sources):
+            if should_cancel():
+                raise BuildCancelled()
             notify(f"Prepare: PCA fit {si + 1}/{n_src} — {s.video_name}")
             dec, _dec_idx, _n_orig = _load_decimated(
                 s, downsample=downsample, target_fps_cap=target_fps_cap
             )
             for i in range(0, dec.shape[0], _BLOCK_ROWS):
+                if should_cancel():
+                    raise BuildCancelled()
                 b, finite = _prep_block(dec[i:i + _BLOCK_ROWS], normalize)
                 rows = b[finite]
                 if fit_fraction < 1.0 and rows.shape[0] > 0:
@@ -607,6 +638,8 @@ def run_prepare(
                     buf_n += rows.shape[0]
                     _flush(force=False)
             del dec
+            done_work += dp_per_source[si]
+            _emit_progress("PCA fit")
         _flush(force=True)
 
         if n_finite_fit < K_eff:
@@ -626,12 +659,16 @@ def run_prepare(
     cursor = 0
     n_src = len(sources)
     for si, s in enumerate(sources):
+        if should_cancel():
+            raise BuildCancelled()
         notify(f"Prepare: transform+write {si + 1}/{n_src} — {s.video_name}")
         dec, _dec_idx, _n_orig = _load_decimated(
             s, downsample=downsample, target_fps_cap=target_fps_cap
         )
         m = dec.shape[0]
         for i in range(0, m, _BLOCK_ROWS):
+            if should_cancel():
+                raise BuildCancelled()
             b, finite = _prep_block(dec[i:i + _BLOCK_ROWS], normalize)
             nb = b.shape[0]
             if pca:
@@ -644,6 +681,8 @@ def run_prepare(
                 reduced[cursor + i:cursor + i + nb] = b  # raw (decimated, maybe L2'd), NaN preserved
         cursor += m
         del dec
+        done_work += dp_per_source[si]
+        _emit_progress("Transform")
     reduced.flush()
     del reduced
 

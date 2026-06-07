@@ -34,6 +34,7 @@ from castle.ui.cluster_handlers import (
     export_representatives,
     list_latent_choices,
     build_prepare_handler,
+    cancel_prepare_handler,
     list_prepare_choices,
 )
 from castle.ui.video_select import build_video_selector, wire_video_selector
@@ -231,6 +232,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             with gr.Row():
                 ui['prep_refresh_btn'] = gr.Button("↻ Refresh file list")
                 ui['prep_build_btn'] = gr.Button("⚙️ Build cache", variant="primary")
+                ui['prep_cancel_btn'] = gr.Button("✖ Cancel", variant="stop", visible=False)
             ui['prep_status'] = gr.Markdown("")
         with gr.Tab("Explore (UMAP/DBSCAN)"):
             # Section 1: Previous Sessions
@@ -644,12 +646,19 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['prep_refresh_btn'].click(fn=list_latent_choices, **_prep_files_io)
     ui['prep_model'].change(fn=list_latent_choices, **_prep_files_io)
-    ui['prep_build_btn'].click(
+    _prep_build_evt = ui['prep_build_btn'].click(
         fn=build_prepare_handler,
         inputs=[storage_path, project_name, ui['prep_model'], ui['prep_files']['group'],
                 ui['prep_downsample'], ui['prep_target_fps'], ui['prep_normalize'],
                 ui['prep_pca'], ui['prep_K'], ui['prep_fit_fraction']],
-        outputs=[ui['prep_status'], ui['data_source']],
+        outputs=[ui['prep_status'], ui['data_source'], ui['prep_cancel_btn']],
+    )
+    # Cancel: cancels= stops the build generator's UI stream; cancel_prepare_handler
+    # sets the cooperative flag so the worker thread actually aborts + cleans up.
+    ui['prep_cancel_btn'].click(
+        fn=cancel_prepare_handler,
+        outputs=[ui['prep_status'], ui['prep_cancel_btn']],
+        cancels=[_prep_build_evt],
     )
     # Populate the file list + refresh the data-source dropdown on tab entry.
     cluster_page_tab.select(fn=list_latent_choices, **_prep_files_io)

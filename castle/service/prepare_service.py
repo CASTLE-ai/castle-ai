@@ -1,0 +1,200 @@
+"""castle/service/prepare_service.py — orchestration for the clustering Prepare step.
+
+Resolves the user's latent-file selection into :class:`SourceSpec` (physical
+path, source video, fps, ROI), keys a settings-deterministic cache, builds it
+once (atomic dir swap + cross-process filelock), registers it under
+``config['prepare']`` so multiple caches coexist like preprocess/extract
+sessions, and loads it for the Explore stage.
+
+Pure numerics live in :mod:`castle.core.prepare`; this layer owns project
+config, fps probing, the cache directory, and concurrency.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import shutil
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Sequence
+
+from filelock import FileLock
+
+from castle.core import prepare as _prepare
+from castle.core import runtime_env
+from castle.core.cluster import _resolve_latent_path
+from castle.core.prepare import SourceSpec, compute_prepare_id, is_stale, load_prepare, run_prepare
+from castle.core.project import get_project_config, update_config
+
+logger = logging.getLogger(__name__)
+
+_BUILD_LOCK_TIMEOUT = 600.0  # a full build can take minutes (two passes over many GB)
+_ROI_RE = re.compile(r"_ROI_(\d+)_ROI_(\d+)_")
+
+
+def _prepared_root(storage_path: str, project_name: str) -> str:
+    return os.path.join(storage_path, project_name, "cluster", "prepared")
+
+
+def _latent_dir(storage_path: str, project_name: str, model_name: str) -> str:
+    return os.path.join(storage_path, project_name, "latent", model_name)
+
+
+def _roi_from_key(key: str) -> int:
+    """Body-part (extraction) ROI parsed from the latent filename, fallback 1.
+
+    Filenames look like ``..._ROI_{field}_ROI_{body}_{model}...`` — the second
+    token is the extraction ROI the latent represents.
+    """
+    m = _ROI_RE.search(os.path.basename(key))
+    if m:
+        return int(m.group(2))
+    return 1
+
+
+def _read_fps(video_path: str, notify: Callable[[str], None]) -> float:
+    try:
+        from castle.utils.video_io import VideoReader
+
+        with VideoReader(video_path) as vr:
+            fps = float(vr.fps)
+        if fps > 0:
+            return fps
+    except Exception as exc:  # noqa: BLE001 — fps probe is best-effort
+        notify(f"Prepare: could not read fps from {os.path.basename(video_path)} ({exc}); using 30.0.")
+    return 30.0
+
+
+def resolve_sources(
+    storage_path: str,
+    project_name: str,
+    model_name: str,
+    selected_keys: Sequence[str],
+    notify: Callable[[str], None] = logger.info,
+) -> List[SourceSpec]:
+    """Resolve config['latent'] keys into SourceSpec (path, video, fps, roi)."""
+    latent_dir = _latent_dir(storage_path, project_name, model_name)
+    _, config = get_project_config(storage_path, project_name)
+    latent_map = config.get("latent", {})
+    sources_dir = os.path.join(storage_path, project_name, "sources")
+
+    specs: List[SourceSpec] = []
+    for key in selected_keys:
+        npz_path = _resolve_latent_path(latent_dir, key)
+        video_name = latent_map.get(key)
+        if video_name is None:
+            # Not registered under this exact key; derive the mp4 from the name.
+            stem = os.path.basename(key)
+            m = _ROI_RE.search(stem)
+            video_name = (stem[: m.start()] + f"_ROI_{m.group(1)}.mp4") if m else stem
+        roi = _roi_from_key(key)
+        raw_fps = _read_fps(os.path.join(sources_dir, video_name), notify)
+        specs.append(SourceSpec(key=key, npz_path=npz_path, video_name=video_name, raw_fps=raw_fps, roi=roi))
+    return specs
+
+
+def build_prepare(
+    storage_path: str,
+    project_name: str,
+    model_name: str,
+    selected_keys: Sequence[str],
+    *,
+    downsample: bool = True,
+    target_fps_cap: float = 60.0,
+    normalize: str = "l2",
+    pca: bool = True,
+    K: int = 1024,
+    fit_fraction: float = 1.0,
+    seed: int = 0,
+    force: bool = False,
+    notify: Callable[[str], None] = logger.info,
+) -> str:
+    """Build (or reuse) a prepare cache; returns its ``prepare_id``.
+
+    Atomic: builds into ``{id}.tmp/`` then ``os.replace`` to ``{id}/`` under a
+    per-id ``FileLock`` so concurrent identical runs don't corrupt the dir.
+    Reuses an existing, non-stale cache unless ``force``.
+    """
+    specs = resolve_sources(storage_path, project_name, model_name, selected_keys, notify)
+    if not specs:
+        raise ValueError("build_prepare: no latent files selected.")
+
+    pid = compute_prepare_id(
+        specs, downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize,
+        pca=pca, K=K, fit_fraction=fit_fraction, model_name=model_name,
+    )
+    root = _prepared_root(storage_path, project_name)
+    final_dir = os.path.join(root, pid)
+    latent_dir = _latent_dir(storage_path, project_name, model_name)
+
+    def _resolve(key: str) -> Optional[str]:
+        p = _resolve_latent_path(latent_dir, key)
+        return p if os.path.exists(p) else None
+
+    if os.path.isdir(final_dir) and not force and not is_stale(final_dir, _resolve):
+        notify(f"Prepare: reusing existing cache {pid}.")
+        return pid
+
+    os.makedirs(root, exist_ok=True)
+    lock = FileLock(os.path.join(root, f"{pid}.lock"), timeout=_BUILD_LOCK_TIMEOUT)
+    with lock:
+        # Re-check after acquiring the lock: another process may have built it.
+        if os.path.isdir(final_dir) and not force and not is_stale(final_dir, _resolve):
+            notify(f"Prepare: cache {pid} was built by another process; reusing.")
+            return pid
+        tmp_dir = final_dir + ".tmp"
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        meta = run_prepare(
+            tmp_dir, specs,
+            downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize,
+            pca=pca, K=K, fit_fraction=fit_fraction, model_name=model_name, seed=seed,
+            avail_ram_bytes=runtime_env.available_ram_bytes(), notify=notify,
+        )
+        meta["created_at"] = datetime.now(timezone.utc).isoformat()
+        with open(os.path.join(tmp_dir, _prepare.META_FILENAME), "w", encoding="utf-8") as f:
+            import json
+
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+        if os.path.isdir(final_dir):
+            shutil.rmtree(final_dir)
+        os.replace(tmp_dir, final_dir)
+        notify(f"Prepare: built cache {pid} ({meta['n_dp_total']} datapoints x {meta['width']}).")
+
+    # Register a summary so the UI can list/pick caches (multiple coexist).
+    with update_config(storage_path, project_name) as config:
+        reg = config.setdefault("prepare", {})
+        reg[pid] = {
+            "created_at": meta["created_at"],
+            "model_name": model_name,
+            "n_sources": len(specs),
+            "n_dp_total": meta["n_dp_total"],
+            "width": meta["width"],
+            "downsample": meta["downsample"],
+            "normalize": meta["normalize"],
+            "pca_on": meta["pca"]["on"],
+            "K": meta["pca"]["K"],
+        }
+    return pid
+
+
+def prepared_dir(storage_path: str, project_name: str, prepare_id: str) -> str:
+    return os.path.join(_prepared_root(storage_path, project_name), prepare_id)
+
+
+def load_prepared(storage_path: str, project_name: str, prepare_id: str) -> "_prepare.PreparedData":
+    """Load a prepare cache (see :func:`castle.core.prepare.load_prepare`)."""
+    return load_prepare(prepared_dir(storage_path, project_name, prepare_id))
+
+
+def list_prepared(storage_path: str, project_name: str) -> Dict[str, Any]:
+    """Return the ``config['prepare']`` registry (id -> summary)."""
+    _, config = get_project_config(storage_path, project_name)
+    return dict(config.get("prepare", {}))
+
+
+def delete_prepared(storage_path: str, project_name: str, prepare_id: str) -> None:
+    """Remove a prepare cache directory + its registry entry."""
+    shutil.rmtree(prepared_dir(storage_path, project_name, prepare_id), ignore_errors=True)
+    with update_config(storage_path, project_name) as config:
+        config.get("prepare", {}).pop(prepare_id, None)

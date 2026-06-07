@@ -1,0 +1,646 @@
+"""castle/core/prepare.py — cached dimensionality-reduction "Prepare" step for clustering.
+
+The Behavior-Microscope clustering stage cannot hold raw DINOv3 latents for a
+large project in RAM (e.g. 26 mice x 215784 frames x 16128 features = 362 GB
+float32). The "Prepare" step runs a one-time, cacheable, **independently
+toggleable** pipeline that shrinks the data once so the interactive UMAP/DBSCAN
+explore can run cheaply many times on the cache:
+
+    select latent files
+        -> (downsample)  per-video nearest-frame decimation to a target fps
+        -> (normalize)   per-sample L2 (cosine geometry; magnitude is nuisance)
+        -> (pca)         IncrementalPCA, center-only, NO whitening, top-K
+        -> reduced (N_dp, K) float32 + FrameIndexMap + meta.json
+
+Each stage is optional; with all three off the cache is the raw (decimated)
+features, equivalent to the legacy path. This module is **pure computation** —
+it takes resolved source paths + per-video fps and does not touch project
+config, Gradio, or VideoReader. Orchestration (file selection, fps probing,
+config registry, atomic dir swap, filelock) lives in
+:mod:`castle.service.prepare_service`.
+
+Design notes that matter:
+* ``load_latent_safe`` already normalises +/-Inf -> NaN, and non-finite values
+  appear as **whole rows** (tracking-loss frames). We keep that row-alignment
+  end to end: NaN rows are excluded from the PCA *fit* but pass through
+  *transform* as NaN, so downstream ``Latent.__init__`` still marks them
+  ``cluster = -1``.
+* Windowing (``time_window``) is an Explore-time op and is **not** applied here.
+  The cache is at decimated-frame resolution; :class:`FrameIndexMap` is
+  W-agnostic and gains a ``for_window(W)`` view at explore time.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
+
+import numpy as np
+import numpy.typing as npt
+
+from castle.utils.safe_load import load_latent_safe
+
+FloatArr = npt.NDArray[np.float32]
+IntArr = npt.NDArray[np.int64]
+F64Arr = npt.NDArray[np.float64]
+
+logger = logging.getLogger(__name__)
+
+PREPARE_SCHEMA_VERSION = 1
+_L2_EPS = 1e-8
+
+# meta.json / array filenames inside a prepare dir.
+META_FILENAME = "meta.json"
+PCA_FILENAME = "reduced.dat"
+INDEX_MAP_FILENAME = "frame_index_map.npz"
+
+
+# --------------------------------------------------------------------------- #
+# Decimation                                                                  #
+# --------------------------------------------------------------------------- #
+def decimate_indices(n_orig: int, raw_fps: Optional[float], target_fps: Optional[float]) -> IntArr:
+    """Nearest-frame index resample of ``n_orig`` frames to ``target_fps``.
+
+    Picks *real* frames (no averaging) at the target time grid, so every kept
+    point lies on the true behaviour manifold. Returns indices into the
+    original frame axis, monotonically non-decreasing.
+
+    No-op (returns ``arange(n_orig)``) when downsampling is disabled
+    (``target_fps`` is None) or the source is already at/below the target
+    (``raw_fps <= target_fps``). For an integer ratio (e.g. 120->60) this is an
+    exact uniform stride; for a non-integer ratio (e.g. 100->60) the gaps are
+    near-uniform (+/- half a frame), which is negligible at behaviour
+    timescales.
+    """
+    n_orig = int(n_orig)
+    if n_orig <= 0:
+        return np.zeros(0, dtype=np.int64)
+    if target_fps is None or raw_fps is None or raw_fps <= target_fps:
+        return np.arange(n_orig, dtype=np.int64)
+    n_out = int(np.floor(n_orig * float(target_fps) / float(raw_fps)))
+    if n_out <= 0:
+        return np.zeros(0, dtype=np.int64)
+    idx = np.round(np.arange(n_out) * (float(raw_fps) / float(target_fps))).astype(np.int64)
+    return np.asarray(np.clip(idx, 0, n_orig - 1), dtype=np.int64)
+
+
+def effective_target_fps(raw_fps: Optional[float], cap: float) -> Optional[float]:
+    """Target fps for a video = ``min(raw_fps, cap)`` (raw<=cap -> no decimation)."""
+    if raw_fps is None:
+        return None
+    return min(float(raw_fps), float(cap))
+
+
+# --------------------------------------------------------------------------- #
+# FrameIndexMap                                                               #
+# --------------------------------------------------------------------------- #
+@dataclass
+class FrameIndexMap:
+    """Maps datapoint indices back to original video frames.
+
+    Generalises both ``videos_meta`` and the legacy hard-coded
+    ``index*bin_size + bin_size//2`` / ``np.repeat(., time_window)`` contract so
+    decimation + windowing route through one place.
+
+    Resolution here is **decimated** frames (W-agnostic). Call
+    :meth:`for_window` to get a window-aware view whose datapoint index matches
+    what UMAP/DBSCAN see at explore time.
+
+    Attributes:
+        video_names: ``(V,)`` source video filenames, in cache row order.
+        dp_offsets: ``(V+1,)`` cumulative decimated-frame counts; rows
+            ``dp_offsets[v]:dp_offsets[v+1]`` of the reduced cache belong to
+            video ``v``.
+        orig_frame_idx: ``(N_dp,)`` original (pre-decimation) frame index within
+            each video for every decimated row; monotonic within a video slice.
+        raw_fps: ``(V,)`` each video's own fps (for bout durations).
+        n_orig_frames: ``(V,)`` original frame count per video (post any
+            truncation), so labels can be expanded back to full resolution.
+        source_roi: ``(V,)`` ROI id each video's latent came from (for grid
+            mask overlay).
+    """
+
+    video_names: List[str]
+    dp_offsets: IntArr
+    orig_frame_idx: IntArr
+    raw_fps: F64Arr
+    n_orig_frames: IntArr
+    source_roi: IntArr
+
+    # --- persistence ------------------------------------------------------- #
+    def save(self, path: str) -> None:
+        np.savez(
+            path,
+            video_names=np.array(self.video_names, dtype=object),
+            dp_offsets=self.dp_offsets,
+            orig_frame_idx=self.orig_frame_idx,
+            raw_fps=self.raw_fps,
+            n_orig_frames=self.n_orig_frames,
+            source_roi=self.source_roi,
+        )
+
+    @classmethod
+    def load(cls, path: str) -> "FrameIndexMap":
+        with np.load(path, allow_pickle=True) as d:
+            return cls(
+                video_names=[str(v) for v in d["video_names"].tolist()],
+                dp_offsets=d["dp_offsets"].astype(np.int64),
+                orig_frame_idx=d["orig_frame_idx"].astype(np.int64),
+                raw_fps=d["raw_fps"].astype(np.float64),
+                n_orig_frames=d["n_orig_frames"].astype(np.int64),
+                source_roi=d["source_roi"],
+            )
+
+    @property
+    def n_videos(self) -> int:
+        return len(self.video_names)
+
+    @property
+    def n_datapoints(self) -> int:
+        return int(self.dp_offsets[-1]) if len(self.dp_offsets) else 0
+
+    def for_window(self, window: int) -> "WindowedFrameIndexMap":
+        """Return a window-aware view for non-overlapping windows of size W.
+
+        Each windowed datapoint = W consecutive decimated frames *within one
+        video* (windowing is per-video so a window never straddles two videos).
+        """
+        return WindowedFrameIndexMap(self, max(1, int(window)))
+
+
+@dataclass
+class WindowedFrameIndexMap:
+    """Window-aware view of a :class:`FrameIndexMap` (per-video, stride-W)."""
+
+    base: FrameIndexMap
+    window: int
+    # derived
+    n_windows_per_video: IntArr = field(init=False)
+    win_offsets: IntArr = field(init=False)
+
+    def __post_init__(self) -> None:
+        base, W = self.base, self.window
+        counts = np.diff(base.dp_offsets)  # decimated frames per video
+        self.n_windows_per_video = counts // W
+        self.win_offsets = np.concatenate([[0], np.cumsum(self.n_windows_per_video)]).astype(np.int64)
+
+    @property
+    def n_windows(self) -> int:
+        return int(self.win_offsets[-1]) if len(self.win_offsets) else 0
+
+    def _video_of_window(self, global_w: int) -> int:
+        return int(np.searchsorted(self.win_offsets, global_w, side="right") - 1)
+
+    def _window_orig_span(self, v: int, local_w: int) -> Tuple[int, int]:
+        """Original-frame span ``[start, stop)`` a window covers within video v."""
+        base, W = self.base, self.window
+        dp_start = int(base.dp_offsets[v])
+        nwin = int(self.n_windows_per_video[v])
+        start = int(base.orig_frame_idx[dp_start + local_w * W])
+        if local_w + 1 < nwin:
+            stop = int(base.orig_frame_idx[dp_start + (local_w + 1) * W])
+        else:
+            stop = int(base.n_orig_frames[v])
+        return start, stop
+
+    def dp_to_orig_frame(self, global_w: int) -> Tuple[int, int]:
+        """Windowed datapoint -> (video_idx, representative original frame).
+
+        Representative = the midpoint of the window's original-frame span, which
+        reduces to the legacy ``idx*bin_size + bin_size//2`` bin centre and to a
+        sensible centre frame for decimated windows.
+        """
+        v = self._video_of_window(global_w)
+        local_w = global_w - int(self.win_offsets[v])
+        start, stop = self._window_orig_span(v, local_w)
+        return v, min((start + stop) // 2, stop - 1)
+
+    def windowed_row_range(self, video_idx: int) -> Tuple[int, int]:
+        """Global windowed-datapoint row range ``[start, stop)`` for a video."""
+        return int(self.win_offsets[video_idx]), int(self.win_offsets[video_idx + 1])
+
+    def expand_labels_to_orig(self, per_window_labels: npt.ArrayLike, video_idx: int) -> IntArr:
+        """Expand one video's per-window labels back to per-original-frame.
+
+        Every original frame inherits the label of the window whose decimated
+        span covers it (gap-filling between successive windows' first frames).
+        Frames before the first / after the last window stay ``-1``.
+        """
+        base, W = self.base, self.window
+        v = video_idx
+        n_orig = int(base.n_orig_frames[v])
+        out = np.full(n_orig, -1, dtype=np.int64)
+        nwin = int(self.n_windows_per_video[v])
+        if nwin == 0:
+            return out
+        per_window_labels = np.asarray(per_window_labels)
+        dp_start = int(base.dp_offsets[v])
+        # First original frame represented by each window (its first decimated frame).
+        win_first_orig = base.orig_frame_idx[dp_start : dp_start + nwin * W : W]
+        for u in range(nwin):
+            start = int(win_first_orig[u])
+            stop = int(win_first_orig[u + 1]) if u + 1 < nwin else n_orig
+            out[start:stop] = int(per_window_labels[u])
+        return out
+
+
+def build_legacy_index_map(
+    videos_meta: Sequence[Tuple[int, str]],
+    bin_size: int,
+    raw_fps: Optional[Dict[str, float]] = None,
+    source_roi: Optional[Dict[str, int]] = None,
+) -> FrameIndexMap:
+    """Build a FrameIndexMap that reproduces the legacy ``bin_size`` contract.
+
+    Legacy aggregation truncates each video to a multiple of ``bin_size`` and
+    bins are contiguous ``bin_size`` original frames, so the decimated-frame
+    axis here == bin axis, ``orig_frame_idx`` is a plain stride, and
+    ``for_window(1)`` reproduces ``np.repeat(., bin_size)`` /
+    ``idx*bin_size + bin_size//2`` exactly.
+    """
+    names: List[str] = []
+    offsets = [0]
+    orig: List[IntArr] = []
+    fps_list: List[float] = []
+    n_orig_list: List[int] = []
+    roi_list: List[int] = []
+    for n_bins, name in videos_meta:
+        names.append(name)
+        offsets.append(offsets[-1] + int(n_bins))
+        # bin b spans original frames [b*bin_size, (b+1)*bin_size); store the
+        # span START so for_window(1) reproduces np.repeat (expand) and the
+        # span-midpoint representative == the legacy b*bin_size + bin_size//2.
+        orig.append(np.arange(int(n_bins), dtype=np.int64) * bin_size)
+        fps_list.append(float((raw_fps or {}).get(name, 30.0)))
+        n_orig_list.append(int(n_bins) * int(bin_size))
+        roi_list.append(int((source_roi or {}).get(name, 1)))
+    return FrameIndexMap(
+        video_names=names,
+        dp_offsets=np.array(offsets, dtype=np.int64),
+        orig_frame_idx=np.concatenate(orig) if orig else np.zeros(0, dtype=np.int64),
+        raw_fps=np.array(fps_list, dtype=np.float64),
+        n_orig_frames=np.array(n_orig_list, dtype=np.int64),
+        source_roi=np.array(roi_list, dtype=np.int64),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Normalisation helpers                                                       #
+# --------------------------------------------------------------------------- #
+def l2_normalize_rows(x: npt.ArrayLike, eps: float = _L2_EPS) -> FloatArr:
+    """Per-sample L2 normalisation (eps-guarded). NaN rows stay NaN."""
+    arr = np.asarray(x, dtype=np.float32)
+    norm = np.linalg.norm(arr, axis=1, keepdims=True)
+    norm = np.maximum(norm, eps)
+    return np.asarray(arr / norm, dtype=np.float32)
+
+
+# --------------------------------------------------------------------------- #
+# Cache key + provenance                                                      #
+# --------------------------------------------------------------------------- #
+@dataclass
+class SourceSpec:
+    """One selected latent file, resolved by the service layer."""
+
+    key: str          # config['latent'] logical key
+    npz_path: str     # physical .npz path
+    video_name: str   # source mp4 filename
+    raw_fps: float
+    roi: int          # source ROI id (for grid mask overlay)
+
+
+def _round6(x: float) -> float:
+    return round(float(x), 6)
+
+
+def compute_prepare_id(
+    sources: Sequence[SourceSpec],
+    *,
+    downsample: bool,
+    target_fps_cap: float,
+    normalize: str,
+    pca: bool,
+    K: int,
+    fit_fraction: float,
+    model_name: str,
+) -> str:
+    """Deterministic 8-char id from the selection + every toggle/param.
+
+    Includes each source's mtime+size so editing/re-extracting a latent
+    invalidates the cache. Excludes ``castle_version`` (use
+    ``prepare_schema_version`` for format bumps).
+    """
+    parts: List[str] = [
+        f"schema={PREPARE_SCHEMA_VERSION}",
+        f"model={model_name}",
+        f"downsample={int(bool(downsample))}",
+        f"target_fps_cap={_round6(target_fps_cap)}",
+        f"normalize={normalize}",
+        f"pca={int(bool(pca))}",
+        f"K={int(K)}",
+        f"fit_fraction={_round6(fit_fraction)}",
+    ]
+    for s in sorted(sources, key=lambda x: x.key):
+        try:
+            st = os.stat(s.npz_path)
+            sig = f"{_round6(st.st_mtime)}|{st.st_size}"
+        except OSError:
+            sig = "missing|missing"
+        parts.append(f"{s.key}|{sig}")
+    payload = "\n".join(parts)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
+
+
+# --------------------------------------------------------------------------- #
+# IncrementalPCA batch sizing                                                 #
+# --------------------------------------------------------------------------- #
+def _pca_batch_size(K: int, n_features: int, avail_bytes: Optional[int]) -> int:
+    """Streaming batch size: >= K (sklearn requirement), RAM-bounded, capped."""
+    floor = max(int(K), 1)
+    if avail_bytes:
+        by_ram = int(0.25 * avail_bytes / (n_features * 4))
+    else:
+        by_ram = 8192
+    return int(min(max(floor, by_ram), 16384))
+
+
+# --------------------------------------------------------------------------- #
+# The pipeline                                                                #
+# --------------------------------------------------------------------------- #
+@dataclass
+class PreparedData:
+    """Loaded prepare cache."""
+
+    reduced: FloatArr            # (N_dp, width) float32 memmap (or array)
+    index_map: FrameIndexMap
+    meta: Dict[str, Any]
+
+    @property
+    def width(self) -> int:
+        return int(self.reduced.shape[1])
+
+
+def _iter_decimated(
+    sources: Sequence[SourceSpec],
+    *,
+    downsample: bool,
+    target_fps_cap: float,
+    normalize: str,
+) -> Iterator[Tuple[SourceSpec, IntArr, int, FloatArr]]:
+    """Yield ``(src, dec_idx, n_orig, dec_rows)`` per video: decimated (+L2) rows.
+
+    ``dec_rows`` is float32, L2-normalised when requested; NaN rows preserved.
+    """
+    for s in sources:
+        arr = load_latent_safe(s.npz_path)  # (n_orig, F), Inf already -> NaN
+        n_orig = arr.shape[0]
+        tgt = effective_target_fps(s.raw_fps, target_fps_cap) if downsample else None
+        dec_idx = decimate_indices(n_orig, s.raw_fps, tgt)
+        dec = np.asarray(arr[dec_idx], dtype=np.float32)
+        del arr
+        if normalize == "l2":
+            dec = l2_normalize_rows(dec)
+        yield s, dec_idx, n_orig, dec
+
+
+def run_prepare(
+    out_dir: str,
+    sources: Sequence[SourceSpec],
+    *,
+    downsample: bool = True,
+    target_fps_cap: float = 60.0,
+    normalize: str = "l2",
+    pca: bool = True,
+    K: int = 1024,
+    fit_fraction: float = 1.0,
+    model_name: str = "",
+    seed: int = 0,
+    avail_ram_bytes: Optional[int] = None,
+    notify: Callable[[str], None] = logger.info,
+) -> Dict[str, Any]:
+    """Run the (toggleable) Prepare pipeline and write the cache into ``out_dir``.
+
+    Writes ``reduced.dat`` (memmap), ``frame_index_map.npz`` and ``meta.json``.
+    Returns the meta dict. Caller (service) owns the atomic dir swap + filelock.
+
+    NaN rows (tracking loss) are excluded from the PCA fit and pass through
+    transform as NaN so downstream marks them ``cluster = -1``.
+    """
+    if normalize not in ("l2", "none"):
+        raise ValueError(f"normalize must be 'l2' or 'none', got {normalize!r}")
+    if not sources:
+        raise ValueError("run_prepare: no sources selected.")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # --- Geometry pass: per-video decimated counts + the index map ----------
+    names: List[str] = []
+    offsets = [0]
+    orig_idx_parts: List[IntArr] = []
+    raw_fps_list: List[float] = []
+    n_orig_list: List[int] = []
+    roi_list: List[int] = []
+    n_features: Optional[int] = None
+    for s in sources:
+        arr = load_latent_safe(s.npz_path)
+        n_orig = arr.shape[0]
+        if n_features is None:
+            n_features = int(arr.shape[1])
+        del arr
+        tgt = effective_target_fps(s.raw_fps, target_fps_cap) if downsample else None
+        dec_idx = decimate_indices(n_orig, s.raw_fps, tgt)
+        names.append(s.video_name)
+        offsets.append(offsets[-1] + len(dec_idx))
+        orig_idx_parts.append(dec_idx.astype(np.int64))
+        raw_fps_list.append(float(s.raw_fps))
+        n_orig_list.append(int(n_orig))
+        roi_list.append(int(s.roi))
+    n_dp = offsets[-1]
+    assert n_features is not None
+    index_map = FrameIndexMap(
+        video_names=names,
+        dp_offsets=np.array(offsets, dtype=np.int64),
+        orig_frame_idx=np.concatenate(orig_idx_parts) if orig_idx_parts else np.zeros(0, np.int64),
+        raw_fps=np.array(raw_fps_list, dtype=np.float64),
+        n_orig_frames=np.array(n_orig_list, dtype=np.int64),
+        source_roi=np.array(roi_list, dtype=np.int64),
+    )
+    notify(f"Prepare: {len(sources)} videos -> {n_dp} datapoints x {n_features} features.")
+
+    width = int(n_features)
+    evr: List[float] = []
+    n_components_kept = width
+    rank_limited = False
+    n_finite_fit = 0
+    ipca = None
+
+    if pca:
+        from sklearn.decomposition import IncrementalPCA
+
+        K_eff = int(min(K, n_features))
+        batch = _pca_batch_size(K_eff, n_features, avail_ram_bytes)
+        ipca = IncrementalPCA(n_components=K_eff)
+        rng = np.random.default_rng(seed)
+        buf: List[FloatArr] = []
+        buf_n = 0
+
+        def _flush(force: bool = False) -> None:
+            nonlocal buf, buf_n, n_finite_fit
+            while buf_n >= batch or (force and buf_n >= K_eff):
+                chunk = np.concatenate(buf, axis=0) if len(buf) > 1 else buf[0]
+                take = chunk[:batch] if not force else chunk
+                ipca.partial_fit(take)
+                n_finite_fit += take.shape[0]
+                rest = chunk[take.shape[0]:]
+                buf = [rest] if rest.shape[0] else []
+                buf_n = rest.shape[0]
+                if force:
+                    break
+
+        notify("Prepare: fitting IncrementalPCA (pass 1/2)...")
+        for s, dec_idx, n_orig, dec in _iter_decimated(
+            sources, downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize
+        ):
+            finite = np.isfinite(dec).all(axis=1)
+            rows = dec[finite]
+            if fit_fraction < 1.0 and rows.shape[0] > 0:
+                k = max(1, int(round(fit_fraction * rows.shape[0])))
+                sel = rng.choice(rows.shape[0], size=k, replace=False)
+                rows = rows[np.sort(sel)]
+            if rows.shape[0]:
+                buf.append(rows)
+                buf_n += rows.shape[0]
+                _flush(force=False)
+        _flush(force=True)
+
+        if n_finite_fit < K_eff:
+            raise ValueError(
+                f"Too few finite frames ({n_finite_fit}) to fit PCA with K={K_eff}. "
+                f"Lower K, raise fit_fraction, or select more / less-decimated videos."
+            )
+        n_components_kept = int(ipca.n_components_)
+        rank_limited = n_components_kept < K
+        evr = [float(x) for x in np.asarray(ipca.explained_variance_ratio_)]
+        width = n_components_kept
+
+    # --- Transform / write pass --------------------------------------------
+    reduced_path = os.path.join(out_dir, PCA_FILENAME)
+    reduced = np.memmap(reduced_path, dtype=np.float32, mode="w+", shape=(n_dp, width))
+    notify(f"Prepare: writing reduced cache {n_dp}x{width} ({'pass 2/2' if pca else 'single pass'})...")
+    cursor = 0
+    for s, dec_idx, n_orig, dec in _iter_decimated(
+        sources, downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize
+    ):
+        m = dec.shape[0]
+        if pca:
+            assert ipca is not None  # set in the fit pass above when pca is on
+            out = np.full((m, width), np.nan, dtype=np.float32)
+            finite = np.isfinite(dec).all(axis=1)
+            if finite.any():
+                out[finite] = ipca.transform(dec[finite])
+            reduced[cursor:cursor + m] = out
+        else:
+            reduced[cursor:cursor + m] = dec  # raw (decimated, maybe L2'd), NaN preserved
+        cursor += m
+    reduced.flush()
+    del reduced
+
+    index_map.save(os.path.join(out_dir, INDEX_MAP_FILENAME))
+
+    meta = {
+        "prepare_schema_version": PREPARE_SCHEMA_VERSION,
+        "created_at": None,  # stamped by service (no clock in pure core)
+        "model_name": model_name,
+        "downsample": {"on": bool(downsample), "target_fps_cap": float(target_fps_cap)},
+        "normalize": normalize,
+        "pca": {
+            "on": bool(pca),
+            "K": int(K),
+            "center": True,
+            "whiten": False,
+            "n_components_kept": int(n_components_kept),
+            "rank_limited": bool(rank_limited),
+            "n_finite_fit_rows": int(n_finite_fit),
+            "explained_variance_ratio": evr,
+        },
+        "fit_fraction": float(fit_fraction),
+        "decimation_method": "nearest_frame_resample",
+        "width": int(width),
+        "n_dp_total": int(n_dp),
+        "n_features": int(n_features),
+        "seed": int(seed),
+        "sources": [
+            {
+                "key": s.key,
+                "mtime": _round6(os.stat(s.npz_path).st_mtime) if os.path.exists(s.npz_path) else None,
+                "size": os.stat(s.npz_path).st_size if os.path.exists(s.npz_path) else None,
+                "roi": int(s.roi),
+                "raw_fps": float(s.raw_fps),
+                "video_name": s.video_name,
+                "n_orig_frames": int(n),
+                "n_decimated": int(index_map.dp_offsets[i + 1] - index_map.dp_offsets[i]),
+            }
+            for i, (s, n) in enumerate(zip(sources, n_orig_list))
+        ],
+    }
+    with open(os.path.join(out_dir, META_FILENAME), "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    return meta
+
+
+# --------------------------------------------------------------------------- #
+# Load / staleness / k'                                                       #
+# --------------------------------------------------------------------------- #
+def load_meta(prepare_dir: str) -> Dict[str, Any]:
+    with open(os.path.join(prepare_dir, META_FILENAME), encoding="utf-8") as f:
+        data: Dict[str, Any] = json.load(f)
+        return data
+
+
+def load_prepare(prepare_dir: str) -> PreparedData:
+    """Load a prepare cache directory (mmaps the reduced array read-only)."""
+    meta = load_meta(prepare_dir)
+    n_dp, width = int(meta["n_dp_total"]), int(meta["width"])
+    reduced = np.memmap(
+        os.path.join(prepare_dir, PCA_FILENAME), dtype=np.float32, mode="r", shape=(n_dp, width)
+    )
+    index_map = FrameIndexMap.load(os.path.join(prepare_dir, INDEX_MAP_FILENAME))
+    return PreparedData(reduced=reduced, index_map=index_map, meta=meta)
+
+
+def is_stale(prepare_dir: str, resolve_path: Callable[[str], Optional[str]]) -> bool:
+    """True if any source latent's mtime/size differs from the cache's record.
+
+    ``resolve_path(key)`` maps a recorded ``config['latent']`` key to its
+    current physical ``.npz`` path (or None if gone). The service supplies it
+    (it knows the project's latent dir), keeping this module config-free.
+    """
+    try:
+        meta = load_meta(prepare_dir)
+    except (OSError, ValueError):
+        return True
+    for src in meta.get("sources", []):
+        path = resolve_path(src.get("key", ""))
+        if not path or not os.path.exists(path):
+            return True
+        st = os.stat(path)
+        if _round6(st.st_mtime) != src.get("mtime") or st.st_size != src.get("size"):
+            return True
+    return False
+
+
+def k_prime_for_variance(meta: Dict[str, Any], frac: float = 0.95) -> int:
+    """Smallest k whose cumulative explained variance reaches ``frac``.
+
+    Falls back to the full width when PCA was off or evr is unavailable.
+    """
+    evr = meta.get("pca", {}).get("explained_variance_ratio") or []
+    width = int(meta.get("width", 0))
+    if not evr:
+        return width
+    cum = np.cumsum(np.asarray(evr, dtype=np.float64))
+    k = int(np.searchsorted(cum, float(frac)) + 1)
+    return int(min(max(1, k), len(evr)))

@@ -268,19 +268,32 @@ def load_annotator_data(
     frame_index_map = None
     if prepare_id:
         try:
+            import pandas as pd
             from castle.core.prepare import load_prepare
             _pd = load_prepare(os.path.join(cluster_path, "prepared", prepare_id))
             base_map = _pd.index_map
             frame_index_map = base_map.for_window(max(1, int(bin_size)))
-            # Prepared datapoints are decimated windows, not uniform bins: use the
-            # per-datapoint cls/emb from the npz directly and rebuild videos_meta
-            # from the map, bypassing the legacy per-frame-CSV reconstruction.
-            cls_array = npz["cls"].astype(np.int32)
+            # Prepared datapoints are decimated windows, not uniform bins. The
+            # npz only stores per-submit LOCAL labels, so recover per-window
+            # GLOBAL labels from the authoritative original-frame time_series CSVs
+            # (sampled through the window map); keep the npz emb for bout ranking.
             emb_array = npz["emb"].astype(np.float64)
-            videos_meta = [
-                (int(frame_index_map.n_windows_per_video[v]), base_map.video_names[v])
-                for v in range(base_map.n_videos)
-            ]
+            seg = []
+            vmeta: List[Tuple[int, str]] = []
+            for v in range(base_map.n_videos):
+                name = base_map.video_names[v]
+                nwin = int(frame_index_map.n_windows_per_video[v])
+                base_name = os.path.splitext(os.path.basename(name))[0]
+                ts_path = os.path.join(cluster_path, f"time_series_{base_name}.csv")
+                if os.path.exists(ts_path):
+                    beh = pd.read_csv(ts_path)["behavior"].values
+                    wl = frame_index_map.windowed_labels_from_orig(beh, v)
+                else:
+                    wl = np.full(nwin, -1, dtype=np.int64)
+                seg.append(np.asarray(wl, dtype=np.int32))
+                vmeta.append((nwin, name))
+            cls_array = np.concatenate(seg) if seg else np.array([], dtype=np.int32)
+            videos_meta = vmeta
             if base_map.n_videos:
                 fps = float(base_map.raw_fps[0])
         except Exception as exc:  # noqa: BLE001

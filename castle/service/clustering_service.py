@@ -347,15 +347,24 @@ class ClusteringSession:
                 self.latents.used_palette.add(color)
         self.latents.num_cluster = len(id_df)
         
-        # Restore cluster assignments from time_series CSVs
+        # Restore cluster assignments from time_series CSVs. Prepared sessions
+        # recover per-window GLOBAL labels through the window map (see
+        # restore_session_from_disk); legacy keeps the bin downsample.
+        fim = getattr(self.aggregator, "frame_index_map", None)
+        prepared = bool(getattr(self.aggregator, "_prepared", False)) and fim is not None
         ts_paths = []
         cum = 0
-        for vn, v in self.aggregator.videos_meta:
+        for video_idx, (vn, v) in enumerate(self.aggregator.videos_meta):
             video_basename = os.path.splitext(os.path.basename(v))[0]
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
             if os.path.exists(ts_path):
                 ts_df = pd.read_csv(ts_path)
-                bin_clusters = ts_df['behavior'].values[::self.latents.time_window][:vn]
+                behavior = ts_df['behavior'].values
+                if prepared:
+                    assert fim is not None  # `prepared` implies a window map
+                    bin_clusters = fim.windowed_labels_from_orig(behavior, video_idx)
+                else:
+                    bin_clusters = behavior[::self.latents.time_window][:vn]
                 if len(bin_clusters) != vn:
                     raise CastleDataError(
                         f"Session restore: {os.path.basename(ts_path)} downsamples "
@@ -1455,16 +1464,25 @@ def restore_session_from_disk(
             session_info = sessions[0]
             mgr.activate_session(sessions[0].session_id)
 
+    prepare_id: Optional[str] = None
+    k_prime: Optional[int] = None
     if session_info:
         select_model = session_info.model or select_model
         select_roi_id = (str(session_info.roi_id)
                          if session_info.roi_id else select_roi_id)
         bin_size = session_info.bin_size if session_info.bin_size else bin_size
+        # Prepared sessions MUST rebuild the prepared aggregator — otherwise the
+        # legacy path tries to load the raw latents (e.g. 362 GB) and produces a
+        # bin axis that does not match the saved per-window labels.
+        prepare_id = getattr(session_info, "prepare_id", None)
+        k_prime = getattr(session_info, "k_prime", None)
 
     aggregator = LatentAggregator(
         storage_path, project_name, select_roi_id, int(bin_size),
         model_name=select_model,
         notify=notify,
+        prepare_id=prepare_id,
+        k_prime=k_prime,
     )
     latents = aggregator.get_latent_object()
 
@@ -1483,13 +1501,24 @@ def restore_session_from_disk(
                 latents.used_palette.add(color)
         latents.num_cluster = len(id_df)
 
+        # Prepared sessions: a datapoint is a decimated window, not a uniform bin,
+        # so recover per-window GLOBAL labels by sampling the authoritative
+        # original-frame CSV through the window map (the npz only holds per-submit
+        # LOCAL labels). Legacy sessions keep the historical bin downsample.
+        fim = getattr(aggregator, "frame_index_map", None)
+        prepared = bool(getattr(aggregator, "_prepared", False)) and fim is not None
         cum = 0
-        for vn, v in aggregator.videos_meta:
+        for video_idx, (vn, v) in enumerate(aggregator.videos_meta):
             video_basename = os.path.splitext(os.path.basename(v))[0]
             ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
             if os.path.exists(ts_path):
                 ts_df = pd.read_csv(ts_path)
-                bin_clusters = ts_df['behavior'].values[::latents.time_window][:vn]
+                behavior = ts_df['behavior'].values
+                if prepared:
+                    assert fim is not None  # `prepared` implies a window map
+                    bin_clusters = fim.windowed_labels_from_orig(behavior, video_idx)
+                else:
+                    bin_clusters = behavior[::latents.time_window][:vn]
                 if len(bin_clusters) != vn:
                     raise CastleDataError(
                         f"Session restore: {os.path.basename(ts_path)} downsamples "

@@ -8,7 +8,6 @@ import os
 import numpy as np
 import pytest
 
-from castle.core import prepare as P
 from castle.core.prepare import (
     FrameIndexMap,
     SourceSpec,
@@ -292,11 +291,28 @@ def test_prepared_annotator_loader_uses_frame_map(tmp_path, monkeypatch):
     cluster_dir = os.path.join(storage, proj, "cluster")
     os.makedirs(cluster_dir, exist_ok=True)
     import pandas as pd
-    pd.DataFrame({"Id": [0, 1], "Name": ["a", "b"], "Color": ["#fff", "#000"]}).to_csv(
+    pd.DataFrame({"Id": [0, 1, 2], "Name": ["init", "walk", "rear"],
+                  "Color": ["grey", "#111", "#222"]}).to_csv(
         os.path.join(cluster_dir, "id.csv"), index=False)
+    # Authoritative per-window GLOBAL labels live in the original-frame CSVs;
+    # the npz only carries per-submit LOCAL labels, so the loader must read the
+    # CSVs. W=1 + no decimation -> CSV frame u == window u label.
+    base = prepare_service.load_prepared(storage, proj, pid).index_map
+    fim = base.for_window(1)
+    expected_parts = []
+    for v in range(base.n_videos):
+        nwin = int(fim.n_windows_per_video[v])
+        labels = (np.arange(nwin) % 3).astype(np.int64)
+        expected_parts.append(labels)
+        orig = fim.expand_labels_to_orig(labels, v)
+        bn = os.path.splitext(os.path.basename(base.video_names[v]))[0]
+        pd.DataFrame({"behavior": orig}).to_csv(
+            os.path.join(cluster_dir, f"time_series_{bn}.csv"), index=False)
+    expected = np.concatenate(expected_parts)
+    # npz cls is deliberately WRONG (local labels) — loader must ignore it.
     np.savez(os.path.join(cluster_dir, "cluster_x.npz"),
              emb=np.zeros((n_dp, 2), np.float64),
-             cls=(np.arange(n_dp) % 2).astype(np.int32))
+             cls=np.full(n_dp, 99, np.int32))
 
     mgr = SessionManager(storage, proj)
     info = mgr.create_session(model=model, roi_id=1, bin_size=1, total_frames=n_dp,
@@ -306,9 +322,55 @@ def test_prepared_annotator_loader_uses_frame_map(tmp_path, monkeypatch):
 
     data = load_annotator_data(storage, proj, session_id=info.session_id)
     assert data.frame_index_map is not None
-    assert len(data.cluster) == n_dp          # per-datapoint cls (not per-frame)
+    assert len(data.cluster) == n_dp          # per-window cls (not per-frame)
+    # GLOBAL labels recovered from CSV, NOT the npz's local 99s.
+    np.testing.assert_array_equal(data.cluster, expected)
     v, orig = data.frame_index_map.dp_to_orig_frame(0)
     assert 0 <= v < 2 and orig >= 0
+
+
+# --------------------------------------------------------------------------- #
+# Prepared session restore: rebuild prepared aggregator + recover GLOBAL labels #
+# --------------------------------------------------------------------------- #
+def test_prepared_session_restore_recovers_global_labels(tmp_path):
+    """Restoring a prepared session must rebuild the prepared aggregator (NOT the
+    legacy raw path) and recover per-window GLOBAL labels from the time_series
+    CSV through the window map."""
+    storage, proj, model, keys = _make_project(tmp_path)
+    from castle.service import prepare_service
+    from castle.service.clustering_service import ClusteringSession
+    import pandas as pd
+
+    pid = prepare_service.build_prepare(
+        storage, proj, model, keys, downsample=False, normalize="none",
+        pca=True, K=8, notify=lambda *a: None,
+    )
+    W = 1
+    base = prepare_service.load_prepared(storage, proj, pid).index_map
+    fim = base.for_window(W)
+
+    cluster_dir = os.path.join(storage, proj, "cluster")
+    os.makedirs(cluster_dir, exist_ok=True)
+    pd.DataFrame({"Id": [0, 1, 2], "Name": ["init", "walk", "rear"],
+                  "Color": ["grey", "#111", "#222"]}).to_csv(
+        os.path.join(cluster_dir, "id.csv"), index=False)
+    expected_parts = []
+    for v in range(base.n_videos):
+        nwin = int(fim.n_windows_per_video[v])
+        labels = (np.arange(nwin) % 3).astype(np.int64)
+        expected_parts.append(labels)
+        orig = fim.expand_labels_to_orig(labels, v)
+        bn = os.path.splitext(os.path.basename(base.video_names[v]))[0]
+        pd.DataFrame({"behavior": orig}).to_csv(
+            os.path.join(cluster_dir, f"time_series_{bn}.csv"), index=False)
+    expected = np.concatenate(expected_parts)
+
+    sess = ClusteringSession(storage, proj, roi=1, bin_size=W, model=model,
+                             prepare_id=pid, k_prime=8, notify=lambda *a, **k: None)
+    assert getattr(sess.aggregator, "_prepared", False) is True
+    res = sess.restore()
+    assert res["success"] is True
+    np.testing.assert_array_equal(sess.latents.cluster, expected)
 
 
 # --------------------------------------------------------------------------- #

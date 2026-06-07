@@ -269,6 +269,33 @@ class WindowedFrameIndexMap:
             out[start:stop] = int(per_window_labels[u])
         return out
 
+    def windowed_labels_from_orig(self, per_orig_labels: npt.ArrayLike, video_idx: int) -> IntArr:
+        """Sample one video's per-window labels from a per-original-frame array.
+
+        Inverse of :meth:`expand_labels_to_orig`: each window takes the label at
+        its first represented original frame. Used to recover per-window GLOBAL
+        cluster labels from the authoritative original-frame ``time_series`` CSV
+        on session restore / annotator load (the cache npz only stores per-submit
+        LOCAL labels, so the CSV is the source of truth). Reproduces the legacy
+        ``values[::bin_size]`` contract when ``window == 1`` and the base map is a
+        legacy bin map. Out-of-range frames (truncated CSV) stay ``-1``.
+        """
+        base, W = self.base, self.window
+        v = video_idx
+        nwin = int(self.n_windows_per_video[v])
+        out = np.full(nwin, -1, dtype=np.int64)
+        if nwin == 0:
+            return out
+        per = np.asarray(per_orig_labels)
+        dp_start = int(base.dp_offsets[v])
+        win_first_orig = base.orig_frame_idx[dp_start : dp_start + nwin * W : W]
+        n = len(per)
+        for u in range(nwin):
+            f = int(win_first_orig[u])
+            if 0 <= f < n:
+                out[u] = int(per[f])
+        return out
+
 
 def build_legacy_index_map(
     videos_meta: Sequence[Tuple[int, str]],

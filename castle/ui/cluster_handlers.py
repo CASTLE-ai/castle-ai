@@ -100,6 +100,22 @@ def update_select_cluster_list(latents):
     return gr.update(value=html), gr.update(value="")
 
 
+def _existing(p: "str | list | None") -> "str | list | None":
+    """Drop file paths that aren't on disk so ``gr.File`` won't crash.
+
+    A ``gr.File`` output ``stat()``s its value in postprocess, so handing it a
+    path that doesn't exist (e.g. ``cluster/id.csv`` before any cluster has been
+    submitted, or a restored session whose ``cluster/`` was cleared) raises
+    ``FileNotFoundError``. Returns ``None`` for a missing single path, or the
+    existing-only subset for a list/tuple.
+    """
+    if p is None:
+        return None
+    if isinstance(p, (list, tuple)):
+        return [x for x in p if x and os.path.exists(x)]
+    return p if os.path.exists(p) else None
+
+
 def generate_embedding(
     latents,
     cluster_name,
@@ -599,7 +615,7 @@ def _do_restore_session(storage_path, project_name, select_roi_id, bin_size, sel
     tree_html_upd, tree_dd_upd = artifacts.cluster_choices
     return (artifacts.aggregator, artifacts.latents,
             artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
-            artifacts.id_csv_path, artifacts.time_series_paths,
+            _existing(artifacts.id_csv_path), _existing(artifacts.time_series_paths),
             restored_Z_plt, restored_emb_img)
 
 
@@ -654,13 +670,13 @@ def import_info_from_local_latent(
             "Run UMAP then DBSCAN before submitting."
         )
         return (artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
-                artifacts.id_csv_path, artifacts.time_series_paths,
-                artifacts.subtitle_paths, None, None, None)
+                _existing(artifacts.id_csv_path), _existing(artifacts.time_series_paths),
+                _existing(artifacts.subtitle_paths), None, None, None)
 
     Z_plt, named_img = build_named_scatter_plot(artifacts.local_latents)
     return (artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
-            artifacts.id_csv_path, artifacts.time_series_paths,
-            artifacts.subtitle_paths, Z_plt, named_img,
+            _existing(artifacts.id_csv_path), _existing(artifacts.time_series_paths),
+            _existing(artifacts.subtitle_paths), Z_plt, named_img,
             artifacts.embedding_path)
 
 

@@ -733,10 +733,14 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[ui['data_source']],
     )
 
-    # Expose shared state for Annotator tab (A-04)
+    # Expose shared state for Annotator tab (A-04) and main_ui wiring.
     shared_states = {
         'latents': latents,
         'mulvideo': mulvideo,
+        # data_source dropdown so main_ui can re-list prepared caches on
+        # project-open (the in-tab tab.select trigger above doesn't fire when a
+        # project is opened while already on / before entering this tab).
+        'data_source': ui['data_source'],
     }
 
     visibility_components = {

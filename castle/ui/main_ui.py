@@ -143,7 +143,7 @@ def create_ui(OS_SYS, root=''):
             project_ui['project_open_btn'].click(
                 fn=lambda sp, pn: gr.update(choices=list_prepare_choices(sp, pn)),
                 inputs=[storage_path, project_ui['project_drop']],
-                outputs=cluster_ui['data_source'],
+                outputs=shared_states['data_source'],
             )
 
         # Analysis tab (Stage 6)

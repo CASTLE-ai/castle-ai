@@ -630,6 +630,22 @@ class LatentAggregator:
             self.notify(f"Error reading frame: {e}", "error")
             return None
 
+    def get_raw_frame(self, video_name: str, frame_idx: int) -> Optional[np.ndarray]:
+        """Read an arbitrary ORIGINAL frame ``(video_name, frame_idx)`` directly.
+
+        Unlike :meth:`get_frame` (datapoint → its single representative frame),
+        this reads any original frame, so a caller can assemble a smooth
+        CONTIGUOUS-frame preview clip. Shares the VideoReader / frame LRU caches.
+        Returns ``None`` on failure / out of bounds (logged at debug — boundary
+        reads are expected, so this does NOT spam user notifications).
+        """
+        video_path = os.path.join(self.source_path, video_name)
+        try:
+            return self._get_cached_frame(video_path, int(frame_idx))
+        except Exception as e:
+            logger.debug("get_raw_frame %s[%d] failed: %s", video_name, frame_idx, e)
+            return None
+
     def close(self) -> None:
         """Close all cached VideoReader instances and release resources.
 

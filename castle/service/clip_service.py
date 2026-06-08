@@ -161,52 +161,73 @@ def generate_clip_with_roi_overlay(
     aggregator: Any,
     center_bin: int,
     *,
-    n_frames: int = 30,
-    fps: float = 15.0,
+    clip_seconds: float = 2.0,
+    fps: Optional[float] = None,
+    max_frames: int = 300,
 ) -> Optional[str]:
-    """Render a short MP4 clip centred on ``center_bin`` with ROI overlay.
+    """Render a smooth MP4 clip of CONTIGUOUS original frames around a datapoint.
+
+    The clicked datapoint maps to one ``(video, centre-frame)``; we then read
+    the *consecutive* original frames spanning ``clip_seconds`` of real time
+    around it (from that one video) and overlay the ROI contour. This replaces
+    the old "one representative frame per datapoint" assembly, which on the
+    decimated/prepared path skipped frames and produced a jumpy clip.
 
     Args:
-        aggregator: :class:`LatentAggregator` providing the source frames
-            and bin → video mapping.
-        center_bin: Global bin index to centre the clip on.
-        n_frames: Total number of frames in the clip (default 30).
-        fps: Playback frame rate (default 15).
+        aggregator: :class:`LatentAggregator` (frame reader + ``frame_index_map``).
+        center_bin: Global datapoint index the user clicked.
+        clip_seconds: Total real-time span of the clip, centred on the frame.
+        fps: Playback frame rate. ``None`` → the source video's own fps
+            (so the behaviour plays back at natural speed).
+        max_frames: Hard cap on frames read, to keep preview generation snappy.
 
     Returns:
-        Absolute path to a temporary ``.mp4`` re-encoded to H.264, or
-        ``None`` if no frames could be assembled.
+        Absolute path to a temporary ``.mp4`` (re-encoded to H.264 when
+        ffmpeg/PyAV is available), or ``None`` if no frames could be assembled.
     """
-    total_bins = sum(vn for vn, _ in aggregator.videos_meta)
-    half = n_frames // 2
-    start = max(0, center_bin - half)
-    end = min(start + n_frames, total_bins)
+    fim = getattr(aggregator, "frame_index_map", None)
+    if fim is None:
+        return None
+    try:
+        video_idx, center_frame = fim.dp_to_orig_frame(int(center_bin))
+        video_name = fim.base.video_names[video_idx]
+    except (IndexError, ValueError, AttributeError):
+        return None
+
+    video_fps = aggregator.fps_per_video.get(video_name, aggregator.fps) or 30.0
+    half = max(1, int(round(clip_seconds * video_fps / 2.0)))
+    start_f = max(0, int(center_frame) - half)
+    end_f = int(center_frame) + half + 1
+    # Clamp to the source video's own length so we never read past its end.
+    try:
+        end_f = min(end_f, int(fim.base.n_orig_frames[video_idx]))
+    except Exception:  # noqa: BLE001 — n_orig_frames may be absent on legacy maps
+        pass
+    end_f = min(end_f, start_f + max_frames)
+
+    # track/ subdirs are named with the full video filename (incl. extension),
+    # so do NOT strip it — splitext here points the overlay at a non-existent dir.
+    mask_path = os.path.join(
+        aggregator.project_path, "track", os.path.basename(video_name), "mask_list.h5",
+    )
 
     frames = []
-    for i in range(start, end):
-        frame = aggregator.get_frame(int(i))
+    for f in range(start_f, end_f):
+        frame = aggregator.get_raw_frame(video_name, f)
         if frame is None:
             continue
-        video_name, frame_idx = get_bin_video_info(aggregator, int(i))
-        if video_name is not None and frame_idx is not None:
-            # track/ subdirs are named with the full video filename (incl.
-            # extension), so do NOT strip it — splitext here pointed the overlay
-            # at a non-existent dir and it silently never drew.
-            mask_path = os.path.join(
-                aggregator.project_path, "track", os.path.basename(video_name), "mask_list.h5",
-            )
-            frame = apply_roi_overlay(frame, mask_path, frame_idx)
-        frames.append(frame)
+        frames.append(apply_roi_overlay(frame, mask_path, f))
 
     if not frames:
         return None
 
+    play_fps = min(max(float(fps) if fps else float(video_fps), 1.0), 120.0)
     h, w = frames[0].shape[:2]
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(tmp.name, fourcc, fps, (w, h))
-    for f in frames:
-        bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR) if len(f.shape) == 3 else f
+    out = cv2.VideoWriter(tmp.name, fourcc, play_fps, (w, h))
+    for fr in frames:
+        bgr = cv2.cvtColor(fr, cv2.COLOR_RGB2BGR) if len(fr.shape) == 3 else fr
         out.write(bgr)
     out.release()
 

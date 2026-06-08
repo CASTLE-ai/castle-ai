@@ -22,12 +22,14 @@ logger = logging.getLogger(__name__)
 # Event Handlers
 # ---------------------------
 
-def _generate_clip(aggregator, center_bin, n_frames=30, fps=15.0):
-    """Wrapper kept for back-compat — delegates to clip_service."""
+def _generate_clip(aggregator, center_bin):
+    """Wrapper kept for back-compat — delegates to clip_service.
+
+    Builds a smooth contiguous-frame preview clip (real-time span) around the
+    clicked datapoint; see :func:`clip_service.generate_clip_with_roi_overlay`.
+    """
     from castle.service.clip_service import generate_clip_with_roi_overlay
-    return generate_clip_with_roi_overlay(
-        aggregator, center_bin, n_frames=n_frames, fps=fps,
-    )
+    return generate_clip_with_roi_overlay(aggregator, center_bin)
 
 
 def embedding_plot_click(aggregator, Z_plt, last_clip_path, evt: gr.SelectData):

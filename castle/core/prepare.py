@@ -455,7 +455,9 @@ def _max_concurrent_loads(sources: Sequence[SourceSpec], avail_ram_bytes: Option
         margin = int(float(os.environ.get("CASTLE_PREPARE_RAM_MARGIN_GB", "10")) * (1 << 30))
     except ValueError:
         margin = 10 << 30
-    avail = int(avail_ram_bytes) if avail_ram_bytes else (16 << 30)
+    # Conservative fallback when RAM is unknown (non-Linux / unreadable procfs):
+    # assume a modest 8 GiB so we don't over-prefetch on a small box.
+    avail = int(avail_ram_bytes) if avail_ram_bytes else (8 << 30)
     max_raw = 1
     for s in sources:
         try:
@@ -773,6 +775,14 @@ def run_prepare(
         roi_list.append(int(s.roi))
     n_dp = offsets[-1]
     assert n_features is not None
+    if n_dp == 0:
+        # Every source decimated to zero rows (e.g. a 1-frame video downsampled
+        # to a lower fps). An empty reduced.dat can't be memmapped on load, so
+        # fail early with a clear message instead of writing a broken cache.
+        raise ValueError(
+            "run_prepare: no datapoints after decimation — all selected sources are "
+            "empty or too short for the target fps. Disable downsampling or pick longer videos."
+        )
     index_map = FrameIndexMap(
         video_names=names,
         dp_offsets=np.array(offsets, dtype=np.int64),
@@ -868,30 +878,47 @@ def run_prepare(
             done_steps += 1
             _emit_progress()
 
-        if n_finite_fit < K_eff:
+        # Need MORE finite fit rows than components: centering drops one degree of
+        # freedom, so n rows give a rank-(n-1) covariance. <= K_eff would yield a
+        # rank-deficient fit (spurious near-zero eigenvalues mislabelled as kept).
+        if n_finite_fit <= K_eff:
             raise ValueError(
-                f"Too few finite frames ({n_finite_fit}) to fit PCA with K={K_eff}. "
-                f"Lower K, raise fit_fraction, or select more / less-decimated videos."
+                f"Too few finite frames ({n_finite_fit}) to fit PCA with K={K_eff} "
+                f"(need > {K_eff}). Lower K, raise fit_fraction, or select more / "
+                f"less-decimated videos."
             )
         notify("Prepare: solving principal components (eigendecomposition)…")
         n_fit_f = float(n_finite_fit)
         mean_t = S1 / n_fit_f
         cov = (S2 - n_fit_f * torch.outer(mean_t, mean_t)) / (n_fit_f - 1.0)
         cov = 0.5 * (cov + cov.T)  # enforce exact symmetry before eigh
-        evals, evecs = torch.linalg.eigh(cov)             # ascending eigenvalues
-        order = torch.argsort(evals, descending=True)[:K_eff]
-        comp_t = evecs[:, order].T.contiguous()           # (K_eff, D), desc. variance
-        ev_top = torch.clamp(evals[order], min=0.0)
-        total_var = float(torch.clamp(evals, min=0.0).sum().item()) or 1.0
-        evr = [float(x) for x in (ev_top / total_var).cpu().numpy()]
-        components = comp_t.to("cpu", dtype=torch.float32).numpy()
-        mean_vec = mean_t.to("cpu", dtype=torch.float32).numpy()
-        n_components_kept = int(components.shape[0])
-        rank_limited = n_components_kept < K
-        width = n_components_kept
-        del S1, S2, cov, evals, evecs, comp_t, mean_t
+        # Free the Gram before eigh allocates its (sizable) workspace, and make
+        # sure cov/mean are released even if eigh raises (else a failed build
+        # leaks GPU memory in the long-running app).
+        del S1, S2
         if device.startswith("cuda"):
             torch.cuda.empty_cache()
+        try:
+            evals, evecs = torch.linalg.eigh(cov)             # ascending eigenvalues
+            order = torch.argsort(evals, descending=True)[:K_eff]
+            comp_t = evecs[:, order].T.contiguous()           # (K_eff, D), desc. variance
+            ev_top = torch.clamp(evals[order], min=0.0)
+            total_var = float(torch.clamp(evals, min=0.0).sum().item())
+            if total_var <= 0.0:
+                notify("Prepare: WARNING — near-zero total variance (degenerate "
+                       "covariance); explained-variance ratios will be ~0. Check inputs.")
+                total_var = 1.0
+            evr = [float(x) for x in (ev_top / total_var).cpu().numpy()]
+            components = comp_t.to("cpu", dtype=torch.float32).numpy()
+            mean_vec = mean_t.to("cpu", dtype=torch.float32).numpy()
+            n_components_kept = int(components.shape[0])
+            rank_limited = n_components_kept < K
+            width = n_components_kept
+            del evals, evecs, comp_t
+        finally:
+            del cov, mean_t
+            if device.startswith("cuda"):
+                torch.cuda.empty_cache()
 
     # --- Transform / write pass --------------------------------------------
     # Write reduced.dat SEQUENTIALLY via a buffered file handle (rows are produced

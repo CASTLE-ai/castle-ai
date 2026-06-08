@@ -218,6 +218,40 @@ def test_run_prepare_cancel_raises(tmp_path, two_videos):
                     should_cancel=_cancel)
 
 
+def test_run_prepare_zero_datapoints_raises(tmp_path):
+    """A source that decimates to zero rows fails early, not with a broken
+    (empty, unmappable) reduced.dat (adversarial-review edge case)."""
+    p = str(tmp_path / "tiny.npz")
+    _write_latent(p, np.random.default_rng(0).standard_normal((1, 16)))  # 1 frame
+    out = str(tmp_path / "c")
+    with pytest.raises(ValueError, match="no datapoints"):
+        run_prepare(out, [_src(p, "t.mp4", fps=120.0)], downsample=True,
+                    target_fps_cap=60.0, normalize="l2", pca=True, K=4, model_name="m")
+
+
+def test_run_prepare_too_few_fit_rows_raises(tmp_path):
+    """<= K_eff finite fit rows is rank-deficient after centering -> reject."""
+    p = str(tmp_path / "small.npz")
+    _write_latent(p, np.random.default_rng(0).standard_normal((6, 16)))  # 6 rows
+    out = str(tmp_path / "c")
+    with pytest.raises(ValueError, match="Too few finite frames"):
+        run_prepare(out, [_src(p, "s.mp4", fps=24.0)], downsample=False,
+                    normalize="l2", pca=True, K=6, model_name="m")  # 6 rows, K_eff=6 -> 6<=6
+
+
+def test_load_latent_safe_fix_nonfinite_toggle(tmp_path):
+    """fix_nonfinite=False preserves +/-Inf (the Prepare path handles it on the
+    device instead of paying the ~3x-RAM np.where)."""
+    from castle.utils.safe_load import load_latent_safe
+    arr = np.array([[1.0, np.inf], [3.0, 4.0]], dtype=np.float32)
+    p = str(tmp_path / "inf.npz")
+    np.savez(p, latent=arr)
+    fixed = load_latent_safe(p)                       # default: Inf -> NaN
+    assert np.isnan(fixed[0, 1]) and not np.isinf(fixed).any()
+    raw = load_latent_safe(p, fix_nonfinite=False)    # opt-out: Inf preserved
+    assert np.isinf(raw[0, 1])
+
+
 def test_run_prepare_k_greater_than_rank_clamps(tmp_path, two_videos):
     out = str(tmp_path / "cache")
     meta = run_prepare(out, two_videos, downsample=False, normalize="none",

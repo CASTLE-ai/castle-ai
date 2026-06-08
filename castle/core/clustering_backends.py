@@ -30,6 +30,7 @@ reproducibility tests stay bit-identical.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
 import os
 from typing import Any, Optional
@@ -160,6 +161,13 @@ def resolve_dbscan_class(device: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+# cuML's build_algo='auto' silently reverts to exact brute_force_knn O(N^2)
+# whenever a random_state is set — and CASTLE always sets one — so the fast
+# approximate kNN (nn_descent) must be requested explicitly. Only worth it past
+# ~cuML's own auto threshold; below it, exact kNN is fast and more reproducible.
+_NN_DESCENT_MIN_ROWS = 50_000
+
+
 def _cuda_device_ctx(device: Optional[str]) -> Any:
     """Pin a single-GPU cuML / cupy op to the idlest CUDA device.
 
@@ -237,6 +245,14 @@ class UMAPReducer:
             self.cfg['n_jobs'] = max(1, _cpu - 2)
         self.device = device
         self._umap_cls = resolve_umap_class(device)
+        # Does the resolved UMAP accept build_algo? cuML >= 25.08 yes; umap-learn
+        # and the in-repo myumap do not (passing it there would TypeError).
+        try:
+            self._supports_build_algo = (
+                'build_algo' in inspect.signature(self._umap_cls).parameters
+            )
+        except (ValueError, TypeError):  # signature unavailable on some C types
+            self._supports_build_algo = False
 
     def fit_transform(
         self,
@@ -255,6 +271,16 @@ class UMAPReducer:
             ``cfg['n_components']`` (default 2).
         """
         full_cfg = {**self.cfg, 'random_state': int(random_state)}
+        # Large-N cuML GPU path: request approximate kNN (nn_descent) explicitly.
+        # cuML's 'auto' reverts to brute-force O(N^2) kNN when random_state is set
+        # (CASTLE always sets it), and that kNN is the dominant cost at ~1M points
+        # (measured ~38s of ~62s). nn_descent is non-deterministic — consistent
+        # with the GPU backend already being non-deterministic. A user-supplied
+        # build_algo, small N, or a non-cuML class all keep the exact default.
+        if (self._supports_build_algo and self.device.startswith('cuda')
+                and 'build_algo' not in full_cfg
+                and X.shape[0] > _NN_DESCENT_MIN_ROWS):
+            full_cfg['build_algo'] = 'nn_descent'
         # cuML/myumap run on the idlest GPU (cupy current-device); no-op on CPU.
         with _cuda_device_ctx(self.device):
             return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))

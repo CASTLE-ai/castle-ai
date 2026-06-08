@@ -681,7 +681,7 @@ def import_info_from_local_latent(
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model,
-                  data_source=None, k_prime=0, pooling='auto'):
+                  data_source=None, k_prime=0, pooling='auto', progress=gr.Progress()):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.init_clustering_aggregator`.
 
@@ -708,11 +708,17 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
     except (TypeError, ValueError):
         kp = None
 
+    # Visible feedback: the click outputs are all gr.State (no spinner), so drive
+    # a gr.Progress bar. Routine load messages update its description (one bar,
+    # not a toast per video); warnings/errors still surface as toasts.
+    src_label = "prepared cache" if prepare_id else "raw latents"
+    progress(0, desc=f"Initializing session — loading {src_label}…")
+
     def notify_callback(msg: str, level: str = "info"):
-        if level == "error":
+        if level in ("error", "warning"):
             gr.Warning(msg)
         else:
-            gr.Info(msg)
+            progress(0, desc=msg)
 
     try:
         artifacts = init_clustering_aggregator(
@@ -722,6 +728,12 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             prepare_id=prepare_id, k_prime=kp, pooling=pooling,
         )
         session_info = check_session_exists(storage_path, project_name)
+        n_dp = (
+            len(artifacts.aggregator.latents)
+            if getattr(artifacts.aggregator, "latents", None) is not None else 0
+        )
+        progress(1.0, desc="Session ready")
+        gr.Info(f"✅ Explore session ready — {n_dp:,} datapoints loaded.")
         return artifacts.aggregator, artifacts.latents, session_info
     except CastleDataError as e:
         # Already a clear, user-facing data problem (e.g. mixed pooling

@@ -473,8 +473,15 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
     )
 
-    # Initialize: create aggregator + check for previous session
+    # Initialize: create aggregator + check for previous session.
+    # First flip a VISIBLE status to "loading" the instant the button is clicked
+    # (the init outputs are all gr.State, so without this there's no on-screen
+    # feedback while latents load); _format_session_status overwrites it after.
     ui['reset'].click(
+        fn=lambda: gr.update(value="⏳ Initializing Explore session — loading latents…"),
+        inputs=None,
+        outputs=[ui['session_status']],
+    ).then(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'],
                 ui['data_source'], ui['k_prime'], ui['pooling']],

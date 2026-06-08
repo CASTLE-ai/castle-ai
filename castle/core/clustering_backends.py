@@ -163,9 +163,10 @@ def resolve_dbscan_class(device: str) -> Any:
 
 # cuML's build_algo='auto' silently reverts to exact brute_force_knn O(N^2)
 # whenever a random_state is set — and CASTLE always sets one — so the fast
-# approximate kNN (nn_descent) must be requested explicitly. Only worth it past
-# ~cuML's own auto threshold; below it, exact kNN is fast and more reproducible.
-_NN_DESCENT_MIN_ROWS = 50_000
+# approximate kNN (nn_descent) must be requested explicitly. Below this row
+# count, exact brute kNN is still fast (~<=15s at ~150k) AND higher quality, so
+# keep it; nn_descent only kicks in past here where brute gets slow / OOMs.
+_NN_DESCENT_MIN_ROWS = 150_000
 
 
 def _cuda_device_ctx(device: Optional[str]) -> Any:
@@ -281,6 +282,14 @@ class UMAPReducer:
                 and 'build_algo' not in full_cfg
                 and X.shape[0] > _NN_DESCENT_MIN_ROWS):
             full_cfg['build_algo'] = 'nn_descent'
+            # nn_descent builds its own intermediate kNN graph of degree
+            # nnd_graph_degree, which MUST be >= n_neighbors. If left unset cuML
+            # clamps it to exactly n_neighbors — the minimum — giving low-recall
+            # (inaccurate) neighbors and a fragmented/stringy embedding. Give it
+            # ~2x headroom for good recall. User-supplied build_kwds wins.
+            if 'build_kwds' not in full_cfg:
+                nn = int(full_cfg.get('n_neighbors', 15))
+                full_cfg['build_kwds'] = {'nnd_graph_degree': max(2 * nn, 64)}
         # cuML/myumap run on the idlest GPU (cupy current-device); no-op on CPU.
         with _cuda_device_ctx(self.device):
             return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))

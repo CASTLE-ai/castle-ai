@@ -8,6 +8,7 @@ from .edit_ui import create_edit_ui
 from .preprocess_ui import create_preprocess_ui
 from .extract_ui import create_extract_ui
 from .cluster_page_ui import create_cluster_page_ui
+from .cluster_handlers import list_prepare_choices
 from .annotator_ui import create_annotator_ui
 from .analysis_ui import create_analysis_ui
 from .export_ui import create_export_ui
@@ -133,6 +134,16 @@ def create_ui(OS_SYS, root=''):
                 fn=toggle_tab_visibility,
                 inputs=[project_ui['project_name'], cluster_ui_object_count],
                 outputs=[v for k, v in cluster_ui.items()]
+            )
+            # Populate the prepared-cache dropdown as soon as a project is OPENED,
+            # not only on first navigation into the Behavior Microscope tab — so
+            # the cache list is correct even if the user goes straight here. Read
+            # project_drop directly (its value at click time) to avoid any
+            # project_name State-update ordering race.
+            project_ui['project_open_btn'].click(
+                fn=lambda sp, pn: gr.update(choices=list_prepare_choices(sp, pn)),
+                inputs=[storage_path, project_ui['project_drop']],
+                outputs=cluster_ui['data_source'],
             )
 
         # Analysis tab (Stage 6)

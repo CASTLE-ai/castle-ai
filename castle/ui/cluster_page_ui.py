@@ -199,6 +199,21 @@ def update_umap_config_text_with_preset(preset_dropdown):
 # UI Construction
 # ---------------------------
 
+def _on_init_click():
+    """Leading handler for the Initialize button — emits a top-right toast.
+
+    Fires a ``gr.Info`` toast the instant the button is clicked (so the feedback
+    is unmissable, top-right) AND returns the inline session_status loading line.
+    A plain lambda can only return an update; a named handler can do both. The
+    inline line + gr.Progress bridge the gap while latents load.
+    """
+    gr.Info(
+        "⏳ Initializing Explore session — loading latents… "
+        "(this can take a while for a large prepared cache)"
+    )
+    return gr.update(value="⏳ Initializing…")
+
+
 def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui = dict()
     
@@ -487,7 +502,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     # (the init outputs are all gr.State, so without this there's no on-screen
     # feedback while latents load); _format_session_status overwrites it after.
     ui['reset'].click(
-        fn=lambda: gr.update(value="⏳ Initializing Explore session — loading latents…"),
+        fn=_on_init_click,
         inputs=None,
         outputs=[ui['session_status']],
     ).then(

@@ -1164,15 +1164,18 @@ def run_umap_on_cluster(
             f"different cluster or re-cluster with adjusted parameters."
         )
 
-    # Pre-flight host-RAM guard: build_embedding copies the selected array to
-    # float32 and UMAP holds input + output + internals at once. Estimate ~3x the
-    # selected array on top of what's already resident; refuse (CastleDataError ->
-    # gr.Warning) rather than letting a large run OOM/thrash the OS.
+    # Pre-flight host-RAM guard for the ADDITIONAL work build_embedding does on
+    # top of what's already resident — self.latents and the select copy are both
+    # bounded by the _init_prepared guard. The further host need is small: a
+    # possible Z re-copy (usually a no-op — see build_embedding) plus UMAP working
+    # memory (cuML uploads to VRAM; umap-learn's kNN graph is modest), so estimate
+    # ~1x the selected array. Refuse (CastleDataError -> gr.Warning) rather than
+    # risk an OOM/thrash, but don't over-estimate and block runs that fit.
     from castle.core.cluster import assert_ram_for
     _n_sel = len(local_latents.data)
     _width = int(local_latents.data.shape[1]) if local_latents.data.ndim == 2 else 1
     assert_ram_for(
-        float(_n_sel) * _width * 4 * 3,
+        float(_n_sel) * _width * 4,
         f"UMAP on cluster '{cluster_name}' ({_n_sel:,} points x {_width} dims)",
         "Pick a smaller sub-cluster, lower k', or raise the time window (fewer points).",
     )

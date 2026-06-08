@@ -180,6 +180,18 @@ def generate_embedding(
     # a fixed seed. The seed applies to both backends regardless.
     deterministic = (umap_device == "CPU")
 
+    # Tell the user if they asked for GPU but cuML can't load (it would otherwise
+    # silently run on CPU — fine for small data, but minutes→hours at ~1M points).
+    if umap_device == "GPU":
+        from castle.core.clustering_backends import gpu_umap_unavailable_reason
+        _gpu_reason = gpu_umap_unavailable_reason()
+        if _gpu_reason:
+            gr.Warning(
+                f"GPU UMAP unavailable ({_gpu_reason}) — running on CPU, which is "
+                f"much slower for large datasets. Fix CUDA/cuML (see INSTALLATION.md), "
+                f"or reduce n_epochs / n_neighbors / k' for a faster CPU run."
+            )
+
     try:
         result = run_umap_on_cluster(
             latents, cluster_name, cfg,

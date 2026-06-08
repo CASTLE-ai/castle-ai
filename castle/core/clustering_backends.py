@@ -51,6 +51,31 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+_GPU_UMAP_CHECKED = False
+_GPU_UMAP_REASON: Optional[str] = None
+
+
+def gpu_umap_unavailable_reason() -> Optional[str]:
+    """Cached probe: ``None`` if cuML GPU UMAP imports cleanly, else a short reason.
+
+    cuML can fail to load for many reasons — no GPU, not installed, or (commonly
+    with pip-installed RAPIDS) a CUDA library not on the linker path, e.g. a cu12
+    wheel's ``libcublas.so.12`` shadowed by an older system CUDA on
+    ``LD_LIBRARY_PATH``. The first probe is cached so the UI can *tell* the user
+    UMAP will run on CPU instead of silently falling back. See INSTALLATION.md.
+    """
+    global _GPU_UMAP_CHECKED, _GPU_UMAP_REASON
+    if not _GPU_UMAP_CHECKED:
+        try:
+            from cuml.manifold import UMAP  # noqa: F401
+            _GPU_UMAP_REASON = None
+        except Exception as exc:  # noqa: BLE001 — any import/load failure -> CPU
+            first = str(exc).splitlines()[0] if str(exc) else ""
+            _GPU_UMAP_REASON = f"{type(exc).__name__}: {first[:200]}"
+        _GPU_UMAP_CHECKED = True
+    return _GPU_UMAP_REASON
+
+
 def resolve_umap_class(device: str) -> Any:
     """Pick the UMAP class to use for ``device``.
 
@@ -59,7 +84,12 @@ def resolve_umap_class(device: str) -> Any:
 
     * CPU / MPS → :class:`umap.UMAP`.
     * CUDA → ``cuml.manifold.UMAP`` → ``castle.utils.myumap.UMAP`` →
-      ``umap.UMAP`` (each falling back on ImportError).
+      ``umap.UMAP`` (each falling back on ANY import/load error).
+
+    A CUDA→CPU fallback is logged at WARNING: CPU ``umap-learn`` is dramatically
+    slower on large datasets (minutes → hours at ~1M points), so a silent
+    fallback reads as "UMAP hung" rather than "GPU unavailable". The UI surfaces
+    the same via :func:`gpu_umap_unavailable_reason`.
 
     Args:
         device: ``'cpu'``, ``'mps'``, or ``'cuda'`` / ``'cuda:N'``.
@@ -74,17 +104,22 @@ def resolve_umap_class(device: str) -> Any:
         from umap import UMAP
         return UMAP
     if 'cuda' in device:
-        try:
-            from cuml.manifold import UMAP
+        reason = gpu_umap_unavailable_reason()
+        if reason is None:
+            from cuml.manifold import UMAP  # cached in sys.modules — cheap
             return UMAP
-        except ImportError:
-            pass
         try:
             from castle.utils.myumap import UMAP
             return UMAP
-        except ImportError:
-            from umap import UMAP
-            return UMAP
+        except Exception:  # noqa: BLE001 — myumap also needs cuML
+            pass
+        logger.warning(
+            "GPU UMAP (cuML) unavailable (%s); falling back to CPU umap-learn — "
+            "this is MUCH slower for large datasets. See INSTALLATION.md "
+            "(GPU UMAP / cuML).", reason,
+        )
+        from umap import UMAP
+        return UMAP
     raise ValueError(
         f"Unsupported device {device!r}; expected 'cpu', 'mps', or 'cuda'."
     )

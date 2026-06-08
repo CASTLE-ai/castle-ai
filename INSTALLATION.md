@@ -159,4 +159,45 @@ urllib3                  2.5.0
 uvicorn                  0.35.0
 websockets               15.0.1
 zict                     3.0.0
+
+---
+
+## Troubleshooting: GPU UMAP / clustering silently runs on CPU (cuML can't load)
+
+The Behavior Microscope uses GPU UMAP/DBSCAN via **cuML (RAPIDS)** when you pick
+the GPU backend. If cuML fails to import, CASTLE **falls back to CPU `umap-learn`**
+and now logs a warning (terminal + a UI banner). On small data you won't notice;
+on a large prepared cache (~1M datapoints) a CPU UMAP can take **hours**, which
+looks like the app hung.
+
+**Symptom.** UMAP runs for many minutes/hours; `nvidia-smi` shows the GPU idle;
+the log says `GPU UMAP (cuML) unavailable (...); falling back to CPU umap-learn`.
+A common error is `libcublas.so.12: cannot open shared object file`.
+
+**Cause (pip installs).** The CUDA libraries the `*-cu12` wheels need (e.g.
+`libcublas.so.12`) live inside the venv at
+`site-packages/nvidia/<lib>/lib/`, which is **not** on the dynamic-linker path.
+PyTorch self-loads its bundled copies, but cuML does not — so if `LD_LIBRARY_PATH`
+points at a *different* / older system CUDA (e.g. `/usr/local/cuda` → CUDA 11),
+cuML finds the wrong `libcublas` (or none) and fails to load.
+
+**Fix — point the linker at the venv's own CUDA wheels (no sudo, no system change):**
+
+```bash
+# prepend the venv's nvidia-wheel lib dirs so the matched cu12 libs win
+export LD_LIBRARY_PATH="$(find "$VIRTUAL_ENV/lib"/python*/site-packages/nvidia -name lib -type d | tr '\n' ':')$LD_LIBRARY_PATH"
+python app.py
+```
+
+Prefer this over deleting/upgrading the system CUDA: the venv already ships a
+complete, version-matched CUDA 12 stack, so it doesn't need the system toolkit
+at all, and touching `/usr/local/cuda` can break other projects pinned to it.
+
+**conda / Docker installs** generally don't hit this — conda puts the CUDA libs
+in the env's `lib/` (already on the path), and the RAPIDS Docker images set it up
+correctly.
+
+**No GPU?** That's fine — CASTLE runs on CPU. For large prepared caches, lower the
+UMAP `n_epochs` (the presets use 5000; ~500 is plenty), `n_neighbors`, and the
+Explore `k'` to keep CPU UMAP tractable.
 zipp                     3.23.0

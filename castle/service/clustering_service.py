@@ -1155,7 +1155,8 @@ def run_umap_on_cluster(
     deterministic: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     log_path: Optional[str] = None,
-    max_points: Optional[int] = None,
+    subsample: bool = False,
+    subsample_pct: float = 30.0,
 ) -> UMAPRunArtifacts:
     """Select a cluster and build its UMAP embedding.
 
@@ -1194,13 +1195,13 @@ def run_umap_on_cluster(
             f"different cluster or re-cluster with adjusted parameters."
         )
 
-    # Memory-aware subsample cap. cuML's CUDA OOM is a bare std::bad_alloc with
-    # no traceback that pins the GPU (app looks hung); rather than just refuse,
-    # solve for the largest point count S whose UMAP fit fits the budget and run
-    # on a seeded S-row sample (labels are then propagated to all M points in
-    # build_cluster). umap_peak_bytes is LINEAR in n, so the per-point cost is
-    # peak(1); S = floor(fraction*budget / peak(1)), clamped to M. Backend-aware
-    # budget: free VRAM (GPU) or available RAM (CPU/deterministic / no GPU).
+    # Subsampling is MANUAL (the "Subsample UMAP" toggle + "% of points"). When
+    # on, UMAP fits a seeded S = round(pct% * M)-row sample and labels propagate
+    # to all M points in build_cluster (so time_series / ethogram stay complete);
+    # this is the speed lever on huge selections. When off, UMAP fits all M. A
+    # pre-flight guard estimates peak memory either way (cuML's CUDA OOM is a bare
+    # std::bad_alloc that pins the GPU) and refuses with a concrete next step —
+    # rather than silently auto-capping behind the user's back.
     from castle.core.clustering_backends import (
         target_cuda_free_bytes,
         umap_peak_bytes,
@@ -1212,8 +1213,21 @@ def run_umap_on_cluster(
     _M = len(local_latents.data)
     _width = int(local_latents.data.shape[1]) if local_latents.data.ndim == 2 else 1
 
-    # One fraction/budget for the whole decision (env override shared with the
-    # _init_prepared guard). VRAM is the GPU bottleneck; RAM the CPU one.
+    # Resolve the requested fit size.
+    if subsample:
+        _pct = min(100.0, max(1.0, float(subsample_pct)))
+        _S = min(_M, max(1, int(round(_pct / 100.0 * _M))))
+        _need_min = max(2 * _UMAP_MIN_N_NEIGHBORS, _nn + 1)
+        if _S < _need_min:
+            raise CastleDataError(
+                f"Subsample {_pct:.0f}% of {_M:,} points = only {_S:,}, below the "
+                f"UMAP minimum ({_need_min}) for n_neighbors={_nn}. Raise the % (or "
+                f"reduce n_neighbors)."
+            )
+    else:
+        _S = _M
+
+    # One fraction/budget for the guard (env override shared with _init_prepared).
     _frac_default = 0.6 if deterministic else 0.7
     try:
         _frac = float(os.environ.get('CASTLE_UMAP_VRAM_FRACTION', _frac_default))
@@ -1226,41 +1240,30 @@ def run_umap_on_cluster(
         except Exception:  # noqa: BLE001
             _free = None
 
-    _per_point = umap_peak_bytes(1, _width, _nn)
-    _auto_S = int(_frac * float(_free) / _per_point) if _free else _M
-    _S = min(_auto_S, _M)
-    if max_points and int(max_points) > 0:
-        # User cap is a CEILING — never larger than the memory-safe auto value.
-        _S = min(_S, int(max_points), _M)
-
-    _need_min = max(2 * _UMAP_MIN_N_NEIGHBORS, _nn + 1)
-    if _free and _S < _need_min:
+    _peak = umap_peak_bytes(_S, _width, _nn)
+    if _free and _peak > _frac * float(_free):
+        _dev = "GPU memory" if (not deterministic and target_cuda_free_bytes('cuda')) else "RAM"
+        _fix = (
+            f"Lower the 'UMAP % of points' (currently {_pct:.0f}%)."
+            if subsample else
+            "Turn on 'Subsample UMAP' and set a % of points."
+        )
         raise CastleDataError(
-            f"UMAP on cluster '{cluster_name}': even a memory-safe sample is only "
-            f"~{_S:,} points, below the UMAP minimum ({_need_min}) for "
-            f"n_neighbors={_nn} at {_width} feature dims (~{_free / 1e9:.1f} GB free). "
-            f"Lower k' (narrower features), raise the time window (fewer points), "
-            f"or reduce n_neighbors."
+            f"UMAP on cluster '{cluster_name}' ({_S:,} points x {_width} dims, "
+            f"n_neighbors={_nn}) needs ~{_peak / 1e9:.1f} GB {_dev} but only "
+            f"~{_free / 1e9:.1f} GB is free (safe limit {_frac:.0%}). {_fix}"
         )
 
-    # Subsample only when the full set genuinely exceeds the safe size. When the
-    # budget can't be measured (_free is None) fall through to the full-M path.
-    _cap = _S if (_free and _S < _M) else None
+    _cap = _S if (subsample and _S < _M) else None
     sub_note = ""
     if _cap is not None:
         sub_note = (
-            f"Large selection ({_M:,} pts): UMAP ran on a memory-safe "
-            f"{_cap:,}-point sample; labels propagated to all {_M:,} via "
-            f"feature-space k-NN. "
+            f"Subsampled: UMAP on {_cap:,} of {_M:,} pts ({_pct:.0f}%); labels "
+            f"propagated to all {_M:,}. "
         )
         logger.info(
-            "UMAP cap: M=%d width=%d nn=%d free=%.1fGB frac=%.2f -> S=%d",
-            _M, _width, _nn, (_free or 0) / 1e9, _frac, _cap,
-        )
-    elif _free is None:
-        logger.warning(
-            "UMAP on cluster '%s': could not measure free memory; running on all "
-            "%d points without a subsample cap (may OOM).", cluster_name, _M,
+            "UMAP subsample: M=%d -> S=%d (%.0f%%) width=%d nn=%d",
+            _M, _cap, _pct, _width, _nn,
         )
 
     resolved_seeds = local_latents.build_embedding(

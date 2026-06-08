@@ -396,15 +396,24 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                              "but global layout is less reliable and varies more by seed. "
                              "Set per UMAP stage in the config box to override.",
                     )
-                    ui['umap_max_points'] = gr.Number(
-                        label="UMAP max points (0 = auto)",
-                        value=0,
-                        precision=0,
+                    ui['umap_subsample'] = gr.Checkbox(
+                        label="Subsample UMAP (faster on huge selections)",
+                        value=False,
                         interactive=True,
-                        info=("Cap on points UMAP fits. 0 = auto from free memory. "
-                              "Above the cap, UMAP runs on a sample and labels are "
-                              "propagated to all points (kept complete). A value here "
-                              "is a ceiling — never raises above the memory-safe auto."),
+                        info=("Fit UMAP on a random sample of the points, then "
+                              "propagate cluster labels to ALL points (time-series "
+                              "stays complete). Use it when a selection is too large "
+                              "to embed or too slow. Off = fit every point."),
+                    )
+                    ui['umap_subsample_pct'] = gr.Number(
+                        label="UMAP % of points",
+                        value=30,
+                        precision=0,
+                        minimum=1,
+                        maximum=100,
+                        interactive=True,
+                        info="% of selected points UMAP fits (only when Subsample is on). "
+                             "Lower = faster + cleaner layout; higher = more faithful.",
                     )
                     ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
@@ -610,7 +619,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             project_name,
             ui['umap_device'],
             ui['umap_init'],
-            ui['umap_max_points'],
+            ui['umap_subsample'],
+            ui['umap_subsample_pct'],
         ],
         outputs=[
             local_latents, local_embedding_plot,

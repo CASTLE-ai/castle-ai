@@ -21,7 +21,6 @@ from castle.utils.latent_explorer import (
     Latent,
     LocalLatent,
     _propagate_labels,
-    _interp_positions,
     _knn_sampled,
 )
 from castle.service.clustering_service import run_umap_on_cluster, run_dbscan_on_local
@@ -62,12 +61,6 @@ def test_propagate_labels_excludes_noise_and_handles_ties():
     assert _propagate_labels(labels_s, np.empty((0, 3), dtype=int)).shape == (0,)
 
 
-def test_interp_positions_distance_weighted():
-    emb = np.array([[0.0, 0.0], [10.0, 0.0]])
-    pos = _interp_positions(emb, np.array([[0, 1]]), np.array([[0.0, 1e9]]))
-    assert np.allclose(pos[0], [0.0, 0.0], atol=1e-3)
-
-
 def test_knn_sampled_cpu_euclidean():
     samp = np.array([[0.0, 0.0], [100.0, 100.0]], dtype=np.float32)
     q = np.array([[1.0, 1.0], [99.0, 99.0]], dtype=np.float32)
@@ -89,6 +82,22 @@ def test_subsample_keeps_length_m_and_labels_all():
     ll.build_cluster(method="dbscan", configs={"eps": 1.5})
     assert ll.cluster.shape == (400,)                # all points labelled
     assert len(set(ll.cluster.tolist()) - {-1}) == 2  # two blobs recovered
+
+
+def test_nonsampled_points_snap_onto_sampled_positions():
+    # Every non-sampled point must land EXACTLY on some sampled point's 2D
+    # position (nearest-snap), never in a gap — guards against the weighted-
+    # average collapse that piled points onto the global centroid.
+    data = _two_blobs(400)
+    ll = _local(data)
+    ll.build_embedding(_CFG1, base_seed=9, deterministic=True, max_points=150)
+    sampled_pos = ll.embedding[ll._subsample_idx]
+    ns_pos = ll.embedding[ll._prop_nonsampled_idx]
+    # each non-sampled position equals one of the sampled positions exactly
+    sampled_set = {tuple(np.round(p, 6)) for p in sampled_pos}
+    assert all(tuple(np.round(p, 6)) in sampled_set for p in ns_pos)
+    # spread of non-sampled positions ~ spread of sampled (no centroid collapse)
+    assert ns_pos.std(0).min() > 0.3 * sampled_pos.std(0).min()
 
 
 def test_subsample_is_reproducible_with_seed():
@@ -142,29 +151,32 @@ def test_redbscan_after_subsample_reuses_sample():
 
 
 # --------------------------------------------------------------------------- #
-# service cap: refusal when the budget can't fit a UMAP-viable sample
+# service: manual subsample % + refusal when % is below the UMAP minimum
 # --------------------------------------------------------------------------- #
-def test_cap_refuses_when_user_ceiling_below_nneighbors_floor():
+def test_subsample_pct_below_nneighbors_floor_refuses():
     lat = Latent(_two_blobs(500), time_window=1, device="cpu")
-    # need_min = max(2*5, n_neighbors+1) = 16; a ceiling of 15 cannot satisfy it
+    # need_min = max(2*5, n_neighbors+1) = 16; 3% of 500 = 15 < 16
     with pytest.raises(CastleDataError, match="below the UMAP minimum"):
         run_umap_on_cluster(
-            lat, "init", _CFG1, base_seed=1, deterministic=True, max_points=15,
+            lat, "init", _CFG1, base_seed=1, deterministic=True,
+            subsample=True, subsample_pct=3,
         )
 
 
-def test_cap_refuses_at_s_equals_nine():
+def test_subsample_pct_one_percent_refuses():
     lat = Latent(_two_blobs(500), time_window=1, device="cpu")
     with pytest.raises(CastleDataError, match="below the UMAP minimum"):
         run_umap_on_cluster(
-            lat, "init", _CFG1, base_seed=1, deterministic=True, max_points=9,
+            lat, "init", _CFG1, base_seed=1, deterministic=True,
+            subsample=True, subsample_pct=1,
         )
 
 
 def test_service_subsample_notes_and_propagates():
     lat = Latent(_two_blobs(500), time_window=1, device="cpu")
     res = run_umap_on_cluster(
-        lat, "init", _CFG1, base_seed=11, deterministic=True, max_points=200,
+        lat, "init", _CFG1, base_seed=11, deterministic=True,
+        subsample=True, subsample_pct=40,   # 40% of 500 = 200
     )
     assert "sample" in res.status_text.lower()
     ll = res.local_latents
@@ -174,13 +186,24 @@ def test_service_subsample_notes_and_propagates():
     assert ll.cluster.shape == (500,)
 
 
+def test_service_no_subsample_uses_all_points():
+    lat = Latent(_two_blobs(500), time_window=1, device="cpu")
+    res = run_umap_on_cluster(
+        lat, "init", _CFG1, base_seed=2, deterministic=True, subsample=False,
+    )
+    ll = res.local_latents
+    assert ll._subsample_idx is None             # fit every point
+    assert ll.embedding.shape == (500, 2)
+
+
 # --------------------------------------------------------------------------- #
 # export: training rows are the sampled rows only
 # --------------------------------------------------------------------------- #
 def test_saved_npz_is_sampled_marks_only_sampled_rows():
     lat = Latent(_two_blobs(500), time_window=1, device="cpu")
     res = run_umap_on_cluster(
-        lat, "init", _CFG1, base_seed=5, deterministic=True, max_points=200,
+        lat, "init", _CFG1, base_seed=5, deterministic=True,
+        subsample=True, subsample_pct=40,
     )
     ll = res.local_latents
     run_dbscan_on_local(ll, eps=1.5)

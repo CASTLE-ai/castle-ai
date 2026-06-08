@@ -82,17 +82,6 @@ def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
     return idx_out, dist_out
 
 
-def _interp_positions(emb_sampled, neighbor_idx, neighbor_dist):
-    """Distance-weighted 2D position for each non-sampled point: the weighted
-    average of its k nearest sampled neighbours' embedding coordinates."""
-    if len(neighbor_idx) == 0:
-        return np.empty((0, emb_sampled.shape[1]), dtype=emb_sampled.dtype)
-    w = 1.0 / (neighbor_dist + 1e-8)
-    w /= w.sum(axis=1, keepdims=True)
-    nb = emb_sampled[neighbor_idx]                       # (Nq, k, 2)
-    return (nb * w[:, :, None]).sum(axis=1)
-
-
 def _propagate_labels(labels_sampled, neighbor_idx):
     """Majority cluster label for each non-sampled point from its k nearest
     sampled neighbours, excluding DBSCAN noise (-1) — vectorised.
@@ -612,9 +601,15 @@ class LocalLatent:
             # Z_fit is the S-row final embedding. Place the (M-S) non-sampled
             # points into a length-M embedding via a SINGLE feature-space k-NN to
             # the sample (original stage-0 features `Z`, NOT the discarded
-            # intermediate UMAP spaces). The SAME neighbours label them in
-            # build_cluster — so a point sits among the neighbours whose majority
-            # gives its label (position and label stay consistent).
+            # intermediate UMAP spaces). SNAP each to its NEAREST sampled
+            # neighbour's 2D position — do NOT distance-weight-average the k
+            # neighbours: UMAP (esp. min_dist=0) is non-linear, so a point's
+            # feature neighbours routinely land in DIFFERENT 2D clumps, and
+            # averaging then drags it into the empty gap between them —
+            # collapsing most points onto the global centroid (the dense central
+            # blob bug). Snapping keeps every point on a real clump, faithful to
+            # the sampled UMAP. The k neighbours still vote the LABEL in
+            # build_cluster (majority is robust; the nearest is one of them).
             emb_sampled = np.asarray(Z_fit)
             metric = (configs[0].get('metric', 'euclidean')
                       if isinstance(configs[0], dict) else 'euclidean')
@@ -623,12 +618,12 @@ class LocalLatent:
             ns_idx = np.where(~samp_mask)[0]
             use_gpu = (isinstance(self.device, str)
                        and self.device.startswith('cuda') and not deterministic)
-            nbr_idx, nbr_dist = _knn_sampled(
+            nbr_idx, _ = _knn_sampled(
                 Z[sub_idx], Z, ns_idx, _PROP_K, metric, use_gpu,
             )
             embedding = np.empty((M, emb_sampled.shape[1]), dtype=np.float64)
             embedding[sub_idx] = emb_sampled
-            embedding[ns_idx] = _interp_positions(emb_sampled, nbr_idx, nbr_dist)
+            embedding[ns_idx] = emb_sampled[nbr_idx[:, 0]]   # snap to nearest sampled
             self.embedding = embedding
             self._subsample_idx = sub_idx
             self._embedding_sampled = emb_sampled

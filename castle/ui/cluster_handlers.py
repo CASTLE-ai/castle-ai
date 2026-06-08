@@ -127,17 +127,17 @@ def generate_embedding(
     project_name: str | None = None,
     umap_device: str = "GPU",
     umap_init: str = "spectral",
-    umap_max_points=0,
+    umap_subsample: bool = False,
+    umap_subsample_pct=30,
     progress=gr.Progress(),
 ):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.run_umap_on_cluster`.
 
-    ``umap_max_points`` is a user CEILING on the number of points UMAP fits
-    (0 / blank = auto from available memory). When the selection exceeds the
-    resolved cap, UMAP runs on a seeded sample and labels are propagated to all
-    points; the effective cap is the smaller of this value and the memory-safe
-    auto value.
+    ``umap_subsample`` (the "Subsample UMAP" toggle) fits UMAP on a seeded
+    ``umap_subsample_pct`` percent of the selected points and propagates the
+    labels to all of them — the speed lever for huge selections. Off → UMAP
+    fits every point.
 
     Returns ``(local_latents, scatter_plot, plot_image, status_md)``.
     """
@@ -229,9 +229,9 @@ def generate_embedding(
             )
 
     try:
-        _max_pts = int(umap_max_points) if umap_max_points and int(umap_max_points) > 0 else None
+        _pct = float(umap_subsample_pct)
     except (TypeError, ValueError):
-        _max_pts = None
+        _pct = 30.0
 
     try:
         result = run_umap_on_cluster(
@@ -240,7 +240,8 @@ def generate_embedding(
             deterministic=deterministic,
             progress_callback=umap_progress,
             log_path=log_path,
-            max_points=_max_pts,
+            subsample=bool(umap_subsample),
+            subsample_pct=_pct,
         )
     except InsufficientDataError as e:
         gr.Info(str(e))

@@ -7,11 +7,11 @@ import os
 import threading
 from collections import OrderedDict
 import numpy as np
-from typing import List, Tuple, Dict, Optional
+from typing import Callable, List, Tuple, Dict, Optional
 
 from castle.core.interfaces import NotificationCallback
 from castle.core.logging_config import setup_logger
-from castle.core.types import LatentCorruptError
+from castle.core.types import CastleDataError, LatentCorruptError
 from castle.utils.video_io import VideoReader
 from castle.utils.safe_load import load_latent_safe
 from castle.utils.latent_metadata import load_latent_metadata
@@ -120,6 +120,73 @@ def _memmap_threshold_bytes() -> int:
     return int(gb * (1024 ** 3))
 
 
+def _pooling_variant_of(filename: str, select_roi_id: int) -> str:
+    """Classify a latent file's pooling variant from its filename.
+
+    Extraction appends an ``spp<scales>`` tag to **multiscale**-pooled latents
+    (which makes them e.g. 21x768 = 16128-d) and omits it for
+    **weighted_average** (768-d). Both keep the bare ``model_name``, so the model
+    filter alone cannot tell them apart — this is what lets incompatible widths
+    end up in one aggregation. Returns ``'multiscale'`` or ``'weighted_average'``.
+    """
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    parts = stem.split(f"_ROI_{select_roi_id}_", 1)
+    tail = parts[1] if len(parts) > 1 else stem
+    return "multiscale" if "spp" in tail.lower() else "weighted_average"
+
+
+def _select_pooling_variant(
+    matched: List[Tuple[str, str, str]],
+    pooling: str,
+    model_name: str,
+    roi_id: int,
+    notify: Callable[..., None],
+) -> List[Tuple[str, str]]:
+    """Keep a single, consistent pooling variant from the model-matched files.
+
+    Args:
+        matched: list of ``(filename, video_source_name, variant)`` 3-tuples.
+        pooling: ``'auto'`` | ``'weighted_average'`` | ``'multiscale'``.
+        model_name, roi_id, notify: for messages.
+
+    Returns ``(filename, video_source_name)`` 2-tuples of the chosen variant.
+    ``'auto'`` keeps the majority variant when a project mixes both (tie →
+    multiscale, the richer features) and warns; an explicit choice with no
+    matching files raises :class:`CastleDataError`.
+    """
+    from collections import Counter
+    if not matched:
+        return []
+    variants = Counter(v for _, _, v in matched)
+    pooling = (pooling or "auto").strip().lower()
+
+    if pooling in ("weighted_average", "multiscale"):
+        kept = [(f, vid) for f, vid, v in matched if v == pooling]
+        if not kept:
+            avail = ", ".join(f"{v} ({n})" for v, n in variants.items())
+            raise CastleDataError(
+                f"No '{pooling}' latents found for model '{model_name}', ROI "
+                f"{roi_id}. Available pooling variants: {avail}. Pick a different "
+                f"pooling in the clustering options, or re-extract."
+            )
+        return kept
+
+    if len(variants) <= 1:  # auto, single variant — nothing to disambiguate
+        return [(f, vid) for f, vid, _ in matched]
+
+    # auto + mixed: keep the majority (tie → multiscale) and warn.
+    chosen = max(variants.items(), key=lambda kv: (kv[1], kv[0] == "multiscale"))[0]
+    ignored = sum(n for v, n in variants.items() if v != chosen)
+    notify(
+        f"Project mixes pooling variants for model '{model_name}' ROI {roi_id}: "
+        f"{dict(variants)}. Using '{chosen}' ({variants[chosen]} files) and "
+        f"ignoring {ignored} of the other variant. Set pooling explicitly in the "
+        f"clustering options to override.",
+        "warning",
+    )
+    return [(f, vid) for f, vid, v in matched if v == chosen]
+
+
 def _aggregate_latents(
     chunks: List[np.ndarray],
     *,
@@ -158,6 +225,19 @@ def _aggregate_latents(
         raise ValueError("Cannot aggregate empty chunk list")
 
     feature_dim = chunks[0].shape[1]
+    # Fail loud on mixed feature widths instead of numpy's cryptic
+    # "could not broadcast (n,768) into (n,16128)". Mixed widths mean the
+    # project holds incompatible latents for one model — almost always
+    # weighted-average (e.g. 768-d) mixed with multiscale/SPP (e.g. 16128-d).
+    widths = sorted({int(c.shape[1]) for c in chunks})
+    if len(widths) > 1:
+        raise CastleDataError(
+            f"Latent feature-dim mismatch across files: widths {widths}. The "
+            f"project mixes incompatible latents for one model — usually "
+            f"weighted-average (e.g. 768-d) and multiscale/SPP (e.g. 16128-d) "
+            f"pooling. Pick one pooling variant in the clustering options, or "
+            f"re-extract the latents consistently."
+        )
     total_T = sum(c.shape[0] for c in chunks)
     # Always aggregate as float32 regardless of each chunk's stored precision —
     # extraction may save float16 (half the disk), and a project may even mix
@@ -235,7 +315,8 @@ class LatentAggregator:
     """
     def __init__(self, storage_path: str, project_name: str, select_roi_id: int, bin_size: int,
                  model_name: str, notify: Optional[NotificationCallback] = None,
-                 prepare_id: Optional[str] = None, k_prime: Optional[int] = None) -> None:
+                 prepare_id: Optional[str] = None, k_prime: Optional[int] = None,
+                 pooling: str = 'auto') -> None:
         """
         Initialize the LatentAggregator.
         
@@ -253,6 +334,9 @@ class LatentAggregator:
         self.project_path = os.path.join(storage_path, project_name)
         self.bin_size = int(bin_size)
         self.model_name = model_name
+        # 'auto' | 'weighted_average' | 'multiscale' — which pooling variant to
+        # aggregate when a project's latent/<model>/ dir holds more than one.
+        self.pooling = (pooling or 'auto').strip().lower()
         self.notify = notify or print  # Fallback to print
         
         # C-02 / PERF-03: VideoReader LRU cache — keeps N most-recently-used
@@ -338,13 +422,21 @@ class LatentAggregator:
                     model_name_matches = legacy_match or os.path.exists(latent_file_path)
 
                 if model_name_matches:
-                    latent_files.append((filename, video_source_name))
-        
+                    variant = _pooling_variant_of(filename, select_roi_id)
+                    latent_files.append((filename, video_source_name, variant))
+
+        # Keep ONE pooling variant. A project can hold both weighted-average
+        # (768-d) and multiscale/SPP (e.g. 16128-d) latents for the same model;
+        # aggregating both is the (N,768)-into-(N,16128) broadcast crash.
+        selected_files = _select_pooling_variant(
+            latent_files, self.pooling, self.model_name, self.select_roi_id, self.notify,
+        )
+
         total_frames_loaded = 0
         latents_buffer: List[np.ndarray] = []  # Buffer for pre-alloc / memmap fill
 
         # Load and aggregate latents
-        for filename, video_source_name in latent_files:
+        for filename, video_source_name in selected_files:
             self.notify(f'Loading latent: {video_source_name}')
             try:
                 latent_path = _resolve_latent_path(latent_dir_path, filename)

@@ -29,7 +29,9 @@ reproducibility tests stay bit-identical.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 from typing import Any, Optional
 
 import numpy as np
@@ -158,6 +160,49 @@ def resolve_dbscan_class(device: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _cuda_device_ctx(device: Optional[str]) -> Any:
+    """Pin a single-GPU cuML / cupy op to the idlest CUDA device.
+
+    cuML (and the in-repo :mod:`castle.utils.myumap`) choose the *physical* GPU
+    from the active **cupy** current-device — not from any torch device, and not
+    from the ``'cuda:N'`` string (that string only selects the backend *class*
+    via :func:`resolve_umap_class` / :func:`resolve_dbscan_class`). So to run on
+    the emptiest card instead of always ``cuda:0``, wrap the fit/fit_predict in
+    ``cupy.cuda.Device(idlest)``.
+
+    Returns a no-op context when *device* is not CUDA, when cupy is unavailable
+    (CPU-only box — the backends already fell back to umap-learn / sklearn), or
+    when no GPU is selectable. Honours ``CASTLE_GPU_DEVICE`` (``cuda:N`` forces an
+    index). Kept tight around the single call so the per-thread cupy current
+    device cannot leak.
+    """
+    if not (isinstance(device, str) and device.startswith("cuda")):
+        return contextlib.nullcontext()
+    # An explicit index in the device string or the env override wins.
+    idx: Optional[int] = None
+    for src in (device, os.environ.get("CASTLE_GPU_DEVICE", "").strip().lower()):
+        if src.startswith("cuda:"):
+            try:
+                idx = int(src.split(":", 1)[1])
+            except ValueError:
+                idx = None
+            else:
+                break
+    if idx is None:
+        try:
+            from castle.core import runtime_env
+            idx = runtime_env.idlest_gpu()
+        except Exception:  # noqa: BLE001
+            idx = None
+    if idx is None:
+        return contextlib.nullcontext()
+    try:
+        import cupy  # noqa: PLC0415
+        return cupy.cuda.Device(idx)
+    except Exception:  # noqa: BLE001 — cupy absent (CPU-only) → no-op
+        return contextlib.nullcontext()
+
+
 class UMAPReducer:
     """:class:`DimensionReducer` adapter wrapping the device-appropriate UMAP.
 
@@ -210,7 +255,9 @@ class UMAPReducer:
             ``cfg['n_components']`` (default 2).
         """
         full_cfg = {**self.cfg, 'random_state': int(random_state)}
-        return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))
+        # cuML/myumap run on the idlest GPU (cupy current-device); no-op on CPU.
+        with _cuda_device_ctx(self.device):
+            return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +302,10 @@ class DBSCANClusterer:
             ``(N,)`` integer labels with ``-1`` denoting noise.
         """
         del random_state  # DBSCAN is deterministic — accepted for protocol parity
-        cl = self._dbscan_cls(eps=self.eps, **self.kwargs)
-        return np.asarray(cl.fit_predict(X)).astype(int)
+        # cuML DBSCAN runs on the idlest GPU (cupy current-device); no-op on CPU.
+        with _cuda_device_ctx(self.device):
+            cl = self._dbscan_cls(eps=self.eps, **self.kwargs)
+            return np.asarray(cl.fit_predict(X)).astype(int)
 
 
 class HDBSCANClusterer:

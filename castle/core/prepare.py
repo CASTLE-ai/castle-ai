@@ -615,22 +615,25 @@ def _select_pca_device(n_features: int, notify: Callable[[str], None]) -> str:
         if forced == "cuda":
             notify("Prepare: CUDA requested but unavailable; using CPU.")
         return "cpu"
-    try:
-        from castle.core import runtime_env
-        # (free_bytes, index) per visible GPU; gpu_info values are typed `object`.
-        gpus = [(int(cast(int, d["free_bytes"])), int(cast(int, d["index"])))
-                for d in runtime_env.gpu_info()]
-    except Exception:  # noqa: BLE001
-        gpus = []
-    best = max(gpus, default=None) if gpus else None  # (free_bytes, index)
+    from castle.core import runtime_env
     need = 2 * n_features * n_features * 4 + (3 << 30)  # ~2·Gram(f32) + 3 GiB slack
     if forced == "cuda":
-        return f"cuda:{best[1]}" if best else "cuda"
-    if best and best[0] >= need:
-        return f"cuda:{best[1]}"
-    if best:
+        idx = runtime_env.idlest_gpu()
+        return f"cuda:{idx}" if idx is not None else "cuda"
+    idx = runtime_env.idlest_gpu(min_free_bytes=need)
+    if idx is not None:
+        return f"cuda:{idx}"
+    # No GPU has enough room — report the largest free amount, then fall to CPU.
+    try:
+        largest_free = max(
+            (int(cast(int, d["free_bytes"])) for d in runtime_env.gpu_info()),
+            default=0,
+        )
+    except Exception:  # noqa: BLE001
+        largest_free = 0
+    if largest_free:
         notify(
-            f"Prepare: largest GPU has {best[0] / 1e9:.1f} GB free "
+            f"Prepare: largest GPU has {largest_free / 1e9:.1f} GB free "
             f"(< ~{need / 1e9:.1f} GB needed for {n_features}-d PCA); using CPU. "
             f"Stop other GPU jobs (or set CASTLE_PREPARE_DEVICE=cuda) to force GPU."
         )

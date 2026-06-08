@@ -29,7 +29,7 @@ import logging
 import math
 import os
 import tempfile
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple, cast
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +281,35 @@ def gpu_info() -> List[Dict[str, object]]:
     except Exception:
         return out
     return out
+
+
+def idlest_gpu(min_free_bytes: int = 0) -> Optional[int]:
+    """Index of the CUDA device with the most free VRAM, or ``None``.
+
+    Returns the index whose ``free_bytes`` is largest **and** ``>= min_free_bytes``.
+    Returns ``None`` when no GPU qualifies, or when torch / CUDA is unavailable
+    (:func:`gpu_info` returns ``[]`` there). Ties resolve to the lowest index.
+
+    This is the single source of truth for "run this single-GPU op on the
+    emptiest card" across CASTLE (Prepare PCA, cuML UMAP/DBSCAN, extraction /
+    tracking single-GPU fallbacks). Free VRAM is sampled once at call time —
+    a benign race with other processes, the same one every caller already
+    accepts; callers should not lock around it.
+    """
+    best_idx: Optional[int] = None
+    best_free = -1
+    for d in gpu_info():
+        free = int(cast(int, d["free_bytes"]))
+        idx = int(cast(int, d["index"]))
+        if free >= min_free_bytes and free > best_free:
+            best_free, best_idx = free, idx
+    return best_idx
+
+
+def idlest_cuda_device_str(min_free_bytes: int = 0, fallback: str = "cpu") -> str:
+    """``'cuda:N'`` for the idlest GPU meeting ``min_free_bytes``, else ``fallback``."""
+    idx = idlest_gpu(min_free_bytes)
+    return f"cuda:{idx}" if idx is not None else fallback
 
 
 # ---------------------------------------------------------------------------

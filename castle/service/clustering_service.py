@@ -1611,7 +1611,7 @@ def init_clustering_aggregator(
     select_model: str,
     notify: Optional[Callable[[str, str], None]] = None,
     prepare_id: Optional[str] = None,
-    k_prime: Optional[int] = None,
+    variance_pct: Optional[float] = None,
     pooling: str = 'auto',
 ) -> InitAggregatorArtifacts:
     """Build a :class:`LatentAggregator` + record a new session row.
@@ -1626,12 +1626,43 @@ def init_clustering_aggregator(
         select_model: Model name (e.g. ``'dinov3_vitb16'``).
         notify: ``(msg, level)`` callback for LatentAggregator progress
             messages.
+        prepare_id: Prepared-cache id, or None for the legacy raw path.
+        variance_pct: Explained-variance target (percent) the user entered for
+            the prepared path; resolved here against the cache's evr to the
+            concrete PCA-dim count ``k_prime`` that is fed to UMAP. ``None`` →
+            the 95% default. Ignored on the legacy path.
 
     Returns:
         :class:`InitAggregatorArtifacts` carrying the freshly built
         aggregator and its associated ``Latent`` object.
     """
     from castle.core.cluster import LatentAggregator
+
+    # Resolve the explained-variance % the user typed into the concrete PCA-dim
+    # count k' (the unit UMAP / windowing actually slice). Done here, where the
+    # cache meta is loadable, so _init_prepared keeps taking a plain dim count.
+    # Persist BOTH: variance_pct = intent, k_prime = frozen width for restore.
+    k_prime: Optional[int] = None
+    persisted_variance_pct: Optional[float] = None
+    if prepare_id:
+        from castle.core.prepare import (
+            k_prime_for_variance,
+            load_prepare,
+            variance_pct_to_fraction,
+        )
+        frac = variance_pct_to_fraction(variance_pct)
+        persisted_variance_pct = frac * 100.0
+        prep_dir = os.path.join(
+            storage_path, project_name, 'cluster', 'prepared', prepare_id
+        )
+        try:
+            k_prime = k_prime_for_variance(load_prepare(prep_dir).meta, frac)
+        except Exception as exc:  # noqa: BLE001 — fall back to the cache default
+            logger.warning(
+                "Could not resolve variance %%->k' for %s (%s); using cache default.",
+                prepare_id, exc,
+            )
+            k_prime = None
 
     # Clear cluster/ root before starting a new session so no files from a
     # previous session can pollute this one.  Do this before creating the
@@ -1659,6 +1690,7 @@ def init_clustering_aggregator(
         ),
         prepare_id=prepare_id,
         k_prime=k_prime,
+        variance_pct=persisted_variance_pct,
     )
 
     return InitAggregatorArtifacts(aggregator=aggregator, latents=latents)

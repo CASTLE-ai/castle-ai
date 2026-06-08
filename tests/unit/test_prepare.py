@@ -269,6 +269,21 @@ def test_k_prime_for_variance(tmp_path, two_videos):
     assert k_prime_for_variance({"pca": {}, "width": 32}, 0.95) == 32  # PCA off -> full width
 
 
+def test_variance_pct_to_fraction():
+    """The Explore UI now takes an explained-variance % (not a dim count); this
+    normaliser maps the box value to a (0, 1] fraction with a 95% default."""
+    from castle.core.prepare import variance_pct_to_fraction as f
+    assert f(95) == 0.95
+    assert f(50) == 0.5
+    assert f(100) == 1.0
+    assert f(150) == 1.0          # clamp over 100% to full width
+    assert f(0) == 0.95           # 0 / blank -> default
+    assert f(None) == 0.95
+    assert f("") == 0.95          # unparseable -> default
+    assert f(-5) == 0.95          # non-positive -> default
+    assert f(20, default=0.8) == 0.2
+
+
 # --------------------------------------------------------------------------- #
 # prepare_id determinism + staleness                                          #
 # --------------------------------------------------------------------------- #

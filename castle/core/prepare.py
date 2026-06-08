@@ -1089,6 +1089,24 @@ def is_stale(prepare_dir: str, resolve_path: Callable[[str], Optional[str]]) -> 
     return False
 
 
+def variance_pct_to_fraction(pct: Optional[float], default: float = 0.95) -> float:
+    """Map a user-entered explained-variance **percent** to a ``(0, 1]`` fraction.
+
+    The Explore UI lets the user request a target explained variance (e.g. ``95``)
+    instead of a raw PCA-dim count; this normalises that box value before it is
+    fed to :func:`k_prime_for_variance`. Blank / non-positive / unparseable →
+    *default* (95%). Clamped to ``(0, 1]`` (so ``100`` and over → ``1.0`` = full
+    width). Accepts the int the Number box yields or a float.
+    """
+    try:
+        p = float(pct)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if not (p > 0.0):
+        return default
+    return min(p / 100.0, 1.0)
+
+
 def k_prime_for_variance(meta: Dict[str, Any], frac: float = 0.95) -> int:
     """Smallest k whose cumulative explained variance reaches ``frac``.
 

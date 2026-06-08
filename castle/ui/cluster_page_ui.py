@@ -320,11 +320,14 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                     interactive=True,
                     info="Pick a prepared cache (built in the Prepare tab), or legacy raw (no cache).",
                 )
-                ui['k_prime'] = gr.Number(
-                    label="k' (PCA dims into UMAP)",
-                    value=0,
+                ui['variance_pct'] = gr.Number(
+                    label="Explained variance % (PCA → UMAP)",
+                    value=95,
+                    precision=0,
                     interactive=True,
-                    info="Prepared cache only. 0 = auto (95% explained variance). Ignored for legacy.",
+                    info=("Prepared cache only. % of variance to keep → sets k' "
+                          "(PCA dims fed to UMAP). Blank/0 = 95%. Lower % = fewer "
+                          "dims = less memory. Ignored for legacy."),
                 )
                 ui['reset'] = gr.Button("Initialize", interactive=True, visible=True)
 
@@ -508,7 +511,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'],
-                ui['data_source'], ui['k_prime'], ui['pooling']],
+                ui['data_source'], ui['variance_pct'], ui['pooling']],
         outputs=[mulvideo, latents, session_info]
     ).then(
         fn=_format_session_status,

@@ -707,13 +707,15 @@ def import_info_from_local_latent(
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model,
-                  data_source=None, k_prime=0, pooling='auto', progress=gr.Progress()):
+                  data_source=None, variance_pct=95, pooling='auto', progress=gr.Progress()):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.init_clustering_aggregator`.
 
     ``data_source`` is the Data-source dropdown value: a label starting with
     ``"(legacy"`` selects the raw-latent path; any other value is a prepared-cache
-    ``prepare_id``. ``k_prime`` (0 = auto 95% variance) applies only to the
+    ``prepare_id``. ``variance_pct`` is the explained-variance target (percent)
+    the user entered; the service resolves it against the cache to the PCA-dim
+    count k'. Blank / non-positive → the 95% default. Applies only to the
     prepared path.
 
     Returns ``(aggregator, latents, session_info)`` — the cluster_tree_select
@@ -729,10 +731,6 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
     prepare_id = None
     if data_source and not str(data_source).startswith("(legacy"):
         prepare_id = str(data_source)
-    try:
-        kp = int(k_prime) if k_prime and int(k_prime) > 0 else None
-    except (TypeError, ValueError):
-        kp = None
 
     # Visible feedback: the click outputs are all gr.State (no spinner), so drive
     # a gr.Progress bar. Routine load messages update its description (one bar,
@@ -751,7 +749,7 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             storage_path, project_name,
             select_roi_id=select_roi_id, bin_size=bin_size,
             select_model=select_model, notify=notify_callback,
-            prepare_id=prepare_id, k_prime=kp, pooling=pooling,
+            prepare_id=prepare_id, variance_pct=variance_pct, pooling=pooling,
         )
         session_info = check_session_exists(storage_path, project_name)
         n_dp = (

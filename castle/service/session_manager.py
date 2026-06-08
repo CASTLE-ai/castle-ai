@@ -29,7 +29,13 @@ class SessionInfo:
     # Prepared-cache provenance (None for the legacy raw-latent path). roi_id is
     # not meaningful when a prepared cache pools across ROIs/fields.
     prepare_id: Optional[str] = None
+    # k_prime is the RESOLVED PCA-dimension count fed into UMAP; variance_pct is
+    # the explained-variance target the user actually entered (k_prime is derived
+    # from it against the cache's evr at init). Both are persisted: variance_pct
+    # records intent, k_prime freezes the exact width so restore/transfer-export
+    # reproduce the identical slice regardless of any future rounding change.
     k_prime: Optional[int] = None
+    variance_pct: Optional[float] = None
 
 
 class SessionManager:
@@ -96,7 +102,8 @@ class SessionManager:
     def create_session(self, model: str, roi_id: int, bin_size: int,
                        total_frames: int, name: str = "",
                        prepare_id: Optional[str] = None,
-                       k_prime: Optional[int] = None) -> SessionInfo:
+                       k_prime: Optional[int] = None,
+                       variance_pct: Optional[float] = None) -> SessionInfo:
         """Create a new session."""
         # Generate ID — use max existing numeric ID + 1 to avoid collisions
         # after deletions.  Skip non-numeric / malformed session_ids (e.g. a
@@ -132,6 +139,7 @@ class SessionManager:
             status="in_progress",
             prepare_id=prepare_id,
             k_prime=k_prime,
+            variance_pct=variance_pct,
         )
         
         session_dir = os.path.join(self.sessions_path, session_id)

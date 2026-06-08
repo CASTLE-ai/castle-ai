@@ -43,47 +43,53 @@ class EmbeddingScatterPlot:
     
     def pixel_2_embedding(self, px, py):
         px, py = float(px), float(py)
-        # width/height are set by plot() — must be called first
+        # width/height are set by plot()/_render() — must be called first
         if not hasattr(self, 'width') or not hasattr(self, 'height'):
              raise RuntimeError('Plot not yet rendered. Call plot() first.')
-             
+
+        # _render() makes the axes fill the whole image (no margins, no tight
+        # crop) with the y-axis inverted via set_ylim(ylim[1], ylim[0]) — so the
+        # image TOP (py=0) is ylim[0] and the BOTTOM (py=height) is ylim[1].
+        # Both axes therefore map linearly across the full image.
         ex = (px / self.width) * (self.xlim[1] - self.xlim[0]) + self.xlim[0]
-        ey = self.ylim[0] + (1 - py / self.height) * (self.ylim[1] - self.ylim[0])
+        ey = self.ylim[0] + (py / self.height) * (self.ylim[1] - self.ylim[0])
         return ex, ey
 
+    def _render(self, draw_embedding):
+        """Render the scatter so image pixels map 1:1 to data coords.
+
+        The axes are placed to fill the entire figure ([0,0,1,1]) and the
+        figure is saved WITHOUT ``bbox_inches='tight'``, so the saved image
+        spans exactly [xlim] x [ylim] — which is what :meth:`pixel_2_embedding`
+        (and therefore click-to-select) relies on. The figure aspect matches the
+        data range so on-screen distances stay proportional to data distances
+        (nearest-point picking is isotropic). The previous tight-bbox render
+        cropped to the artists, so clicks mapped to the wrong points.
+        """
+        xr = self.xlim[1] - self.xlim[0]
+        yr = self.ylim[1] - self.ylim[0]
+        aspect = min(max((yr / xr) if xr else 1.0, 0.5), 2.0)
+        fig = plt.figure(figsize=(6.0, 6.0 * aspect), dpi=100)
+        ax = fig.add_axes((0.0, 0.0, 1.0, 1.0))
+        draw_embedding()  # plot_embedding / plot_name_embedding draw on this axes
+        ax.scatter(self.selected_point[0], self.selected_point[1], color='red')
+        ax.set_xlim(self.xlim)
+        ax.set_ylim(self.ylim[1], self.ylim[0])
+        ax.axis('off')
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='jpeg')  # no tight bbox: image == axes == data range
+        plt.close(fig)
+        buf.seek(0)
+        img = Image.open(buf)
+        self.width, self.height = img.size
+        return img
+
     def plot(self):
-        fig = plt.figure()
-        self.local_latents.plot_embedding()
-        plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
-        plt.axis('off')
-        plt.xlim(self.xlim)
-        plt.ylim(self.ylim[1], self.ylim[0])
+        return self._render(self.local_latents.plot_embedding)
 
-        buf = io.BytesIO()
-        plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
-        plt.close(fig)
-        buf.seek(0)
-        img = Image.open(buf)
-
-        self.width, self.height = img.size
-        return img
-    
     def plot_named_embedding(self):
-        fig = plt.figure()
-        self.local_latents.plot_name_embedding()
-        plt.scatter(self.selected_point[0], self.selected_point[1], color='red')
-        plt.axis('off')
-        plt.xlim(self.xlim)
-        plt.ylim(self.ylim[1], self.ylim[0])
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format='jpeg', bbox_inches='tight', pad_inches=0)
-        plt.close(fig)
-        buf.seek(0)
-        img = Image.open(buf)
-
-        self.width, self.height = img.size
-        return img
+        return self._render(self.local_latents.plot_name_embedding)
 
     def save_named_embedding(self, save_path):
         index_mask = self.local_latents.index_mask

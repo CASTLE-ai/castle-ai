@@ -1583,6 +1583,7 @@ def init_clustering_aggregator(
     notify: Optional[Callable[[str, str], None]] = None,
     prepare_id: Optional[str] = None,
     k_prime: Optional[int] = None,
+    pooling: str = 'auto',
 ) -> InitAggregatorArtifacts:
     """Build a :class:`LatentAggregator` + record a new session row.
 
@@ -1615,6 +1616,7 @@ def init_clustering_aggregator(
         notify=notify,
         prepare_id=prepare_id,
         k_prime=k_prime,
+        pooling=pooling,
     )
     latents = aggregator.get_latent_object()
 

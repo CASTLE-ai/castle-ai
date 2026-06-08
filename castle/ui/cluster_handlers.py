@@ -665,7 +665,7 @@ def import_info_from_local_latent(
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model,
-                  data_source=None, k_prime=0):
+                  data_source=None, k_prime=0, pooling='auto'):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.init_clustering_aggregator`.
 
@@ -679,6 +679,7 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
     cluster_page_ui.py) after update_select_cluster_list runs.
     """
     from castle.service.clustering_service import init_clustering_aggregator
+    from castle.core.types import CastleDataError
 
     if not project_name:
         return None, None, None
@@ -702,10 +703,16 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             storage_path, project_name,
             select_roi_id=select_roi_id, bin_size=bin_size,
             select_model=select_model, notify=notify_callback,
-            prepare_id=prepare_id, k_prime=kp,
+            prepare_id=prepare_id, k_prime=kp, pooling=pooling,
         )
         session_info = check_session_exists(storage_path, project_name)
         return artifacts.aggregator, artifacts.latents, session_info
+    except CastleDataError as e:
+        # Already a clear, user-facing data problem (e.g. mixed pooling
+        # widths / no latents for the chosen pooling) — surface it verbatim
+        # rather than the generic "extract + ROI" hint, which would mislead.
+        gr.Warning(str(e))
+        return None, None, None
     except Exception as e:
         gr.Warning(
             f"Session initialization failed. Please ensure latent features have been "

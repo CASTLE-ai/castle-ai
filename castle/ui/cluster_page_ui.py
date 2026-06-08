@@ -262,6 +262,19 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                     interactive=True,
                     visible=True
                 )
+                ui['pooling'] = gr.Dropdown(
+                    label="Latent pooling",
+                    choices=["auto", "weighted_average", "multiscale"],
+                    value="auto",
+                    interactive=True,
+                    info=(
+                        "Which extracted-latent variant to cluster when a project has "
+                        "more than one for the same model. auto = use the majority and "
+                        "warn if mixed. weighted_average ≈ 768-d; multiscale/SPP is wider "
+                        "(e.g. 16128-d). Legacy raw only (a prepared cache is already one "
+                        "variant)."
+                    ),
+                )
                 ui['select_roi_id'] = gr.Textbox(
                     label="Enter ROI ID",
                     value="1",
@@ -464,7 +477,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['reset'].click(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'],
-                ui['data_source'], ui['k_prime']],
+                ui['data_source'], ui['k_prime'], ui['pooling']],
         outputs=[mulvideo, latents, session_info]
     ).then(
         fn=_format_session_status,

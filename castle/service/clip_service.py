@@ -110,7 +110,7 @@ def get_bin_video_info(aggregator: Any, bin_index: int) -> Tuple[Optional[str], 
     return None, None
 
 
-def apply_roi_overlay(frame: np.ndarray, mask_h5_path: str, frame_idx: int) -> np.ndarray:
+def apply_roi_overlay(frame: np.ndarray, mask_h5_path: str, frame_idx: int, thickness: int = 1) -> np.ndarray:
     """Draw an ROI contour outline on *frame* if a mask is available.
 
     Loads the binary mask for ``frame_idx`` from the HDF5 file at
@@ -122,6 +122,9 @@ def apply_roi_overlay(frame: np.ndarray, mask_h5_path: str, frame_idx: int) -> n
         frame: RGB numpy array of shape ``(H, W, 3)``.
         mask_h5_path: Path to the project's ``mask_list.h5``.
         frame_idx: Integer frame index used as the key inside the HDF5.
+        thickness: Contour line thickness in pixels (default 1 — a thin
+            outline; the clip is downscaled afterwards so 1px reads as a
+            crisp hairline).
 
     Returns:
         A new RGB frame with the ROI overlay, or the input frame
@@ -150,7 +153,7 @@ def apply_roi_overlay(frame: np.ndarray, mask_h5_path: str, frame_idx: int) -> n
             scaled[:, :, 0] *= fw / mask_w
             scaled[:, :, 1] *= fh / mask_h
             scaled = scaled.astype(np.int32)
-            cv2.drawContours(frame_out, [scaled], -1, (0, 255, 0), 2)
+            cv2.drawContours(frame_out, [scaled], -1, (0, 255, 0), thickness)
         return frame_out
     except Exception:
         logger.debug("ROI overlay failed for %s[%d]", mask_h5_path, frame_idx, exc_info=True)
@@ -164,22 +167,29 @@ def generate_clip_with_roi_overlay(
     clip_seconds: float = 2.0,
     fps: Optional[float] = None,
     max_frames: int = 300,
+    max_size: int = 480,
 ) -> Optional[str]:
-    """Render a smooth MP4 clip of CONTIGUOUS original frames around a datapoint.
+    """Render a smooth MP4 preview clip around the clicked datapoint.
 
-    The clicked datapoint maps to one ``(video, centre-frame)``; we then read
-    the *consecutive* original frames spanning ``clip_seconds`` of real time
-    around it (from that one video) and overlay the ROI contour. This replaces
-    the old "one representative frame per datapoint" assembly, which on the
-    decimated/prepared path skipped frames and produced a jumpy clip.
+    The datapoint maps to a ``(video, original-frame INTERVAL)``. We read the
+    consecutive original frames spanning ~``clip_seconds`` of real time around
+    that interval (always covering the whole interval) from that one video, and
+    overlay the ROI contour ONLY on the frames inside the datapoint's interval —
+    so the green outline marks the datapoint's actual extent while the
+    surrounding buffer frames play un-marked. Frames are downscaled so the
+    longest side is ``max_size`` for comfortable in-browser viewing.
 
     Args:
         aggregator: :class:`LatentAggregator` (frame reader + ``frame_index_map``).
         center_bin: Global datapoint index the user clicked.
-        clip_seconds: Total real-time span of the clip, centred on the frame.
+        clip_seconds: Real-time span of the buffer window (centred on the
+            datapoint). The window is always widened to cover the datapoint's
+            full interval if that interval is longer.
         fps: Playback frame rate. ``None`` → the source video's own fps
-            (so the behaviour plays back at natural speed).
+            (natural-speed playback).
         max_frames: Hard cap on frames read, to keep preview generation snappy.
+        max_size: Longest-side pixel cap for the output (downscaled after the
+            overlay so the contour stays aligned). 0 disables downscaling.
 
     Returns:
         Absolute path to a temporary ``.mp4`` (re-encoded to H.264 when
@@ -189,20 +199,26 @@ def generate_clip_with_roi_overlay(
     if fim is None:
         return None
     try:
-        video_idx, center_frame = fim.dp_to_orig_frame(int(center_bin))
+        video_idx, dp_first, dp_last = fim.dp_to_orig_span(int(center_bin))
         video_name = fim.base.video_names[video_idx]
     except (IndexError, ValueError, AttributeError):
         return None
+    dp_first, dp_last = int(dp_first), int(dp_last)
 
     video_fps = aggregator.fps_per_video.get(video_name, aggregator.fps) or 30.0
-    half = max(1, int(round(clip_seconds * video_fps / 2.0)))
-    start_f = max(0, int(center_frame) - half)
-    end_f = int(center_frame) + half + 1
-    # Clamp to the source video's own length so we never read past its end.
     try:
-        end_f = min(end_f, int(fim.base.n_orig_frames[video_idx]))
+        n_orig = int(fim.base.n_orig_frames[video_idx])
     except Exception:  # noqa: BLE001 — n_orig_frames may be absent on legacy maps
-        pass
+        n_orig = None
+
+    # Buffer ~clip_seconds around the datapoint, but ALWAYS cover its full
+    # interval [dp_first, dp_last) so the marked extent is never cut off.
+    dp_center = (dp_first + dp_last) // 2
+    half = max(1, int(round(clip_seconds * video_fps / 2.0)))
+    start_f = max(0, min(dp_first, dp_center - half))
+    end_f = max(dp_last, dp_center + half + 1)
+    if n_orig is not None:
+        end_f = min(end_f, n_orig)
     end_f = min(end_f, start_f + max_frames)
 
     # track/ subdirs are named with the full video filename (incl. extension),
@@ -211,12 +227,25 @@ def generate_clip_with_roi_overlay(
         aggregator.project_path, "track", os.path.basename(video_name), "mask_list.h5",
     )
 
+    def _shrink(fr: Any) -> Any:
+        h0, w0 = fr.shape[:2]
+        if not max_size or max(h0, w0) <= max_size:
+            return fr
+        s = max_size / float(max(h0, w0))
+        # even dims for H.264; INTER_AREA is the right filter for shrinking
+        nw = max(2, (int(round(w0 * s)) // 2) * 2)
+        nh = max(2, (int(round(h0 * s)) // 2) * 2)
+        return cv2.resize(fr, (nw, nh), interpolation=cv2.INTER_AREA)
+
     frames = []
     for f in range(start_f, end_f):
         frame = aggregator.get_raw_frame(video_name, f)
         if frame is None:
             continue
-        frames.append(apply_roi_overlay(frame, mask_path, f))
+        # Overlay ONLY on the datapoint's own interval; buffer frames stay clean.
+        if dp_first <= f < dp_last:
+            frame = apply_roi_overlay(frame, mask_path, f)
+        frames.append(_shrink(frame))  # resize AFTER overlay so the contour aligns
 
     if not frames:
         return None

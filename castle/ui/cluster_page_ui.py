@@ -403,7 +403,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                     ui['submit_status'] = gr.Markdown("", visible=True)
                 with gr.Column(scale=8):
                     ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
-                    ui['display'] = gr.Video(label='Display', interactive=False, visible=True, autoplay=True, loop=True)  
+                    ui['display'] = gr.Video(label='Display', height=420, interactive=False, visible=True, autoplay=True, loop=True)
                     ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
             
             ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)

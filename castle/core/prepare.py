@@ -229,6 +229,21 @@ class WindowedFrameIndexMap:
         start, stop = self._window_orig_span(v, local_w)
         return v, min((start + stop) // 2, stop - 1)
 
+    def dp_to_orig_span(self, global_w: int) -> Tuple[int, int, int]:
+        """Windowed datapoint -> ``(video_idx, first_orig, last_orig_exclusive)``.
+
+        The original-frame interval the datapoint actually *covers* (its window's
+        decimated span expanded to original frames), as opposed to
+        :meth:`dp_to_orig_frame`'s single representative midpoint. Used to draw a
+        preview clip's ROI overlay only on the datapoint's true extent (leaving
+        the surrounding buffer frames un-marked). Legacy (window=1) returns the
+        bin's frame span.
+        """
+        v = self._video_of_window(global_w)
+        local_w = global_w - int(self.win_offsets[v])
+        start, stop = self._window_orig_span(v, local_w)
+        return v, start, stop
+
     def windowed_row_range(self, video_idx: int) -> Tuple[int, int]:
         """Global windowed-datapoint row range ``[start, stop)`` for a video."""
         return int(self.win_offsets[video_idx]), int(self.win_offsets[video_idx + 1])

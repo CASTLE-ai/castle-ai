@@ -36,14 +36,6 @@ def plot_embedding(embedding: np.ndarray,
         dims = [0, 1]
     assert len(dims) == 2, 'dims must have exactly 2 elements'
 
-    # Density-aware markers. With min_dist=0 UMAP stacks similar points onto the
-    # same spot, so at ~10^5-10^6 points the default large opaque dots hide the
-    # data — it looks like a few hundred blobs instead of a dense cloud. Shrink
-    # the markers and add transparency so overlapping points read as density.
-    n = len(embedding)
-    _s = 36 if n < 2_000 else 8 if n < 50_000 else 2
-    _alpha = 1.0 if n < 2_000 else 0.4 if n < 50_000 else 0.15
-
     if cluster is not None and palette_fn is not None:
         for cid in range(0, cluster.max() + 1):
             mask = cluster == cid
@@ -52,8 +44,7 @@ def plot_embedding(embedding: np.ndarray,
                     x=embedding[mask, dims[0]],
                     y=embedding[mask, dims[1]],
                     c=palette_fn(cid),
-                    label=f'{cid}',
-                    s=_s, alpha=_alpha, linewidths=0,
+                    label=f'{cid}'
                 )
         if -1 in cluster:
             mask = cluster == -1
@@ -61,8 +52,7 @@ def plot_embedding(embedding: np.ndarray,
                 x=embedding[mask, dims[0]],
                 y=embedding[mask, dims[1]],
                 c='grey',
-                label='-1',
-                s=_s, alpha=_alpha, linewidths=0,
+                label='-1'
             )
         if legend:
             plt.legend()
@@ -70,8 +60,7 @@ def plot_embedding(embedding: np.ndarray,
         plt.scatter(
             x=embedding[:, dims[0]],
             y=embedding[:, dims[1]],
-            c='grey',
-            s=_s, alpha=_alpha, linewidths=0,
+            c='grey'
         )
 
 

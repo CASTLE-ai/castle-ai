@@ -5,7 +5,27 @@ import numpy as np
 from .download import download_file
 from castle.sam.segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from castle.core.environment import get_device
-DEFAULT_DEVICE = get_device()
+
+
+def _default_sam_device() -> str:
+    """Idlest CUDA device (``'cuda:N'``, most free VRAM) for SAM segmentation.
+
+    Resolved lazily (not frozen at import) so it reflects live GPU load instead
+    of always landing on cuda:0. Honours ``CASTLE_GPU_DEVICE=cuda:N``; falls back
+    to :func:`get_device` (``'cuda'`` / ``'cpu'``) when no GPU is selectable.
+    """
+    import os
+    forced = os.environ.get("CASTLE_GPU_DEVICE", "").strip().lower()
+    if forced.startswith("cuda:"):
+        return forced
+    try:
+        from castle.core import runtime_env
+        idx = runtime_env.idlest_gpu()
+        if idx is not None:
+            return f"cuda:{idx}"
+    except Exception:  # noqa: BLE001
+        pass
+    return get_device()
 
 
 class Segmentor:
@@ -173,7 +193,7 @@ def load_sam_model(ckpt_path='', model_type='vit_b', device=''):
     if not ckpt_path:
         ckpt_path = download_sa_ckpt(model_type)
     if not device:
-        device = DEFAULT_DEVICE
+        device = _default_sam_device()
     model = sam_model_registry[model_type](checkpoint=ckpt_path)
     model.to(device=device)
     return model
@@ -189,7 +209,7 @@ def generate_sa(ckpt_path='', model_type='vit_b', device='', sam_model=None):
     if not ckpt_path:
         ckpt_path = download_sa_ckpt(model_type)
     if not device:
-        device = DEFAULT_DEVICE
+        device = _default_sam_device()
 
     sam_args = {
         'sam_checkpoint': ckpt_path,

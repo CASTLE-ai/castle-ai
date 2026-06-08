@@ -13,6 +13,7 @@ function transparently calls scipy.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Literal
 
 import numpy as np
@@ -22,21 +23,39 @@ logger = logging.getLogger(__name__)
 DeviceChoice = Literal["auto", "cuda", "cpu"]
 
 
+def _idlest_cuda_str() -> str:
+    """``'cuda:N'`` for the idlest GPU, honouring ``CASTLE_GPU_DEVICE``; else ``'cuda'``."""
+    forced = os.environ.get("CASTLE_GPU_DEVICE", "").strip().lower()
+    if forced.startswith("cuda:"):
+        return forced
+    try:
+        from castle.core import runtime_env
+        idx = runtime_env.idlest_gpu()
+        if idx is not None:
+            return f"cuda:{idx}"
+    except Exception:  # noqa: BLE001
+        pass
+    return "cuda"
+
+
 def _resolve_device(device: DeviceChoice) -> str:
-    """Pick the actual backend given the user's preference + hardware."""
+    """Pick the actual backend given the user's preference + hardware.
+
+    On CUDA this returns a concrete ``'cuda:N'`` for the idlest GPU (most free
+    VRAM) so this single-GPU op runs on the emptiest card instead of always
+    cuda:0. Honours ``CASTLE_GPU_DEVICE=cuda:N``.
+    """
     if device == "cpu":
         return "cpu"
     try:
         import torch
 
-        if device == "cuda":
-            if not torch.cuda.is_available():
-                raise RuntimeError(
-                    "device='cuda' was requested but torch.cuda.is_available() is False."
-                )
-            return "cuda"
-        if torch.cuda.is_available():
-            return "cuda"
+        if device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "device='cuda' was requested but torch.cuda.is_available() is False."
+            )
+        if device == "cuda" or torch.cuda.is_available():
+            return _idlest_cuda_str()
     except ImportError:
         pass
     return "cpu"
@@ -88,8 +107,8 @@ def pairwise_distance(
         import torch
 
         torch_dtype = torch.float64 if out_dtype == np.float64 else torch.float32
-        a_t = torch.as_tensor(A, dtype=torch_dtype, device="cuda")
-        b_t = torch.as_tensor(B, dtype=torch_dtype, device="cuda")
+        a_t = torch.as_tensor(A, dtype=torch_dtype, device=backend)
+        b_t = torch.as_tensor(B, dtype=torch_dtype, device=backend)
         with torch.inference_mode():
             d = torch.cdist(a_t, b_t)
         return d.cpu().numpy()

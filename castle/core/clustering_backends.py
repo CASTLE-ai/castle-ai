@@ -283,13 +283,21 @@ class UMAPReducer:
                 and X.shape[0] > _NN_DESCENT_MIN_ROWS):
             full_cfg['build_algo'] = 'nn_descent'
             # nn_descent builds its own intermediate kNN graph of degree
-            # nnd_graph_degree, which MUST be >= n_neighbors. If left unset cuML
-            # clamps it to exactly n_neighbors — the minimum — giving low-recall
-            # (inaccurate) neighbors and a fragmented/stringy embedding. Give it
-            # ~2x headroom for good recall. User-supplied build_kwds wins.
+            # nnd_graph_degree, which MUST be >= n_neighbors. Left unset cuML
+            # clamps it to exactly n_neighbors (low recall -> fragmented layout),
+            # so add recall headroom — but BOUNDED: the graph costs ~N*degree*8
+            # bytes of VRAM, so a flat 2x explodes for large n_neighbors (e.g.
+            # n_neighbors=1000 -> degree 2000 -> multi-GB CUDA OOM). Cap the
+            # headroom at +128. nnd_intermediate_graph_degree must be >= graph
+            # degree; set it equal (the minimum) to save VRAM and silence cuML's
+            # auto-bump warning. User-supplied build_kwds wins.
             if 'build_kwds' not in full_cfg:
                 nn = int(full_cfg.get('n_neighbors', 15))
-                full_cfg['build_kwds'] = {'nnd_graph_degree': max(2 * nn, 64)}
+                deg = min(2 * nn, nn + 128)
+                full_cfg['build_kwds'] = {
+                    'nnd_graph_degree': deg,
+                    'nnd_intermediate_graph_degree': deg,
+                }
         # cuML/myumap run on the idlest GPU (cupy current-device); no-op on CPU.
         with _cuda_device_ctx(self.device):
             return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))

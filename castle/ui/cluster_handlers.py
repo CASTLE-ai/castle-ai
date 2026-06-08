@@ -241,7 +241,14 @@ def generate_embedding(
             if isinstance(first_cfg, dict) else '?'
         )
         err_str = str(e).lower()
-        if 'n_neighbors' in err_str or ('larger' in err_str and 'sample' in err_str) or not err_str:
+        if any(s in err_str for s in ('out_of_memory', 'out of memory', 'bad_alloc', 'cudaerrormemoryallocation')):
+            gr.Warning(
+                f"UMAP failed: the GPU ran out of memory (n_neighbors={n_neighbors}). "
+                f"n_neighbors is the biggest VRAM driver — lower it (e.g. the "
+                f"'objective 100' preset is n_neighbors=100), and/or raise the time "
+                f"window (fewer points) or lower k'. Details: {str(e)[:100]}"
+            )
+        elif 'n_neighbors' in err_str or ('larger' in err_str and 'sample' in err_str) or not err_str:
             gr.Warning(
                 f"UMAP failed: n_neighbors ({n_neighbors}) may be too large. "
                 f"Try reducing it. Details: {e or type(e).__name__}"

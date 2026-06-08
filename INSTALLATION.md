@@ -162,24 +162,47 @@ zict                     3.0.0
 
 ---
 
-## Troubleshooting: GPU UMAP / clustering silently runs on CPU (cuML can't load)
+## Troubleshooting: clustering / UMAP is slow on a large prepared cache
 
-The Behavior Microscope uses GPU UMAP/DBSCAN via **cuML (RAPIDS)** when you pick
-the GPU backend. If cuML fails to import, CASTLE **falls back to CPU `umap-learn`**
-and now logs a warning (terminal + a UI banner). On small data you won't notice;
-on a large prepared cache (~1M datapoints) a CPU UMAP can take **hours**, which
-looks like the app hung.
+On a large prepared cache (~1M datapoints) the first UMAP can take many minutes.
+This is almost always **scale, not a CPU fallback** — GPU UMAP is running, it just
+has a lot of work to do.
 
-**Symptom.** UMAP runs for many minutes/hours; `nvidia-smi` shows the GPU idle;
-the log says `GPU UMAP (cuML) unavailable (...); falling back to CPU umap-learn`.
-A common error is `libcublas.so.12: cannot open shared object file`.
+**The common case works on GPU with no setup.** The Behavior Microscope uses GPU
+UMAP/DBSCAN via **cuML (RAPIDS)** when you pick the GPU backend. CASTLE imports
+PyTorch early, and PyTorch preloads its bundled CUDA 12 libraries (e.g.
+`libcublas.so.12`) globally — which also satisfies cuML's dependency on the same
+libraries. So on a typical `*-cu12` pip install that has both torch and cuML,
+**GPU UMAP loads and runs without any `LD_LIBRARY_PATH` change.** Confirm with
+`nvidia-smi`: during a UMAP run a python process will be pinning one GPU.
 
-**Cause (pip installs).** The CUDA libraries the `*-cu12` wheels need (e.g.
-`libcublas.so.12`) live inside the venv at
-`site-packages/nvidia/<lib>/lib/`, which is **not** on the dynamic-linker path.
-PyTorch self-loads its bundled copies, but cuML does not — so if `LD_LIBRARY_PATH`
-points at a *different* / older system CUDA (e.g. `/usr/local/cuda` → CUDA 11),
-cuML finds the wrong `libcublas` (or none) and fails to load.
+**If it's slow, lower the UMAP work — this is the real lever:**
+- `n_epochs`: the presets hardcode **5000**; umap-learn's own large-data default is
+  **200**. Dropping to 200–500 is the single biggest speedup (~10×) and barely
+  changes the embedding on big data.
+- `n_neighbors`: 100 → 30–50.
+- Explore `k'`: use fewer PCA dimensions.
+
+---
+
+### Rare case: cuML genuinely can't import → CPU fallback
+
+This is **not** expected on a standard torch + cuML cu12 install (see above). But if
+cuML truly fails to import — torch absent so nothing preloads the CUDA libs,
+mismatched versions, or an older system CUDA shadowing the wheels — CASTLE **falls
+back to CPU `umap-learn`** and logs a warning (terminal + a UI banner). On a
+~1M-point cache a CPU UMAP can take **hours**, which looks like the app hung.
+
+**Symptom.** The log says `GPU UMAP (cuML) unavailable (...); falling back to CPU
+umap-learn`; `nvidia-smi` shows the GPU idle during the run; a common underlying
+error is `libcublas.so.12: cannot open shared object file`.
+
+**Cause.** The CUDA libraries the `*-cu12` wheels need (e.g. `libcublas.so.12`) live
+inside the venv at `site-packages/nvidia/<lib>/lib/`, which is **not** on the
+dynamic-linker path. Normally PyTorch's global preload covers cuML too; this only
+bites when that preload is absent, or `LD_LIBRARY_PATH` points at a *different* /
+older system CUDA (e.g. `/usr/local/cuda` → CUDA 11) so cuML resolves the wrong
+`libcublas` (or none) and fails to load.
 
 **Fix — point the linker at the venv's own CUDA wheels (no sudo, no system change):**
 

@@ -42,7 +42,6 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tupl
 import numpy as np
 import numpy.typing as npt
 
-from castle.utils.latent_metadata import load_latent_metadata
 from castle.utils.safe_load import load_latent_safe
 
 FloatArr = npt.NDArray[np.float32]
@@ -416,61 +415,183 @@ def compute_prepare_id(
 # --------------------------------------------------------------------------- #
 # I/O prefetch + device selection                                             #
 # --------------------------------------------------------------------------- #
-def _prefetch_decimated(
+def _peek_header(npz_path: str, key: str = "latent") -> Tuple[int, int, int]:
+    """``(n_rows, n_features, itemsize_bytes)`` of the ``latent`` member, cheaply.
+
+    Reads only the ``.npy`` header of the zip member (numpy.lib.format) — for a
+    compressed npz this inflates just the few header bytes, not the multi-GB
+    array — so we learn the exact shape AND dtype size (needed to bound RAM)
+    without decompressing. Falls back to a full load for non-standard npz.
+    """
+    import zipfile
+
+    import numpy.lib.format as _nfmt
+    try:
+        with zipfile.ZipFile(npz_path) as z:
+            member = f"{key}.npy"
+            with z.open(member) as f:
+                version = _nfmt.read_magic(f)
+                shape, _fortran, dtype = _nfmt._read_array_header(f, version)  # type: ignore[attr-defined]  # noqa: SLF001
+        if len(shape) >= 2:
+            return int(shape[0]), int(shape[1]), int(dtype.itemsize)
+    except Exception:  # noqa: BLE001 — fall back to a (slow) full load
+        pass
+    arr = load_latent_safe(npz_path)
+    n0, nf, isz = int(arr.shape[0]), int(arr.shape[1]), int(arr.dtype.itemsize)
+    del arr
+    return n0, nf, isz
+
+
+def _max_concurrent_loads(sources: Sequence[SourceSpec], avail_ram_bytes: Optional[int]) -> int:
+    """How many files may be resident at once so loaders can't OOM the box.
+
+    Each in-flight file holds up to its *raw* (pre-decimation) bytes during
+    inflate. We keep ``max_concurrent x largest_raw_file <= available_ram -
+    margin`` so the worst case (all loaders mid-inflate) still leaves the margin
+    free. Margin default 10 GiB; overridable via ``CASTLE_PREPARE_RAM_MARGIN_GB``
+    and ``CASTLE_PREPARE_LOADERS`` (hard cap on threads).
+    """
+    try:
+        margin = int(float(os.environ.get("CASTLE_PREPARE_RAM_MARGIN_GB", "10")) * (1 << 30))
+    except ValueError:
+        margin = 10 << 30
+    avail = int(avail_ram_bytes) if avail_ram_bytes else (16 << 30)
+    max_raw = 1
+    for s in sources:
+        try:
+            n0, nf, isz = _peek_header(s.npz_path)
+            max_raw = max(max_raw, n0 * nf * isz)
+        except Exception:  # noqa: BLE001
+            pass
+    usable = max(0, avail - margin)
+    by_ram = max(1, usable // max_raw)
+    try:
+        hard_cap = int(os.environ.get("CASTLE_PREPARE_LOADERS", "4"))
+    except ValueError:
+        hard_cap = 4
+    return int(max(1, min(by_ram, max(1, hard_cap), len(sources))))
+
+
+def _parallel_decimated(
     sources: Sequence[SourceSpec],
     *,
     downsample: bool,
     target_fps_cap: float,
     should_cancel: Callable[[], bool],
-) -> Iterator[Tuple[SourceSpec, npt.NDArray[Any]]]:
-    """Yield ``(source, decimated_array)`` with the NEXT file loaded one step ahead.
+    max_concurrent: int,
+) -> Iterator[Tuple[SourceSpec, npt.NDArray[Any], IntArr]]:
+    """Yield ``(source, raw_array, dec_idx)`` in **source order**, with a single
+    background thread prefetching up to ``max_concurrent`` files ahead.
 
-    Decompressing a CASTLE latent npz is single-threaded and slow (zlib releases
-    the GIL), so a background loader thread overlaps the next file's
-    load+decimate with the current file's compute (matmul / GPU). Queue depth is
-    1, so at most ~two decimated arrays are resident — bounded so the build that
-    exists *because* of RAM limits does not itself blow the budget. Disable with
-    ``CASTLE_PREPARE_PREFETCH=0`` (falls back to serial load).
+    The consumer slices ``raw_array[dec_idx[i:i+W]]`` one block at a time, so no
+    full decimated copy is ever made (that raw+copy coexistence is what blew the
+    RAM budget). A single loader thread inflates files serially (numpy's
+    compressed-npz read is GIL-bound, so parallel inflate is slower) but runs
+    ahead of the consumer, overlapping the load with the GPU work. Two safety
+    invariants:
+
+    * **Bounded RAM**: a per-file semaphore slot is acquired *before* inflating
+      and released by the consumer *after* the file is used, so at most
+      ``max_concurrent`` raw arrays are resident (the OOM guard — sized so the
+      resident raws stay under ``available_ram - margin``).
+    * **Deterministic order**: results are yielded strictly in source order, so
+      the PCA Gram accumulation (a sum of per-file contributions) is
+      bit-reproducible run-to-run.
+
+    ``CASTLE_PREPARE_PREFETCH=0`` disables prefetch (one resident file, no overlap).
     """
-    serial = os.environ.get("CASTLE_PREPARE_PREFETCH", "").strip() in ("0", "false", "no")
-    if serial:
-        for s in sources:
-            if should_cancel():
-                return
-            dec, _idx, _n = _load_decimated(s, downsample=downsample, target_fps_cap=target_fps_cap)
-            yield s, dec
-        return
-
-    import queue
     import threading
 
-    q: "queue.Queue[Any]" = queue.Queue(maxsize=1)
-    sentinel = object()
+    # ONE loader thread, not N: numpy's compressed-npz read is GIL-bound (it
+    # ping-pongs the GIL on small inflate chunks), so two threads inflating at
+    # once are *slower* than one (measured 14.8 vs 10.2 s/file) AND double the
+    # resident RAM. Instead a single thread inflates serially and prefetches up
+    # to ``conc`` files ahead, overlapping the load with the GPU work. ``conc``
+    # (RAM-bounded) is only the resident cap / prefetch depth.
+    serial = os.environ.get("CASTLE_PREPARE_PREFETCH", "").strip() in ("0", "false", "no")
+    n = len(sources)
+    conc = 1 if serial else max(1, min(int(max_concurrent), n))
+    n_threads = 1
 
-    def _producer() -> None:
-        try:
-            for s in sources:
-                if should_cancel():
-                    break
-                dec, _idx, _n = _load_decimated(
-                    s, downsample=downsample, target_fps_cap=target_fps_cap
+    sem = threading.Semaphore(conc)
+    cv = threading.Condition()
+    results: Dict[int, Tuple[SourceSpec, npt.NDArray[Any], IntArr]] = {}
+    state: Dict[str, Any] = {"err": None}
+    abort = threading.Event()
+    dispatch = {"next": 0}
+    dispatch_lock = threading.Lock()
+
+    def _worker() -> None:
+        while not abort.is_set() and not should_cancel():
+            with dispatch_lock:
+                idx = dispatch["next"]
+                if idx >= n:
+                    return
+                dispatch["next"] = idx + 1
+            # Bound concurrency: block until a resident slot frees (consumer
+            # releases one per file). Time out so we re-check abort/cancel.
+            while not sem.acquire(timeout=0.5):
+                if abort.is_set() or should_cancel():
+                    return
+            try:
+                raw, dec_idx, _n = _load_raw_decidx(
+                    sources[idx], downsample=downsample, target_fps_cap=target_fps_cap
                 )
-                q.put((s, dec))
-        except Exception as exc:  # noqa: BLE001 — surfaced to the consumer
-            q.put(("__error__", exc))
-            return
-        finally:
-            q.put(sentinel)
+            except Exception as exc:  # noqa: BLE001 — surfaced to the consumer
+                sem.release()
+                with cv:
+                    if state["err"] is None:
+                        state["err"] = exc
+                    cv.notify_all()
+                return
+            with cv:
+                results[idx] = (sources[idx], raw, dec_idx)
+                cv.notify_all()
+            # Drop the worker's own refs immediately — otherwise this local
+            # variable keeps the just-loaded array alive while the worker inflates
+            # its NEXT file, so a worker transiently holds TWO raws and the
+            # resident-bytes bound (and the box) blow up. results/consumer own it now.
+            del raw, dec_idx
 
-    t = threading.Thread(target=_producer, daemon=True, name="prepare-loader")
-    t.start()
-    while True:
-        item = q.get()
-        if item is sentinel:
-            break
-        if isinstance(item, tuple) and item and item[0] == "__error__":
-            raise item[1]
-        yield item
+    threads = [threading.Thread(target=_worker, daemon=True, name=f"prep-load-{i}")
+               for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    try:
+        for idx in range(n):
+            with cv:
+                while idx not in results and state["err"] is None and not should_cancel():
+                    cv.wait(timeout=0.5)
+                if state["err"] is not None:
+                    raise state["err"]
+                if should_cancel():
+                    raise BuildCancelled()
+                s, raw, dec_idx = results.pop(idx)
+            yield s, raw, dec_idx
+            del raw, dec_idx
+            sem.release()  # free a resident slot now this file is consumed
+    finally:
+        abort.set()
+        with cv:
+            cv.notify_all()
+
+
+def _to_device_l2(block: npt.ArrayLike, normalize: str, dev: Any, torch: Any) -> Tuple[Any, Any]:
+    """Upload a native-dtype block to ``dev``, upcast to float32, L2-normalise.
+
+    The upcast + L2 run on ``dev`` (GPU, or multi-threaded CPU torch) instead of
+    single-threaded numpy on the host — that host-side ``_prep_block`` was the
+    7.8 s/file CPU bottleneck. Transfers the block in its native (e.g. float16)
+    dtype, so only half the bytes cross the PCIe bus. NaN rows stay NaN and are
+    reported via the ``finite`` mask. Returns ``(xb_float32_on_dev, finite_mask)``.
+    """
+    t = torch.from_numpy(np.ascontiguousarray(block)).to(dev)  # native dtype (e.g. fp16)
+    xb = t.to(torch.float32)
+    finite = torch.isfinite(xb).all(dim=1)
+    if normalize == "l2":
+        norm = torch.linalg.vector_norm(xb, dim=1, keepdim=True).clamp_min(_L2_EPS)
+        xb = xb / norm  # NaN rows: norm is NaN -> row stays NaN (finite already False)
+    return xb, finite
 
 
 def _select_pca_device(n_features: int, notify: Callable[[str], None]) -> str:
@@ -538,27 +659,32 @@ class PreparedData:
 _BLOCK_ROWS = 8192  # rows per processing block; the float32 upcast + L2 happen here
 
 
-def _load_decimated(
+def _load_raw_decidx(
     s: SourceSpec, *, downsample: bool, target_fps_cap: float
 ) -> Tuple[npt.NDArray[Any], IntArr, int]:
-    """Load + decimate one source at its NATIVE dtype (NO float32 upcast).
+    """Load the full latent at its NATIVE dtype + compute the decimation indices.
 
-    Keeps the bulk array in its stored precision (e.g. float16) so a whole
-    project's latents are never doubled to float32 in RAM — the upcast happens
-    per row-block in :func:`_prep_block`. A no-op decimation (raw_fps <= target)
-    returns the array itself (no copy). ``Inf`` is already ``NaN`` and NaN rows
-    are preserved.
+    Crucially does NOT materialise a separate decimated copy: returning the raw
+    array (in its stored precision, e.g. float16) plus ``dec_idx`` lets the
+    consumer slice ``raw[dec_idx[i:i+W]]`` one small block at a time. That keeps
+    peak RAM per in-flight file at ONE raw array (~7 GB) instead of raw + a
+    decimated copy (~10 GB) — the coexistence that previously blew the budget
+    when two loaders ran at once.
+
+    Loads with ``fix_nonfinite=False`` (skips the Inf->NaN rewrite that costs
+    ~3x RAM for files that contain non-finite values — which is all of them).
+    Non-finite rows (+/-Inf or NaN) are caught downstream by ``torch.isfinite``
+    in :func:`_to_device_l2` and written to the cache as NaN, so the result is
+    identical to the eager conversion.
     """
-    arr = load_latent_safe(s.npz_path)  # (n_orig, F) native dtype, Inf already -> NaN
+    arr = load_latent_safe(s.npz_path, fix_nonfinite=False)  # native dtype; ~1x RAM
     n_orig = int(arr.shape[0])
     tgt = effective_target_fps(s.raw_fps, target_fps_cap) if downsample else None
     if tgt is not None and s.raw_fps is not None and s.raw_fps > tgt:
         dec_idx = decimate_indices(n_orig, s.raw_fps, tgt)
-        dec = arr[dec_idx]            # native-dtype copy of the kept rows
     else:
         dec_idx = np.arange(n_orig, dtype=np.int64)
-        dec = arr                     # no decimation -> no copy
-    return dec, dec_idx, n_orig
+    return arr, dec_idx, n_orig
 
 
 def _prep_block(block: npt.ArrayLike, normalize: str) -> Tuple[FloatArr, npt.NDArray[np.bool_]]:
@@ -576,18 +702,14 @@ def _prep_block(block: npt.ArrayLike, normalize: str) -> Tuple[FloatArr, npt.NDA
 
 
 def _source_geometry(s: SourceSpec) -> Tuple[int, int]:
-    """``(n_orig_frames, n_features)`` for a source, cheaply from its metadata.
+    """``(n_orig_frames, n_features)`` for a source, cheaply from the npy header.
 
-    Avoids decompressing the (multi-GB) latent array just to learn its shape
-    (the old geometry pass did a full load per file). Falls back to a full load
-    only for legacy npz that predate the metadata sidecar.
+    Reads the exact shape from the ``.npy`` header (see :func:`_peek_header`)
+    without decompressing the multi-GB array. Preferred over the metadata sidecar
+    because the sidecar's recorded ``dtype`` can be stale (it says float32 while
+    the array is stored float16); the header is authoritative.
     """
-    md = load_latent_metadata(s.npz_path)
-    if md and md.get("n_frames") is not None and md.get("feature_dim") is not None:
-        return int(md["n_frames"]), int(md["feature_dim"])
-    arr = load_latent_safe(s.npz_path)
-    n0, nf = int(arr.shape[0]), int(arr.shape[1])
-    del arr
+    n0, nf, _itemsize = _peek_header(s.npz_path)
     return n0, nf
 
 
@@ -628,7 +750,7 @@ def run_prepare(
     os.makedirs(out_dir, exist_ok=True)
 
     # --- Geometry pass: per-video decimated counts + the index map ----------
-    # Shapes come from the metadata sidecar, so NO latent array is decompressed
+    # Shapes come from each npz's .npy header, so NO latent array is decompressed
     # here (one fewer full read per file than the old three-pass design).
     names: List[str] = []
     offsets = [0]
@@ -680,6 +802,11 @@ def run_prepare(
     _emit_progress()  # show 0 / total immediately
     n_src = len(sources)
 
+    # RAM-bounded prefetch depth: how many files a single loader thread may hold
+    # resident (1 being consumed + the rest prefetched ahead) without risking OOM.
+    max_concurrent = _max_concurrent_loads(sources, avail_ram_bytes)
+    notify(f"Prepare: 1 loader thread, prefetch depth {max_concurrent}.")
+
     width = int(n_features)
     evr: List[float] = []
     n_components_kept = width
@@ -708,29 +835,35 @@ def run_prepare(
         rng = np.random.default_rng(seed)
 
         notify(f"Prepare: fitting PCA on {device} (pass 1/2)…")
-        for si, (s, dec) in enumerate(_prefetch_decimated(
+        for si, (s, raw, dec_idx) in enumerate(_parallel_decimated(
             sources, downsample=downsample, target_fps_cap=target_fps_cap,
-            should_cancel=should_cancel,
+            should_cancel=should_cancel, max_concurrent=max_concurrent,
         )):
             if should_cancel():
                 raise BuildCancelled()
             notify(f"Prepare: PCA fit {si + 1}/{n_src} — {s.video_name}")
-            for i in range(0, dec.shape[0], _BLOCK_ROWS):
+            for i in range(0, len(dec_idx), _BLOCK_ROWS):
                 if should_cancel():
                     raise BuildCancelled()
-                b, finite = _prep_block(dec[i:i + _BLOCK_ROWS], normalize)
-                rows = b[finite]
-                if fit_fraction < 1.0 and rows.shape[0] > 0:
-                    k = max(1, int(round(fit_fraction * rows.shape[0])))
-                    sel = rng.choice(rows.shape[0], size=k, replace=False)
-                    rows = rows[np.sort(sel)]
-                if rows.shape[0]:
-                    xb = torch.from_numpy(np.ascontiguousarray(rows)).to(dev, dtype=acc_dtype)
-                    S1 += xb.sum(dim=0)
-                    S2 += xb.T @ xb
-                    n_finite_fit += int(rows.shape[0])
-                    del xb
-            del dec
+                # Slice the decimated block out of the resident raw array (small
+                # copy), then upcast + L2 on the device (not host numpy).
+                block = raw[dec_idx[i:i + _BLOCK_ROWS]]
+                xb, finite = _to_device_l2(block, normalize, dev, torch)
+                rows = xb[finite]
+                n_rows = int(rows.shape[0])
+                if fit_fraction < 1.0 and n_rows > 0:
+                    k = max(1, int(round(fit_fraction * n_rows)))
+                    sel = np.sort(rng.choice(n_rows, size=k, replace=False))
+                    rows = rows.index_select(0, torch.as_tensor(sel, device=dev))
+                    n_rows = k
+                if n_rows:
+                    r = rows.to(acc_dtype)
+                    S1 += r.sum(dim=0)
+                    S2 += r.T @ r
+                    n_finite_fit += n_rows
+                    del r
+                del xb, rows
+            del raw, dec_idx
             done_frames += dp_per_source[si]
             done_steps += 1
             _emit_progress()
@@ -761,8 +894,12 @@ def run_prepare(
             torch.cuda.empty_cache()
 
     # --- Transform / write pass --------------------------------------------
+    # Write reduced.dat SEQUENTIALLY via a buffered file handle (rows are produced
+    # in global order). A np.memmap(mode="w+") would instead accumulate dirty
+    # anonymous-ish pages in RSS (~width*n_dp*4 = up to ~11.5 GB for 26 mice),
+    # which tripped the OOM guard; a streamed write lands in reclaimable page
+    # cache instead. load_prepare mmaps the identical bytes read-only.
     reduced_path = os.path.join(out_dir, PCA_FILENAME)
-    reduced = np.memmap(reduced_path, dtype=np.float32, mode="w+", shape=(n_dp, width))
     notify(f"Prepare: writing reduced cache {n_dp}x{width} ({'pass 2/2' if pca else 'single pass'})...")
     comp_dev = None
     mean_dev = None
@@ -771,38 +908,41 @@ def run_prepare(
         import torch
         comp_dev = torch.from_numpy(components).to(dev)   # (K, D) float32
         mean_dev = torch.from_numpy(mean_vec).to(dev)     # (D,)  float32
-    cursor = 0
-    for si, (s, dec) in enumerate(_prefetch_decimated(
-        sources, downsample=downsample, target_fps_cap=target_fps_cap,
-        should_cancel=should_cancel,
-    )):
-        if should_cancel():
-            raise BuildCancelled()
-        notify(f"Prepare: transform+write {si + 1}/{n_src} — {s.video_name}")
-        m = dec.shape[0]
-        for i in range(0, m, _BLOCK_ROWS):
+    rows_written = 0
+    with open(reduced_path, "wb", buffering=8 * 1024 * 1024) as fout:
+        for si, (s, raw, dec_idx) in enumerate(_parallel_decimated(
+            sources, downsample=downsample, target_fps_cap=target_fps_cap,
+            should_cancel=should_cancel, max_concurrent=max_concurrent,
+        )):
             if should_cancel():
                 raise BuildCancelled()
-            b, finite = _prep_block(dec[i:i + _BLOCK_ROWS], normalize)
-            nb = b.shape[0]
-            if pca:
-                assert comp_dev is not None and mean_dev is not None
-                out = np.full((nb, width), np.nan, dtype=np.float32)
-                if finite.any():
-                    xb = torch.from_numpy(np.ascontiguousarray(b[finite])).to(comp_dev.device, dtype=comp_dev.dtype)
-                    proj = (xb - mean_dev) @ comp_dev.T
-                    out[finite] = proj.to("cpu", dtype=torch.float32).numpy()
-                    del xb, proj
-                reduced[cursor + i:cursor + i + nb] = out
-            else:
-                reduced[cursor + i:cursor + i + nb] = b  # raw (decimated, maybe L2'd), NaN preserved
-        cursor += m
-        del dec
-        done_frames += dp_per_source[si]
-        done_steps += 1
-        _emit_progress()
-    reduced.flush()
-    del reduced
+            notify(f"Prepare: transform+write {si + 1}/{n_src} — {s.video_name}")
+            m = len(dec_idx)
+            for i in range(0, m, _BLOCK_ROWS):
+                if should_cancel():
+                    raise BuildCancelled()
+                block = raw[dec_idx[i:i + _BLOCK_ROWS]]  # decimated block out of resident raw
+                if pca:
+                    assert comp_dev is not None and mean_dev is not None
+                    # Upcast + L2 + project on the device (host stays cheap).
+                    xb, finite = _to_device_l2(block, normalize, dev, torch)
+                    nb = int(xb.shape[0])
+                    out = np.full((nb, width), np.nan, dtype=np.float32)
+                    if bool(finite.any()):
+                        proj = (xb[finite] - mean_dev) @ comp_dev.T
+                        out[finite.cpu().numpy()] = proj.to("cpu", dtype=torch.float32).numpy()
+                        del proj
+                    del xb, finite
+                else:
+                    out, finite = _prep_block(block, normalize)
+                    out[~finite] = np.nan  # non-finite rows -> NaN (loader no longer does this)
+                fout.write(np.ascontiguousarray(out, dtype=np.float32).tobytes())
+                rows_written += out.shape[0]
+            del raw, dec_idx
+            done_frames += dp_per_source[si]
+            done_steps += 1
+            _emit_progress()
+    assert rows_written == n_dp, f"reduced.dat row count {rows_written} != n_dp {n_dp}"
     if pca:
         del comp_dev, mean_dev
         import torch

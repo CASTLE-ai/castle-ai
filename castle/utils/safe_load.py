@@ -24,11 +24,19 @@ from castle.core.types import LatentCorruptError
 logger = logging.getLogger(__name__)
 
 
-def load_latent_safe(path: Union[str, Path]) -> np.ndarray:
+def load_latent_safe(path: Union[str, Path], *, fix_nonfinite: bool = True) -> np.ndarray:
     """Load the ``latent`` array from a CASTLE-format ``.npz`` file.
 
     Args:
         path: Absolute or relative path to the ``.npz``.
+        fix_nonfinite: When True (default), rewrite any ``+/-Inf`` to ``NaN`` so
+            every downstream non-finite check catches them. This costs ~2 extra
+            full-array allocations (the ``isfinite`` mask + the ``np.where``
+            result), which is ~3x the array's RAM for files that actually
+            contain non-finite values. Callers that already exclude non-finite
+            rows themselves (e.g. the Prepare pipeline tests ``isfinite`` on the
+            GPU) can pass ``False`` to load at ~1x RAM; the array is returned
+            verbatim (``+/-Inf`` preserved) in that case.
 
     Returns:
         The 2D latent array, shape ``(N, F)``. Dtype is preserved.
@@ -69,7 +77,7 @@ def load_latent_safe(path: Union[str, Path]) -> np.ndarray:
             f"{path} has latent of shape {arr.shape}; expected 2D (N, F)."
         )
 
-    if not np.isfinite(arr).all():
+    if fix_nonfinite and not np.isfinite(arr).all():
         n_bad = int((~np.isfinite(arr)).sum())
         # Actually handle non-finite values instead of only warning: normalise
         # +/-Inf to NaN so EVERY downstream non-finite check catches them

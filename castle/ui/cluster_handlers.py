@@ -134,7 +134,7 @@ def generate_embedding(
 
     Returns ``(local_latents, scatter_plot, plot_image, status_md)``.
     """
-    from castle.core.types import InsufficientDataError
+    from castle.core.types import CastleDataError, InsufficientDataError
     from castle.service.clustering_service import run_umap_on_cluster
     from castle.service.plotting_service import build_scatter_plot
 
@@ -231,6 +231,12 @@ def generate_embedding(
         )
     except InsufficientDataError as e:
         gr.Info(str(e))
+        return None, None, None, ""
+    except CastleDataError as e:
+        # Pre-flight memory guard refused before allocating (VRAM/host RAM). The
+        # message already names the shortfall and how to shrink it — show it
+        # verbatim rather than running it through the post-hoc OOM heuristic below.
+        gr.Warning(str(e))
         return None, None, None, ""
     except Exception as e:
         # UMAP itself failed (e.g. n_neighbors >= n_samples at the cuML

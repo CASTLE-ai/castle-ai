@@ -33,7 +33,7 @@ import contextlib
 import inspect
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -46,6 +46,9 @@ __all__ = [
     "resolve_umap_class",
     "resolve_dbscan_class",
     "build_default_clusterer",
+    "nn_descent_graph_degree",
+    "umap_peak_bytes",
+    "target_cuda_free_bytes",
 ]
 
 
@@ -169,40 +172,76 @@ def resolve_dbscan_class(device: str) -> Any:
 _NN_DESCENT_MIN_ROWS = 150_000
 
 
+def _resolve_cuda_index(device: Optional[str]) -> Optional[int]:
+    """The CUDA device index a cuML op for *device* will run on, or ``None``.
+
+    Honours an explicit ``cuda:N`` in *device* or in ``CASTLE_GPU_DEVICE``,
+    else the idlest GPU (most free VRAM). ``None`` when *device* isn't CUDA or no
+    GPU is selectable. The VRAM guard reads the SAME index so it checks the card
+    the fit actually uses.
+    """
+    if not (isinstance(device, str) and device.startswith("cuda")):
+        return None
+    for src in (device, os.environ.get("CASTLE_GPU_DEVICE", "").strip().lower()):
+        if src.startswith("cuda:"):
+            try:
+                return int(src.split(":", 1)[1])
+            except ValueError:
+                pass
+    try:
+        from castle.core import runtime_env
+        return runtime_env.idlest_gpu()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def target_cuda_free_bytes(device: str = "cuda") -> Optional[int]:
+    """Free VRAM (bytes) of the GPU a cuML op for *device* will run on, or None."""
+    idx = _resolve_cuda_index(device)
+    if idx is None:
+        return None
+    try:
+        from castle.core import runtime_env
+        for d in runtime_env.gpu_info():
+            if int(cast(int, d["index"])) == idx:
+                return int(cast(int, d["free_bytes"]))
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def nn_descent_graph_degree(n_neighbors: int) -> int:
+    """nn_descent intermediate-graph degree: recall headroom over n_neighbors,
+    bounded (+128) so large n_neighbors don't explode VRAM. Single source of
+    truth shared by the build_kwds AND the memory estimator."""
+    nn = int(n_neighbors)
+    return min(2 * nn, nn + 128)
+
+
+def umap_peak_bytes(n: int, d: int, n_neighbors: int) -> float:
+    """Rough peak memory (bytes) of one cuML UMAP fit on *n* points x *d* dims.
+
+    Models the dominant buffers (whichever device): input ``n*d*4``; the
+    nn_descent kNN graph + equal-degree intermediate graph (~24 bytes/point/
+    degree); the fuzzy simplicial set (~32 bytes/point/n_neighbors); times a 1.5x
+    safety factor. Used to BOTH auto-cap the subsample size and drive the
+    pre-flight guards — they must agree, so they share this one estimator.
+    """
+    gd = nn_descent_graph_degree(n_neighbors)
+    return float(n) * (4.0 * int(d) + 24.0 * gd + 32.0 * int(n_neighbors)) * 1.5
+
+
 def _cuda_device_ctx(device: Optional[str]) -> Any:
     """Pin a single-GPU cuML / cupy op to the idlest CUDA device.
 
     cuML (and the in-repo :mod:`castle.utils.myumap`) choose the *physical* GPU
     from the active **cupy** current-device — not from any torch device, and not
-    from the ``'cuda:N'`` string (that string only selects the backend *class*
-    via :func:`resolve_umap_class` / :func:`resolve_dbscan_class`). So to run on
-    the emptiest card instead of always ``cuda:0``, wrap the fit/fit_predict in
-    ``cupy.cuda.Device(idlest)``.
-
-    Returns a no-op context when *device* is not CUDA, when cupy is unavailable
-    (CPU-only box — the backends already fell back to umap-learn / sklearn), or
-    when no GPU is selectable. Honours ``CASTLE_GPU_DEVICE`` (``cuda:N`` forces an
-    index). Kept tight around the single call so the per-thread cupy current
-    device cannot leak.
+    from the ``'cuda:N'`` string (that string only selects the backend *class*).
+    So wrap the fit/fit_predict in ``cupy.cuda.Device(idlest)``. No-op when
+    *device* isn't CUDA, cupy is unavailable, or no GPU is selectable. Kept tight
+    around the single call so the per-thread cupy current device cannot leak.
     """
-    if not (isinstance(device, str) and device.startswith("cuda")):
-        return contextlib.nullcontext()
-    # An explicit index in the device string or the env override wins.
-    idx: Optional[int] = None
-    for src in (device, os.environ.get("CASTLE_GPU_DEVICE", "").strip().lower()):
-        if src.startswith("cuda:"):
-            try:
-                idx = int(src.split(":", 1)[1])
-            except ValueError:
-                idx = None
-            else:
-                break
-    if idx is None:
-        try:
-            from castle.core import runtime_env
-            idx = runtime_env.idlest_gpu()
-        except Exception:  # noqa: BLE001
-            idx = None
+    idx = _resolve_cuda_index(device)
     if idx is None:
         return contextlib.nullcontext()
     try:
@@ -292,8 +331,7 @@ class UMAPReducer:
             # degree; set it equal (the minimum) to save VRAM and silence cuML's
             # auto-bump warning. User-supplied build_kwds wins.
             if 'build_kwds' not in full_cfg:
-                nn = int(full_cfg.get('n_neighbors', 15))
-                deg = min(2 * nn, nn + 128)
+                deg = nn_descent_graph_degree(int(full_cfg.get('n_neighbors', 15)))
                 full_cfg['build_kwds'] = {
                     'nnd_graph_degree': deg,
                     'nnd_intermediate_graph_degree': deg,

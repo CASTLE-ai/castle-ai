@@ -1164,21 +1164,34 @@ def run_umap_on_cluster(
             f"different cluster or re-cluster with adjusted parameters."
         )
 
-    # Pre-flight host-RAM guard for the ADDITIONAL work build_embedding does on
-    # top of what's already resident — self.latents and the select copy are both
-    # bounded by the _init_prepared guard. The further host need is small: a
-    # possible Z re-copy (usually a no-op — see build_embedding) plus UMAP working
-    # memory (cuML uploads to VRAM; umap-learn's kNN graph is modest), so estimate
-    # ~1x the selected array. Refuse (CastleDataError -> gr.Warning) rather than
-    # risk an OOM/thrash, but don't over-estimate and block runs that fit.
-    from castle.core.cluster import assert_ram_for
+    # Pre-flight memory guard. cuML's CUDA OOM is a bare std::bad_alloc with no
+    # traceback that leaves the GPU pinned (app looks hung), so estimate the peak
+    # and refuse up-front. Backend-aware: the GPU path's dominant new allocation
+    # is VRAM (cuML uploads X + builds the nn_descent graph + fuzzy set there);
+    # the CPU path (deterministic reproduce, or a GPU-less host) builds in host
+    # RAM. `umap_peak_bytes` is the SAME estimator that drives the subsample cap,
+    # so the guard and the auto-cap agree. n_neighbors comes from the first stage.
+    from castle.core.cluster import assert_ram_for, assert_vram_for
+    from castle.core.clustering_backends import (
+        target_cuda_free_bytes,
+        umap_peak_bytes,
+    )
+    _first_cfg = cfg[0] if isinstance(cfg, (list, tuple)) and cfg else cfg
+    _nn = int(_first_cfg.get('n_neighbors', 15)) if isinstance(_first_cfg, dict) else 15
     _n_sel = len(local_latents.data)
     _width = int(local_latents.data.shape[1]) if local_latents.data.ndim == 2 else 1
-    assert_ram_for(
-        float(_n_sel) * _width * 4,
-        f"UMAP on cluster '{cluster_name}' ({_n_sel:,} points x {_width} dims)",
-        "Pick a smaller sub-cluster, lower k', or raise the time window (fewer points).",
+    _peak = umap_peak_bytes(_n_sel, _width, _nn)
+    _label = (
+        f"UMAP on cluster '{cluster_name}' "
+        f"({_n_sel:,} points x {_width} dims, n_neighbors={_nn})"
     )
+    _hint = "Lower k', raise the time window, or reduce n_neighbors (fewer/smaller points)."
+    _free_vram = None if deterministic else target_cuda_free_bytes('cuda')
+    if _free_vram:
+        assert_vram_for(_peak, _free_vram, _label, _hint)
+    else:
+        # CPU path (deterministic, or no selectable GPU): builds in host RAM.
+        assert_ram_for(_peak, _label, _hint)
 
     resolved_seeds = local_latents.build_embedding(
         cfg,

@@ -128,6 +128,38 @@ def assert_ram_for(need_bytes: float, what: str, hint: str, fraction: float = 0.
         )
 
 
+def assert_vram_for(
+    need_bytes: float,
+    free_bytes: Optional[int],
+    what: str,
+    hint: str,
+    fraction: float = 0.7,
+) -> None:
+    """Pre-flight **VRAM** guard: refuse with :class:`CastleDataError` if
+    *need_bytes* exceeds *fraction* of *free_bytes* on the GPU the op will use.
+
+    The GPU sibling of :func:`assert_ram_for`. cuML's CUDA OOM is a raw
+    ``std::bad_alloc`` with no usable traceback and leaves the GPU busy (the app
+    looks hung), so estimating the peak and refusing up-front is the only clean
+    signal the user gets. *fraction* (<1) leaves headroom for cuML's own scratch
+    + the resident input. No-op when free VRAM can't be determined (CPU backend
+    or no NVML) — the host-RAM guard still covers the CPU path. Override the
+    fraction with ``CASTLE_UMAP_VRAM_FRACTION``.
+    """
+    try:
+        env = os.environ.get("CASTLE_UMAP_VRAM_FRACTION")
+        if env:
+            fraction = float(env)
+    except ValueError:
+        pass
+    if free_bytes and need_bytes > fraction * float(free_bytes):
+        raise CastleDataError(
+            f"{what} would need ~{need_bytes / 1e9:.1f} GB GPU memory but only "
+            f"~{free_bytes / 1e9:.1f} GB is free on the GPU (safe limit "
+            f"{fraction:.0%}). {hint}"
+        )
+
+
 def _memmap_threshold_bytes() -> int:
     """Resolve the memmap threshold in bytes from env var.
 

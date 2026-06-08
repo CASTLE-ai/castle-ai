@@ -16,6 +16,7 @@ from castle.utils.video_io import VideoReader
 from castle.utils.safe_load import load_latent_safe
 from castle.utils.latent_metadata import load_latent_metadata
 from castle.core.project import get_project_config
+from castle.core import runtime_env
 from castle.utils.latent_explorer import Latent
 from castle.core.prepare import (
     WindowedFrameIndexMap,
@@ -106,6 +107,26 @@ def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float, tree=
         tree = KDTree(embedding_data)
     distance, index = tree.query((x, y))
     return int(index), float(distance)
+
+def assert_ram_for(need_bytes: float, what: str, hint: str, fraction: float = 0.6) -> None:
+    """Pre-flight RAM guard: refuse with :class:`CastleDataError` if *need_bytes*
+    exceeds *fraction* of currently-free system RAM.
+
+    Turns an OS-killing OOM (the clustering path used to just allocate and let
+    the kernel thrash/kill) into a clean, actionable refusal. *fraction* (<1)
+    leaves headroom for the rest of the app + downstream copies. No-op when free
+    RAM can't be determined.
+    """
+    try:
+        avail = runtime_env.available_ram_bytes()
+    except Exception:  # noqa: BLE001
+        avail = None
+    if avail and need_bytes > fraction * float(avail):
+        raise CastleDataError(
+            f"{what} would need ~{need_bytes / 1e9:.1f} GB RAM but only "
+            f"~{avail / 1e9:.1f} GB is free (safe limit {fraction:.0%}). {hint}"
+        )
+
 
 def _memmap_threshold_bytes() -> int:
     """Resolve the memmap threshold in bytes from env var.
@@ -521,18 +542,43 @@ class LatentAggregator:
         kp = int(k_prime) if k_prime else k_prime_for_variance(pd.meta, 0.95)
         kp = max(1, min(kp, pd.width))
 
-        parts: List[np.ndarray] = []
-        win_counts: List[int] = []
+        win_counts = [
+            int(base.dp_offsets[v + 1] - base.dp_offsets[v]) // W
+            for v in range(base.n_videos)
+        ]
+        n_windows_total = int(sum(win_counts))
+
+        # Pre-flight RAM guard. The windowed array is resident float32 of shape
+        # (n_windows_total, k'*W) = ~N_dp * k' * 4 bytes — note W CANCELS, so
+        # raising the time window does NOT shrink this array; only k' does
+        # (linearly). Refuse before allocating so the OS never OOMs.
+        need = float(n_windows_total) * kp * W * 4
+        try:
+            avail = runtime_env.available_ram_bytes()
+        except Exception:  # noqa: BLE001
+            avail = None
+        if avail and need > 0.6 * float(avail):
+            kp_fit = max(1, int(0.6 * float(avail) / max(1.0, n_windows_total * W * 4.0)))
+            raise CastleDataError(
+                f"Prepared-cache windowing would need ~{need / 1e9:.1f} GB RAM but only "
+                f"~{avail / 1e9:.1f} GB is free. Lower k' (currently {kp}) — it shrinks the "
+                f"array linearly; try k' <= {kp_fit}. (Raising the time window reduces the "
+                f"UMAP step but NOT this array.)"
+            )
+
+        # Pre-allocate once and fill per-video in place — avoids the old
+        # parts-list + np.concatenate ~2x transient peak.
+        self.latents = np.empty((n_windows_total, kp * W), dtype=np.float32)
+        row = 0
         for v in range(base.n_videos):
-            s, e = int(base.dp_offsets[v]), int(base.dp_offsets[v + 1])
-            sub = np.asarray(pd.reduced[s:e, :kp], dtype=np.float32)
-            n_win = sub.shape[0] // W
-            win_counts.append(n_win)
-            if n_win:
-                parts.append(sub[: n_win * W].reshape(n_win, kp * W))
-        self.latents = (
-            np.concatenate(parts, axis=0) if parts else np.zeros((0, kp * W), dtype=np.float32)
-        )
+            n_win = win_counts[v]
+            if not n_win:
+                continue
+            s = int(base.dp_offsets[v])
+            sub = np.asarray(pd.reduced[s : s + n_win * W, :kp], dtype=np.float32)
+            self.latents[row : row + n_win] = sub.reshape(n_win, kp * W)
+            row += n_win
+            del sub
         self.frame_index_map = base.for_window(W)
         self.videos_meta = [(win_counts[v], base.video_names[v]) for v in range(base.n_videos)]
         self.fps_per_video = {base.video_names[v]: float(base.raw_fps[v]) for v in range(base.n_videos)}

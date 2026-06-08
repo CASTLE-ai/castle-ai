@@ -389,9 +389,15 @@ class LocalLatent:
             device = 'cpu' if deterministic else self.device
             reducer_factory = lambda cfg: UMAPReducer(cfg, device=device)
 
-        # UMAP backends (cuML / umap-learn) expect float32; cast defensively so a
-        # float16-stored latent works without a separate conversion step.
-        Z = np.ascontiguousarray(self.data, dtype=np.float32)
+        # UMAP backends (cuML / umap-learn) expect float32. self.data from
+        # select() is already a fresh contiguous float32 copy in the common case,
+        # so only re-copy when it isn't — avoids a full duplicate of the whole
+        # selected set (a host-RAM hotspot on large caches).
+        Z = (
+            self.data
+            if (self.data.dtype == np.float32 and self.data.flags['C_CONTIGUOUS'])
+            else np.ascontiguousarray(self.data, dtype=np.float32)
+        )
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
 

@@ -396,6 +396,16 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                              "but global layout is less reliable and varies more by seed. "
                              "Set per UMAP stage in the config box to override.",
                     )
+                    ui['umap_max_points'] = gr.Number(
+                        label="UMAP max points (0 = auto)",
+                        value=0,
+                        precision=0,
+                        interactive=True,
+                        info=("Cap on points UMAP fits. 0 = auto from free memory. "
+                              "Above the cap, UMAP runs on a sample and labels are "
+                              "propagated to all points (kept complete). A value here "
+                              "is a ceiling — never raises above the memory-safe auto."),
+                    )
                     ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
                     ui['eps'] = gr.Number(
@@ -600,6 +610,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             project_name,
             ui['umap_device'],
             ui['umap_init'],
+            ui['umap_max_points'],
         ],
         outputs=[
             local_latents, local_embedding_plot,

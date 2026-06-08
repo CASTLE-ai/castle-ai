@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Callable, Any, Tuple
 import numpy as np
 import pandas as pd
 
+from castle.core import runtime_env
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
 from castle.core.types import CastleDataError, InsufficientDataError
 from castle.service.session_manager import SessionManager
@@ -301,13 +302,24 @@ class ClusteringSession:
         config = self.local_latents.configs
         n_samples = len(index_mask)
         n_features = masked_emb.shape[-1]
-        
+
         emb_full = np.zeros((n_samples, n_features)) + np.nan
         emb_full[index_mask] = masked_emb
         cls_full = np.zeros(n_samples, dtype=np.int16) - 1
         cls_full[index_mask] = masked_cls
-        
-        np.savez_compressed(emb_path, emb=emb_full, cls=cls_full, config=config)
+
+        # is_sampled: True DBSCAN members vs k-NN-propagated rows (UMAP subsample).
+        # Export trains only on sampled rows; missing key => all-True (legacy).
+        local_sampled = np.ones(len(masked_cls), dtype=bool)
+        _sub_idx = getattr(self.local_latents, '_subsample_idx', None)
+        if _sub_idx is not None:
+            local_sampled = np.zeros(len(masked_cls), dtype=bool)
+            local_sampled[_sub_idx] = True
+        is_sampled = np.zeros(n_samples, dtype=bool)
+        is_sampled[index_mask] = local_sampled
+
+        np.savez_compressed(emb_path, emb=emb_full, cls=cls_full, config=config,
+                            is_sampled=is_sampled)
         
         return {
             'id_csv_path': id_csv_path,
@@ -807,6 +819,12 @@ def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_
     emb_data = np.load(max(emb_files, key=os.path.getmtime), allow_pickle=True)
     emb_full = emb_data["emb"].astype(np.float64)   # (n_windows, 2)
     cls_full = emb_data["cls"].astype(np.int32)     # (n_windows,)
+    # Only TRUE DBSCAN members may train the transfer model — k-NN-propagated
+    # rows (UMAP subsample) are interpolations, not density memberships, and
+    # would make apply() a k-NN over k-NN-smoothed labels. Missing key => all
+    # rows are real (legacy / non-subsampled), preserving prior behaviour.
+    win_sampled = (emb_data["is_sampled"].astype(bool)
+                   if "is_sampled" in emb_data.files else None)
 
     # --- prepared cache: reduced features + PCA basis ---
     prep_dir = os.path.join(cluster_dir, "prepared", prepare_id)
@@ -836,6 +854,10 @@ def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_
     labels[valid] = cls_full[dp_win[valid]]
     emb2[valid] = emb_full[dp_win[valid]]
     keep = valid & np.isfinite(feats).all(axis=1) & np.isfinite(emb2).all(axis=1)
+    if win_sampled is not None:
+        dp_sampled = np.zeros(n_dp, dtype=bool)
+        dp_sampled[valid] = win_sampled[dp_win[valid]]
+        keep &= dp_sampled
 
     transform = {
         "components": pd_obj.pca_components,        # (K_full, D_raw)
@@ -925,6 +947,10 @@ def save_project_cluster_model(
     emb_data = np.load(emb_path, allow_pickle=True)
     emb_full = emb_data["emb"]        # (N, 2) with NaN for masked-out points
     cls_full = emb_data["cls"]        # (N,) with -1 for masked-out points
+    # Train the transfer model only on TRUE DBSCAN members; exclude k-NN-
+    # propagated rows (UMAP subsample). Missing key => all real (legacy).
+    bin_sampled = (emb_data["is_sampled"].astype(bool)
+                   if "is_sampled" in emb_data.files else None)
 
     # --- Load latent features from latent/ directory ---
     latent_dir = os.path.join(project_path, "latent")
@@ -967,6 +993,9 @@ def save_project_cluster_model(
 
     # --- Build valid mask (non-NaN embedding rows), at frame resolution ---
     valid_mask = ~np.isnan(frame_emb).any(axis=1)
+    if bin_sampled is not None:
+        frame_sampled = np.repeat(bin_sampled, bin_size)[:n_keep]
+        valid_mask &= frame_sampled
     umap_embedding = frame_emb[valid_mask]
     cluster_labels = frame_cls[valid_mask]
     training_features = all_features[valid_mask]
@@ -1126,6 +1155,7 @@ def run_umap_on_cluster(
     deterministic: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     log_path: Optional[str] = None,
+    max_points: Optional[int] = None,
 ) -> UMAPRunArtifacts:
     """Select a cluster and build its UMAP embedding.
 
@@ -1164,34 +1194,74 @@ def run_umap_on_cluster(
             f"different cluster or re-cluster with adjusted parameters."
         )
 
-    # Pre-flight memory guard. cuML's CUDA OOM is a bare std::bad_alloc with no
-    # traceback that leaves the GPU pinned (app looks hung), so estimate the peak
-    # and refuse up-front. Backend-aware: the GPU path's dominant new allocation
-    # is VRAM (cuML uploads X + builds the nn_descent graph + fuzzy set there);
-    # the CPU path (deterministic reproduce, or a GPU-less host) builds in host
-    # RAM. `umap_peak_bytes` is the SAME estimator that drives the subsample cap,
-    # so the guard and the auto-cap agree. n_neighbors comes from the first stage.
-    from castle.core.cluster import assert_ram_for, assert_vram_for
+    # Memory-aware subsample cap. cuML's CUDA OOM is a bare std::bad_alloc with
+    # no traceback that pins the GPU (app looks hung); rather than just refuse,
+    # solve for the largest point count S whose UMAP fit fits the budget and run
+    # on a seeded S-row sample (labels are then propagated to all M points in
+    # build_cluster). umap_peak_bytes is LINEAR in n, so the per-point cost is
+    # peak(1); S = floor(fraction*budget / peak(1)), clamped to M. Backend-aware
+    # budget: free VRAM (GPU) or available RAM (CPU/deterministic / no GPU).
     from castle.core.clustering_backends import (
         target_cuda_free_bytes,
         umap_peak_bytes,
     )
+    from castle.utils.latent_explorer import _UMAP_MIN_N_NEIGHBORS
+
     _first_cfg = cfg[0] if isinstance(cfg, (list, tuple)) and cfg else cfg
     _nn = int(_first_cfg.get('n_neighbors', 15)) if isinstance(_first_cfg, dict) else 15
-    _n_sel = len(local_latents.data)
+    _M = len(local_latents.data)
     _width = int(local_latents.data.shape[1]) if local_latents.data.ndim == 2 else 1
-    _peak = umap_peak_bytes(_n_sel, _width, _nn)
-    _label = (
-        f"UMAP on cluster '{cluster_name}' "
-        f"({_n_sel:,} points x {_width} dims, n_neighbors={_nn})"
-    )
-    _hint = "Lower k', raise the time window, or reduce n_neighbors (fewer/smaller points)."
-    _free_vram = None if deterministic else target_cuda_free_bytes('cuda')
-    if _free_vram:
-        assert_vram_for(_peak, _free_vram, _label, _hint)
-    else:
-        # CPU path (deterministic, or no selectable GPU): builds in host RAM.
-        assert_ram_for(_peak, _label, _hint)
+
+    # One fraction/budget for the whole decision (env override shared with the
+    # _init_prepared guard). VRAM is the GPU bottleneck; RAM the CPU one.
+    _frac_default = 0.6 if deterministic else 0.7
+    try:
+        _frac = float(os.environ.get('CASTLE_UMAP_VRAM_FRACTION', _frac_default))
+    except ValueError:
+        _frac = _frac_default
+    _free: Optional[float] = None if deterministic else target_cuda_free_bytes('cuda')
+    if _free is None:
+        try:
+            _free = runtime_env.available_ram_bytes()
+        except Exception:  # noqa: BLE001
+            _free = None
+
+    _per_point = umap_peak_bytes(1, _width, _nn)
+    _auto_S = int(_frac * float(_free) / _per_point) if _free else _M
+    _S = min(_auto_S, _M)
+    if max_points and int(max_points) > 0:
+        # User cap is a CEILING — never larger than the memory-safe auto value.
+        _S = min(_S, int(max_points), _M)
+
+    _need_min = max(2 * _UMAP_MIN_N_NEIGHBORS, _nn + 1)
+    if _free and _S < _need_min:
+        raise CastleDataError(
+            f"UMAP on cluster '{cluster_name}': even a memory-safe sample is only "
+            f"~{_S:,} points, below the UMAP minimum ({_need_min}) for "
+            f"n_neighbors={_nn} at {_width} feature dims (~{_free / 1e9:.1f} GB free). "
+            f"Lower k' (narrower features), raise the time window (fewer points), "
+            f"or reduce n_neighbors."
+        )
+
+    # Subsample only when the full set genuinely exceeds the safe size. When the
+    # budget can't be measured (_free is None) fall through to the full-M path.
+    _cap = _S if (_free and _S < _M) else None
+    sub_note = ""
+    if _cap is not None:
+        sub_note = (
+            f"Large selection ({_M:,} pts): UMAP ran on a memory-safe "
+            f"{_cap:,}-point sample; labels propagated to all {_M:,} via "
+            f"feature-space k-NN. "
+        )
+        logger.info(
+            "UMAP cap: M=%d width=%d nn=%d free=%.1fGB frac=%.2f -> S=%d",
+            _M, _width, _nn, (_free or 0) / 1e9, _frac, _cap,
+        )
+    elif _free is None:
+        logger.warning(
+            "UMAP on cluster '%s': could not measure free memory; running on all "
+            "%d points without a subsample cap (may OOM).", cluster_name, _M,
+        )
 
     resolved_seeds = local_latents.build_embedding(
         cfg,
@@ -1199,11 +1269,12 @@ def run_umap_on_cluster(
         base_seed=base_seed,
         deterministic=deterministic,
         log_path=log_path,
+        max_points=_cap,
     )
 
     mode_note = " (CPU, reproducible)" if deterministic else ""
     status_text = (
-        f"✅ UMAP done{mode_note}. seed={resolved_seeds[0]}. "
+        f"✅ UMAP done{mode_note}. {sub_note}seed={resolved_seeds[0]}. "
         f"Paste `{resolved_seeds[0]}` into the seed box to reproduce."
     )
     return UMAPRunArtifacts(

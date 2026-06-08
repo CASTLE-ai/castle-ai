@@ -105,7 +105,21 @@ class EmbeddingScatterPlot:
         cls = np.zeros(n_samples, dtype=np.int16) - 1
         cls[index_mask] = masked_cls
 
-        np.savez_compressed(save_path, emb=emb, cls=cls, config=config)
+        # is_sampled marks which rows are TRUE DBSCAN members vs k-NN-propagated
+        # (when UMAP subsampled). Transfer-model export must train only on the
+        # sampled rows — propagated labels are interpolations, not density-derived
+        # memberships, and would bake boundary errors into the model. All-True
+        # when not subsampled; a missing key in older npz also means all-True.
+        local_sampled = np.ones(len(masked_cls), dtype=bool)
+        sub_idx = getattr(self.local_latents, '_subsample_idx', None)
+        if sub_idx is not None:
+            local_sampled = np.zeros(len(masked_cls), dtype=bool)
+            local_sampled[sub_idx] = True
+        is_sampled = np.zeros(n_samples, dtype=bool)
+        is_sampled[index_mask] = local_sampled
+
+        np.savez_compressed(save_path, emb=emb, cls=cls, config=config,
+                            is_sampled=is_sampled)
     
     def click(self, x, y):
         x, y = self.pixel_2_embedding(x, y)

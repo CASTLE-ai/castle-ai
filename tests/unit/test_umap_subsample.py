@@ -1,0 +1,209 @@
+"""Memory-aware UMAP subsampling + label propagation (feature #2).
+
+These tests pin the contracts the design review flagged as load-bearing:
+- the whole multi-stage chain runs on the sample; the embedding stays length-M;
+- subsample state is invalidated between runs (no stale propagation);
+- the auto-cap refuses (rather than silently degrading) when the budget can't
+  fit a UMAP-viable sample (S below the n_neighbors floor);
+- transfer-model export trains only on the truly-sampled rows.
+
+All runs use the CPU (deterministic) path so layouts are reproducible.
+"""
+
+import os
+import tempfile
+
+import numpy as np
+import pytest
+
+from castle.core.types import CastleDataError
+from castle.utils.latent_explorer import (
+    Latent,
+    LocalLatent,
+    _propagate_labels,
+    _interp_positions,
+    _knn_sampled,
+)
+from castle.service.clustering_service import run_umap_on_cluster, run_dbscan_on_local
+from castle.ui.embedding_scatter import EmbeddingScatterPlot
+
+
+def _two_blobs(n: int, width: int = 8, sep: float = 8.0, seed: int = 0) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    a = rng.standard_normal((n // 2, width)).astype(np.float32) + sep
+    b = rng.standard_normal((n - n // 2, width)).astype(np.float32) - sep
+    return np.vstack([a, b])
+
+
+def _local(data: np.ndarray) -> LocalLatent:
+    return LocalLatent(data, np.ones(len(data), dtype=bool), color_avoid=set(), device="cpu")
+
+
+_CFG1 = [{"n_neighbors": 15, "min_dist": 0.0, "n_components": 2, "n_epochs": 200}]
+_CFG2 = [
+    {"n_neighbors": 15, "min_dist": 0.0, "n_components": 5, "n_epochs": 200},
+    {"n_neighbors": 15, "min_dist": 0.0, "n_components": 2, "n_epochs": 200},
+]
+
+
+# --------------------------------------------------------------------------- #
+# helpers
+# --------------------------------------------------------------------------- #
+def test_propagate_labels_excludes_noise_and_handles_ties():
+    labels_s = np.array([0, 0, 1, 1, 1, -1, 2])
+    nidx = np.array([
+        [0, 1, 2],   # 0,0,1 -> 0
+        [2, 3, 4],   # 1,1,1 -> 1
+        [5, 5, 5],   # all noise -> -1
+        [5, 5, 2],   # -1,-1,1 -> 1
+        [0, 2, 6],   # 0,1,2 tie -> lowest id 0
+    ])
+    assert list(_propagate_labels(labels_s, nidx)) == [0, 1, -1, 1, 0]
+    assert _propagate_labels(labels_s, np.empty((0, 3), dtype=int)).shape == (0,)
+
+
+def test_interp_positions_distance_weighted():
+    emb = np.array([[0.0, 0.0], [10.0, 0.0]])
+    pos = _interp_positions(emb, np.array([[0, 1]]), np.array([[0.0, 1e9]]))
+    assert np.allclose(pos[0], [0.0, 0.0], atol=1e-3)
+
+
+def test_knn_sampled_cpu_euclidean():
+    samp = np.array([[0.0, 0.0], [100.0, 100.0]], dtype=np.float32)
+    q = np.array([[1.0, 1.0], [99.0, 99.0]], dtype=np.float32)
+    idx, _ = _knn_sampled(samp, q, np.array([0, 1]), k=1, metric="euclidean", use_gpu=False)
+    assert list(idx.ravel()) == [0, 1]
+
+
+# --------------------------------------------------------------------------- #
+# build_embedding / build_cluster
+# --------------------------------------------------------------------------- #
+def test_subsample_keeps_length_m_and_labels_all():
+    data = _two_blobs(400)
+    ll = _local(data)
+    ll.build_embedding(_CFG1, base_seed=42, deterministic=True, max_points=150)
+    assert ll.embedding.shape == (400, 2)
+    assert np.isfinite(ll.embedding).all()           # non-sampled interpolated
+    assert ll._subsample_idx is not None and len(ll._subsample_idx) == 150
+    assert len(ll._prop_nonsampled_idx) == 250
+    ll.build_cluster(method="dbscan", configs={"eps": 1.5})
+    assert ll.cluster.shape == (400,)                # all points labelled
+    assert len(set(ll.cluster.tolist()) - {-1}) == 2  # two blobs recovered
+
+
+def test_subsample_is_reproducible_with_seed():
+    data = _two_blobs(400)
+    a, b = _local(data), _local(data)
+    a.build_embedding(_CFG1, base_seed=7, deterministic=True, max_points=150)
+    b.build_embedding(_CFG1, base_seed=7, deterministic=True, max_points=150)
+    assert np.array_equal(a._subsample_idx, b._subsample_idx)
+    assert np.allclose(a.embedding, b.embedding)
+
+
+def test_multistage_subsample_runs_whole_chain_on_sample():
+    data = _two_blobs(400)
+    ll = _local(data)
+    ll.build_embedding(_CFG2, base_seed=1, deterministic=True, max_points=150)
+    # final stage is 2-D and length-M despite the 5-D intermediate stage
+    assert ll.embedding.shape == (400, 2)
+    assert ll._embedding_sampled.shape == (150, 2)
+    assert np.isfinite(ll.embedding).all()
+    ll.build_cluster(method="dbscan", configs={"eps": 1.5})
+    assert ll.cluster.shape == (400,)
+
+
+def test_no_subsample_when_max_points_ge_m():
+    ll = _local(_two_blobs(200))
+    ll.build_embedding(_CFG1, base_seed=3, deterministic=True, max_points=10_000)
+    assert ll._subsample_idx is None
+    assert ll.embedding.shape == (200, 2)
+
+
+def test_stale_subsample_state_cleared_on_rerun():
+    data = _two_blobs(400)
+    ll = _local(data)
+    ll.build_embedding(_CFG1, base_seed=1, deterministic=True, max_points=150)
+    assert ll._subsample_idx is not None
+    # second run does NOT subsample -> state must be cleared
+    ll.build_embedding(_CFG1, base_seed=1, deterministic=True, max_points=None)
+    assert ll._subsample_idx is None
+    assert ll._embedding_sampled is None
+    ll.build_cluster(method="dbscan", configs={"eps": 1.5})
+    assert ll.cluster.shape == (400,)
+
+
+def test_redbscan_after_subsample_reuses_sample():
+    ll = _local(_two_blobs(400))
+    ll.build_embedding(_CFG1, base_seed=3, deterministic=True, max_points=150)
+    ll.build_cluster(method="dbscan", configs={"eps": 1.0})
+    assert ll.cluster.shape == (400,)
+    ll.build_cluster(method="dbscan", configs={"eps": 3.0})  # no re-UMAP
+    assert ll._subsample_idx is not None and ll.cluster.shape == (400,)
+
+
+# --------------------------------------------------------------------------- #
+# service cap: refusal when the budget can't fit a UMAP-viable sample
+# --------------------------------------------------------------------------- #
+def test_cap_refuses_when_user_ceiling_below_nneighbors_floor():
+    lat = Latent(_two_blobs(500), time_window=1, device="cpu")
+    # need_min = max(2*5, n_neighbors+1) = 16; a ceiling of 15 cannot satisfy it
+    with pytest.raises(CastleDataError, match="below the UMAP minimum"):
+        run_umap_on_cluster(
+            lat, "init", _CFG1, base_seed=1, deterministic=True, max_points=15,
+        )
+
+
+def test_cap_refuses_at_s_equals_nine():
+    lat = Latent(_two_blobs(500), time_window=1, device="cpu")
+    with pytest.raises(CastleDataError, match="below the UMAP minimum"):
+        run_umap_on_cluster(
+            lat, "init", _CFG1, base_seed=1, deterministic=True, max_points=9,
+        )
+
+
+def test_service_subsample_notes_and_propagates():
+    lat = Latent(_two_blobs(500), time_window=1, device="cpu")
+    res = run_umap_on_cluster(
+        lat, "init", _CFG1, base_seed=11, deterministic=True, max_points=200,
+    )
+    assert "sample" in res.status_text.lower()
+    ll = res.local_latents
+    assert ll._subsample_idx is not None and len(ll._subsample_idx) == 200
+    assert ll.embedding.shape == (500, 2)
+    run_dbscan_on_local(ll, eps=1.5)
+    assert ll.cluster.shape == (500,)
+
+
+# --------------------------------------------------------------------------- #
+# export: training rows are the sampled rows only
+# --------------------------------------------------------------------------- #
+def test_saved_npz_is_sampled_marks_only_sampled_rows():
+    lat = Latent(_two_blobs(500), time_window=1, device="cpu")
+    res = run_umap_on_cluster(
+        lat, "init", _CFG1, base_seed=5, deterministic=True, max_points=200,
+    )
+    ll = res.local_latents
+    run_dbscan_on_local(ll, eps=1.5)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "cluster_x_.npz")
+        EmbeddingScatterPlot(ll).save_named_embedding(p)
+        z = np.load(p, allow_pickle=True)
+        assert "is_sampled" in z.files
+        assert z["is_sampled"].dtype == bool
+        assert int(z["is_sampled"].sum()) == 200   # only the sampled rows
+        assert z["emb"].shape == (500, 2) and z["cls"].shape == (500,)
+        # the legacy export filter trains on sampled rows only
+        frame_sampled = np.repeat(z["is_sampled"], 1)
+        valid = ~np.isnan(z["emb"]).any(axis=1)
+        assert int((valid & frame_sampled).sum()) == 200
+
+
+def test_saved_npz_all_sampled_when_no_subsample():
+    ll = _local(_two_blobs(60))
+    ll.build_embedding(_CFG1, base_seed=2, deterministic=True, max_points=None)
+    ll.build_cluster(method="dbscan", configs={"eps": 1.5})
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "cluster_y_.npz")
+        EmbeddingScatterPlot(ll).save_named_embedding(p)
+        z = np.load(p, allow_pickle=True)
+        assert int(z["is_sampled"].sum()) == 60   # all rows are real members

@@ -42,7 +42,9 @@ class _StubLocalLatent:
         base_seed: Optional[int] = None,
         log_path=None,
         deterministic: bool = False,
+        max_points: Optional[int] = None,
     ) -> List[int]:
+        self.max_points_seen = max_points
         stages = cfg if isinstance(cfg, list) else [cfg]
         seeds: List[int] = []
         for i, _ in enumerate(stages):

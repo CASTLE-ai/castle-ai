@@ -23,7 +23,97 @@ if TYPE_CHECKING:
 # structure). 5 is also UMAP's documented minimum.
 _UMAP_MIN_N_NEIGHBORS = 5
 
+# Number of sampled neighbours used to place + label each non-sampled point when
+# UMAP subsampling is active (see build_embedding). Modest + fixed (NOT tied to
+# the UMAP n_neighbors, which can be 100s and would over-smooth the propagation).
+_PROP_K = 15
+
 _logger = _logging.getLogger(__name__)
+
+
+def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
+                 chunk: int = 32768):
+    """k nearest *sampled* rows for each queried row, in FEATURE space.
+
+    ``sampled`` is the (S, width) fit set; the queries are
+    ``query_source[query_rows]`` evaluated in chunks (so the (Nq, width) fancy-
+    index copy is never materialised whole — it would be GBs at the scale that
+    forces subsampling in the first place). Returns ``(idx (Nq, k), dist (Nq,
+    k))`` with ``idx`` indexing into ``sampled`` (0..S-1).
+
+    GPU (cuML) when ``use_gpu`` and cuML/cupy import; else sklearn (CPU). The
+    cuML index lives on S rows (small) — NOT the M-row nn_descent graph that OOMs
+    UMAP — so this fits VRAM where the full UMAP did not. metric matches what
+    UMAP actually consumed (euclidean unless a cfg pins otherwise).
+    """
+    k = int(min(k, len(sampled)))
+    n_q = len(query_rows)
+    idx_out = np.empty((n_q, k), dtype=np.int64)
+    dist_out = np.empty((n_q, k), dtype=np.float64)
+    if n_q == 0:
+        return idx_out, dist_out
+
+    if use_gpu:
+        try:
+            from cuml.neighbors import NearestNeighbors as _cuNN  # noqa: PLC0415
+            import cupy as _cp  # noqa: PLC0415
+            from castle.core.clustering_backends import _cuda_device_ctx
+            with _cuda_device_ctx('cuda'):
+                nn = _cuNN(n_neighbors=k, metric=metric)
+                nn.fit(_cp.asarray(np.ascontiguousarray(sampled, dtype=np.float32)))
+                for s in range(0, n_q, chunk):
+                    rows = query_rows[s:s + chunk]
+                    q = _cp.asarray(np.ascontiguousarray(query_source[rows], dtype=np.float32))
+                    d, i = nn.kneighbors(q)
+                    idx_out[s:s + chunk] = _cp.asnumpy(i)
+                    dist_out[s:s + chunk] = _cp.asnumpy(d)
+            return idx_out, dist_out
+        except Exception as exc:  # noqa: BLE001 — cuML/cupy absent or OOM → CPU
+            _logger.info("GPU k-NN propagation unavailable (%s); using CPU.", exc)
+
+    from sklearn.neighbors import NearestNeighbors  # noqa: PLC0415
+    nn = NearestNeighbors(n_neighbors=k, metric=metric)
+    nn.fit(np.ascontiguousarray(sampled, dtype=np.float32))
+    for s in range(0, n_q, chunk):
+        rows = query_rows[s:s + chunk]
+        d, i = nn.kneighbors(np.ascontiguousarray(query_source[rows], dtype=np.float32))
+        idx_out[s:s + chunk] = i
+        dist_out[s:s + chunk] = d
+    return idx_out, dist_out
+
+
+def _interp_positions(emb_sampled, neighbor_idx, neighbor_dist):
+    """Distance-weighted 2D position for each non-sampled point: the weighted
+    average of its k nearest sampled neighbours' embedding coordinates."""
+    if len(neighbor_idx) == 0:
+        return np.empty((0, emb_sampled.shape[1]), dtype=emb_sampled.dtype)
+    w = 1.0 / (neighbor_dist + 1e-8)
+    w /= w.sum(axis=1, keepdims=True)
+    nb = emb_sampled[neighbor_idx]                       # (Nq, k, 2)
+    return (nb * w[:, :, None]).sum(axis=1)
+
+
+def _propagate_labels(labels_sampled, neighbor_idx):
+    """Majority cluster label for each non-sampled point from its k nearest
+    sampled neighbours, excluding DBSCAN noise (-1) — vectorised.
+
+    Mirrors :func:`castle.core.cluster_transfer._majority_vote_excluding_noise`:
+    -1 never wins a vote (a point all of whose neighbours are noise stays -1);
+    ties go to the lowest label id (argmax). One-shot over the (Nq, k) neighbour-
+    label matrix via a per-row bincount, so re-running DBSCAN for eps tuning
+    re-propagates in well under a second.
+    """
+    if len(neighbor_idx) == 0:
+        return np.empty(0, dtype=np.int64)
+    neigh = np.asarray(labels_sampled)[neighbor_idx]     # (Nq, k)
+    shifted = neigh.astype(np.int64) + 1                 # -1 -> bucket 0 (noise)
+    n_buckets = int(shifted.max()) + 1 if shifted.size else 1
+    nq = shifted.shape[0]
+    counts = np.zeros((nq, n_buckets), dtype=np.int32)
+    rows = np.repeat(np.arange(nq), shifted.shape[1])
+    np.add.at(counts, (rows, shifted.ravel()), 1)
+    counts[:, 0] = 0                                     # noise (-1) can never win
+    return (counts.argmax(axis=1) - 1).astype(np.int64)  # all-noise row -> argmax 0 -> -1
 
 DEFAULT_DEVICE = get_device()
 
@@ -313,7 +403,16 @@ class LocalLatent:
         self.color_avoid = color_avoid
         self._palette = generate_palette(color_avoid)
         self.export = dict()
-        
+        # UMAP-subsampling state (None unless build_embedding subsampled this run).
+        # _embedding_sampled is the S-row UMAP output DBSCAN clusters on; the
+        # neighbour arrays place + label the remaining (M-S) points. Reset
+        # unconditionally at every build_embedding entry so a later no-subsample
+        # run can never propagate against a stale sample (see build_cluster).
+        self._subsample_idx: Optional[np.ndarray] = None
+        self._embedding_sampled: Optional[np.ndarray] = None
+        self._prop_neighbor_idx: Optional[np.ndarray] = None
+        self._prop_nonsampled_idx: Optional[np.ndarray] = None
+
 
     def build_embedding(
         self,
@@ -324,6 +423,7 @@ class LocalLatent:
         log_path: Optional[Union[str, Path]] = None,
         reducer_factory: Optional[Callable[[dict], "DimensionReducer"]] = None,
         deterministic: bool = False,
+        max_points: Optional[int] = None,
     ) -> List[int]:
         """Run multi-stage UMAP dimensionality reduction.
 
@@ -400,6 +500,14 @@ class LocalLatent:
         )
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')
+        # Invalidation contract: always clear any subsample state from a PRIOR
+        # build_embedding so a later no-subsample run (smaller cluster / bigger
+        # budget) can't leave build_cluster propagating against a stale sample.
+        # Set again below only on the subsampled path.
+        self._subsample_idx = None
+        self._embedding_sampled = None
+        self._prop_neighbor_idx = None
+        self._prop_nonsampled_idx = None
 
         # P1-3: fail loud on non-finite input instead of letting UMAP build a
         # silent garbage embedding. Normal flow can't hit this — Latent marks
@@ -417,14 +525,36 @@ class LocalLatent:
         if not isinstance(configs, list):
             configs = [configs]
 
+        # Draw ONE master seed when none supplied — all stages use master+i, so
+        # the user only needs to remember a single value to reproduce any run.
+        # Resolved BEFORE the subsample draw so the sample is reproducible too.
+        if base_seed is None:
+            base_seed = secrets.randbits(32)
+            _logger.info("UMAP master seed drawn: %d", base_seed)
+
+        # Memory-aware subsampling: when max_points caps the M selected points,
+        # run the WHOLE multi-stage UMAP chain on a seeded S-row sample, then
+        # place + label the remaining (M-S) points by k-NN to the sample in the
+        # ORIGINAL feature space (stage-0 input). This is the only way to fit a
+        # cluster too large for UMAP's k-NN graph; labels stay complete for the
+        # time_series / ethogram. n_neighbors is validated against the EFFECTIVE
+        # fit size (S), not M.
+        M = int(Z.shape[0])
+        if max_points is not None and M > int(max_points):
+            S = int(max_points)
+            rng = np.random.default_rng(int(base_seed))
+            sub_idx = np.sort(rng.choice(M, size=S, replace=False))
+        else:
+            S = M
+            sub_idx = None
+
         # BUG-13: catch pathological configs before UMAP raises a cryptic
         # internal error. UMAP requires n_neighbors < n_samples and
-        # n_neighbors >= 5 (its documented minimum). Surface a CastleError
-        # with hints instead.
-        n_samples = int(Z.shape[0])
-        if n_samples < 2 * _UMAP_MIN_N_NEIGHBORS:
+        # n_neighbors >= 5 (its documented minimum). Validate against S (the
+        # actual UMAP fit size). Surface a CastleError with hints instead.
+        if S < 2 * _UMAP_MIN_N_NEIGHBORS:
             raise InsufficientDataError(
-                f"Only {n_samples} samples available for UMAP. "
+                f"Only {S} samples available for UMAP. "
                 f"Need at least {2 * _UMAP_MIN_N_NEIGHBORS}. "
                 f"Hint: check whether pre-scan dropped most frames "
                 f"(rotate_roi_tail missing on most masks?) or pick a "
@@ -441,17 +571,11 @@ class LocalLatent:
                     f"{_UMAP_MIN_N_NEIGHBORS}. UMAP's k-NN graph becomes "
                     f"degenerate at very small k."
                 )
-            if nn >= n_samples:
+            if nn >= S:
                 raise InsufficientDataError(
                     f"UMAP stage {i}: n_neighbors={nn} must be < n_samples="
-                    f"{n_samples}. Reduce n_neighbors or supply more frames."
+                    f"{S}. Reduce n_neighbors or supply more frames."
                 )
-
-        # Draw ONE master seed when none supplied — all stages use master+i,
-        # so the user only needs to remember a single value to reproduce any run.
-        if base_seed is None:
-            base_seed = secrets.randbits(32)
-            _logger.info("UMAP master seed drawn: %d", base_seed)
 
         # NOTE: per-feature z-score standardization was intentionally removed
         # (it never existed on main; it amplified low-variance / noise feature
@@ -463,6 +587,8 @@ class LocalLatent:
         resolved_seeds: List[int] = []
         resolved_configs: List[dict] = []
         total_stages = len(configs)
+        # Subsample ONCE up front; the full chain runs on the sampled rows only.
+        Z_fit = Z[sub_idx] if sub_idx is not None else Z
         for i, raw_cfg in enumerate(configs):
             seed, source = _resolve_umap_seed(raw_cfg, base_seed, i)
             stage_cfg = dict(raw_cfg)
@@ -478,9 +604,41 @@ class LocalLatent:
                 progress_callback(i, total_stages)
 
             reducer = reducer_factory(raw_cfg)
-            Z = reducer.fit_transform(Z, random_state=seed)
+            Z_fit = reducer.fit_transform(Z_fit, random_state=seed)
 
-        self.embedding = np.array(Z)
+        if sub_idx is None:
+            self.embedding = np.array(Z_fit)
+        else:
+            # Z_fit is the S-row final embedding. Place the (M-S) non-sampled
+            # points into a length-M embedding via a SINGLE feature-space k-NN to
+            # the sample (original stage-0 features `Z`, NOT the discarded
+            # intermediate UMAP spaces). The SAME neighbours label them in
+            # build_cluster — so a point sits among the neighbours whose majority
+            # gives its label (position and label stay consistent).
+            emb_sampled = np.asarray(Z_fit)
+            metric = (configs[0].get('metric', 'euclidean')
+                      if isinstance(configs[0], dict) else 'euclidean')
+            samp_mask = np.zeros(M, dtype=bool)
+            samp_mask[sub_idx] = True
+            ns_idx = np.where(~samp_mask)[0]
+            use_gpu = (isinstance(self.device, str)
+                       and self.device.startswith('cuda') and not deterministic)
+            nbr_idx, nbr_dist = _knn_sampled(
+                Z[sub_idx], Z, ns_idx, _PROP_K, metric, use_gpu,
+            )
+            embedding = np.empty((M, emb_sampled.shape[1]), dtype=np.float64)
+            embedding[sub_idx] = emb_sampled
+            embedding[ns_idx] = _interp_positions(emb_sampled, nbr_idx, nbr_dist)
+            self.embedding = embedding
+            self._subsample_idx = sub_idx
+            self._embedding_sampled = emb_sampled
+            self._prop_neighbor_idx = nbr_idx
+            self._prop_nonsampled_idx = ns_idx
+            _logger.info(
+                "UMAP subsampled: fit on %d of %d points; %d propagated via "
+                "%d-NN in feature space (metric=%s, gpu=%s).",
+                S, M, len(ns_idx), min(_PROP_K, S), metric, use_gpu,
+            )
         self.configs = resolved_configs
         self.umap_seeds = resolved_seeds
         return resolved_seeds
@@ -532,7 +690,34 @@ class LocalLatent:
             from castle.core.clustering_backends import build_default_clusterer
             clusterer = build_default_clusterer(method, configs or {}, device=self.device)
 
-        self.cluster = clusterer.fit_predict(self.embedding, random_state=random_state)
+        if self._subsample_idx is None:
+            self.cluster = clusterer.fit_predict(self.embedding, random_state=random_state)
+            return
+
+        # Subsampled run: DBSCAN clusters the S sampled points (cheap, so eps
+        # tuning re-runs fast), then each non-sampled point inherits the majority
+        # label of the same sampled neighbours that placed it in 2D — keeping the
+        # full-length labels consistent with the density model that produced them.
+        assert self._embedding_sampled is not None and self._prop_neighbor_idx is not None, (
+            "Subsample state is inconsistent — re-run build_embedding."
+        )
+        assert len(self._embedding_sampled) == len(self._subsample_idx), (
+            "Sampled embedding length does not match the subsample index."
+        )
+        M = len(self.embedding)
+        assert int(self._subsample_idx.max(initial=-1)) < M, (
+            "Subsample index points outside the current selection — stale state."
+        )
+        labels_sampled = clusterer.fit_predict(
+            self._embedding_sampled, random_state=random_state,
+        )
+        cluster = np.empty(M, dtype=np.asarray(labels_sampled).dtype)
+        cluster[self._subsample_idx] = labels_sampled
+        if self._prop_nonsampled_idx is not None and len(self._prop_nonsampled_idx):
+            cluster[self._prop_nonsampled_idx] = _propagate_labels(
+                labels_sampled, self._prop_neighbor_idx,
+            ).astype(cluster.dtype)
+        self.cluster = cluster
 
     def palette(self, x):
         if x == -1:

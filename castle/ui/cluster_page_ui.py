@@ -369,6 +369,15 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         info="GPU (cuML): fast, layout may vary slightly run-to-run. "
                              "CPU (umap-learn): slower but layout is reproducible with the same seed.",
                     )
+                    ui['umap_init'] = gr.Radio(
+                        choices=["spectral", "random"],
+                        value="spectral",
+                        label="UMAP init",
+                        info="spectral: faithful global structure + stable, but adds an "
+                             "eigensolve (~20s at ~1M pts). random: skips it (near-instant) "
+                             "but global layout is less reliable and varies more by seed. "
+                             "Set per UMAP stage in the config box to override.",
+                    )
                     ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
                     ui['eps'] = gr.Number(
@@ -572,6 +581,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             storage_path,
             project_name,
             ui['umap_device'],
+            ui['umap_init'],
         ],
         outputs=[
             local_latents, local_embedding_plot,

@@ -349,14 +349,16 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             # only (panels below keep normal sizing).
             gr.HTML(
                 "<style>"
-                "#castle-controls-row{gap:6px!important;}"
-                "#castle-controls-row .gap{gap:4px!important;}"
-                "#castle-controls-row .form{padding:4px!important;gap:4px!important;border:none!important;}"
-                "#castle-controls-row .block{padding:4px 6px!important;}"
-                "#castle-controls-row label{margin-bottom:2px!important;}"
-                "#castle-controls-row textarea,#castle-controls-row input{padding:4px 6px!important;}"
-                "#castle-controls-row button{min-height:30px!important;padding:4px 8px!important;}"
-                "#castle-controls-row .wrap{padding:2px!important;}"
+                "#castle-controls-row{gap:4px!important;}"
+                "#castle-controls-row .gap{gap:3px!important;}"
+                "#castle-controls-row .form{padding:3px!important;gap:3px!important;border:none!important;}"
+                "#castle-controls-row .block{padding:2px 6px!important;}"
+                "#castle-controls-row label{margin-bottom:1px!important;}"
+                "#castle-controls-row textarea,#castle-controls-row input{padding:3px 6px!important;}"
+                "#castle-controls-row button{min-height:28px!important;padding:3px 8px!important;}"
+                "#castle-controls-row .wrap{padding:1px!important;}"
+                # pull the panels up tight under the control bar
+                "#castle-panels-row{margin-top:-2px!important;}"
                 "</style>"
             )
             # Horizontal control bar ABOVE the panels. Two columns: UMAP (preset +
@@ -364,30 +366,34 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             # and DBSCAN+Submit (eps, min points, Generate Cluster, then Submit
             # right below it). Kept short so the panels below fit on screen.
             with gr.Row(visible=True, equal_height=False, elem_id="castle-controls-row") as ui['cluster_controls_row']:
-                # --- UMAP group ---
+                # --- UMAP group: two sub-columns (configs | everything else) ---
                 with gr.Column(scale=5, min_width=440):
                     with gr.Row():
-                        ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True, min_width=200)
-                        ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=2, max_lines=8, interactive=True, visible=True, min_width=200)
-                    with gr.Row():
-                        ui['umap_seed'] = gr.Textbox(
-                            label='UMAP seed', value='', placeholder='blank = random',
-                            interactive=True, min_width=110,
-                        )
-                        ui['umap_device'] = gr.Radio(
-                            choices=["GPU", "CPU"], value="GPU", label="Backend",
-                            min_width=110,
-                        )
-                        ui['umap_subsample'] = gr.Checkbox(
-                            label="Subsample UMAP", value=False, interactive=True,
-                            min_width=110,
-                        )
-                        ui['umap_subsample_pct'] = gr.Number(
-                            label="% points", value=30, precision=0,
-                            minimum=1, maximum=100, interactive=True, min_width=80,
-                        )
-                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
-                    ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
+                        # configs gets its own sub-column so the JSON reads clearly
+                        with gr.Column(scale=2, min_width=190):
+                            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=4, max_lines=8, interactive=True, visible=True)
+                        # everything else: preset on top, then the inline param row
+                        with gr.Column(scale=3, min_width=240):
+                            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
+                            with gr.Row():
+                                ui['umap_seed'] = gr.Textbox(
+                                    label='seed', value='', placeholder='blank = random',
+                                    interactive=True, min_width=80,
+                                )
+                                ui['umap_device'] = gr.Radio(
+                                    choices=["GPU", "CPU"], value="GPU", label="Backend",
+                                    min_width=95,
+                                )
+                                ui['umap_subsample'] = gr.Checkbox(
+                                    label="Subsample", value=False, interactive=True,
+                                    min_width=85,
+                                )
+                                ui['umap_subsample_pct'] = gr.Number(
+                                    label="% pts", value=30, precision=0,
+                                    minimum=1, maximum=100, interactive=True, min_width=70,
+                                )
+                            ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
+                            ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
                 # --- DBSCAN + Submit group ---
                 with gr.Column(scale=3, min_width=200):
                     ui['eps'] = gr.Number(
@@ -408,7 +414,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
 
             # Three panels side by side: cluster tree | embedding | clip preview.
             # Embedding height is FIXED so generating a plot never reflows.
-            with gr.Row(visible=True, equal_height=False) as ui['cluster_row_main']:
+            with gr.Row(visible=True, equal_height=False, elem_id="castle-panels-row") as ui['cluster_row_main']:
                 # --- cluster tree (scrolls internally) ---
                 with gr.Column(scale=2, min_width=190):
                     ui['cluster_tree_html'] = gr.HTML(

@@ -361,38 +361,41 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 "#castle-panels-row{margin-top:-6px!important;}"
                 "</style>"
             )
-            # Horizontal control bar ABOVE the panels. UMAP column groups all its
-            # settings into ONE bordered panel (preset + configs side by side on
-            # top, then seed / backend / subsample-% inline) so it reads as a
-            # single "UMAP settings" unit; DBSCAN+Submit is the narrow column.
+            # Horizontal control bar ABOVE the panels. UMAP big column = two
+            # sub-columns: (preset on top, seed/backend/Subsample% inline below) |
+            # (UMAP configs with Generate Embedding stacked under it). DBSCAN is
+            # the narrow column on the right.
             with gr.Row(visible=True, equal_height=False, elem_id="castle-controls-row") as ui['cluster_controls_row']:
-                # --- UMAP group (one cohesive panel) ---
-                with gr.Column(scale=5, min_width=440):
+                # --- UMAP group (one cohesive panel, two sub-columns) ---
+                with gr.Column(scale=6, min_width=460):
                     with gr.Group():
                         with gr.Row():
-                            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True, min_width=190, scale=1)
-                            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=4, max_lines=8, interactive=True, visible=True, min_width=190, scale=1)
-                        with gr.Row():
-                            ui['umap_seed'] = gr.Textbox(
-                                label='seed', value='', placeholder='random',
-                                interactive=True, min_width=80,
-                            )
-                            ui['umap_device'] = gr.Radio(
-                                choices=["GPU", "CPU"], value="GPU", label="Backend",
-                                min_width=95,
-                            )
-                            # Subsample folded into a single % field: 100 = use all
-                            # points (off); lower it to subsample. No separate
-                            # checkbox / column.
-                            ui['umap_subsample_pct'] = gr.Number(
-                                label="Subsample %", value=100, precision=0,
-                                minimum=1, maximum=100, interactive=True, min_width=110,
-                                info="100 = all points",
-                            )
-                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
+                            # sub-column: preset + the inline param row
+                            with gr.Column(scale=3, min_width=250):
+                                ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
+                                with gr.Row():
+                                    ui['umap_seed'] = gr.Textbox(
+                                        label='seed', value='', placeholder='random',
+                                        interactive=True, min_width=70, scale=1,
+                                    )
+                                    ui['umap_device'] = gr.Radio(
+                                        choices=["GPU", "CPU"], value="GPU", label="Backend",
+                                        min_width=130, scale=2,
+                                    )
+                                    # Subsample folded into one % field: 100 = all
+                                    # points (off); lower it to subsample.
+                                    ui['umap_subsample_pct'] = gr.Number(
+                                        label="Subsample %", value=100, precision=0,
+                                        minimum=1, maximum=100, interactive=True,
+                                        min_width=90, scale=1,
+                                    )
+                            # sub-column: configs + Generate Embedding (stacked)
+                            with gr.Column(scale=2, min_width=190):
+                                ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=3, max_lines=8, interactive=True, visible=True)
+                                ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
-                # --- DBSCAN + Submit group (narrow) ---
-                with gr.Column(scale=2, min_width=180):
+                # --- DBSCAN + Submit group (narrower) ---
+                with gr.Column(scale=2, min_width=160):
                     with gr.Row():
                         ui['eps'] = gr.Number(
                             label='eps (radius)', interactive=True, visible=True,

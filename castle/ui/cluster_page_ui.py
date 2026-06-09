@@ -357,6 +357,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 "#castle-controls-row textarea,#castle-controls-row input{padding:3px 6px!important;}"
                 "#castle-controls-row button{min-height:28px!important;padding:3px 8px!important;}"
                 "#castle-controls-row .wrap{padding:1px!important;}"
+                # UMAP configs ~2.5 lines tall (lines= only takes integers)
+                "#castle-umap-config textarea{min-height:54px!important;height:54px!important;}"
                 # pull the panels up tight under the control bar
                 "#castle-panels-row{margin-top:-6px!important;}"
                 "</style>"
@@ -391,7 +393,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                                     )
                             # sub-column: configs + Generate Embedding (stacked)
                             with gr.Column(scale=2, min_width=190):
-                                ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=2, max_lines=8, interactive=True, visible=True)
+                                ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=2, max_lines=8, interactive=True, visible=True, elem_id="castle-umap-config")
                                 ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
                 # --- DBSCAN + Submit group (narrower) ---

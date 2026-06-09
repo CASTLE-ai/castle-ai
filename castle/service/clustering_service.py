@@ -1287,12 +1287,17 @@ def run_umap_on_cluster(
     )
 
 
-def run_dbscan_on_local(local_latents: Any, eps: float) -> None:
+def run_dbscan_on_local(
+    local_latents: Any, eps: float, min_samples: Optional[int] = None,
+) -> None:
     """Run DBSCAN in place on an existing :class:`LocalLatent`.
 
     Args:
         local_latents: A LocalLatent with an embedding already built.
         eps: DBSCAN epsilon. The function mutates ``local_latents.cluster``.
+        min_samples: DBSCAN min_samples (core-point neighbour count). ``None``
+            keeps the backend default (5). Larger → more points become noise and
+            only denser regions form clusters.
 
     Raises:
         InsufficientDataError: No embedding has been built yet.
@@ -1306,7 +1311,10 @@ def run_dbscan_on_local(local_latents: Any, eps: float) -> None:
         raise InsufficientDataError(
             "No embedding available. Run UMAP before clustering."
         )
-    local_latents.build_cluster(method='dbscan', configs={'eps': eps})
+    configs: dict = {'eps': eps}
+    if min_samples is not None:
+        configs['min_samples'] = int(min_samples)
+    local_latents.build_cluster(method='dbscan', configs=configs)
 
 
 @dataclass

@@ -304,17 +304,25 @@ def _resolve_umap_log_path(storage_path, project_name) -> str | None:
         return None
 
 
-def generate_local_cluster(local_latents, eps, progress=gr.Progress()):
+def generate_local_cluster(local_latents, eps, min_samples=None, progress=gr.Progress()):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.run_dbscan_on_local`.
+
+    ``min_samples`` is the DBSCAN core-point neighbour count (blank/<=0 → backend
+    default 5). Larger marks more points as noise and keeps only denser clusters.
     """
     from castle.core.types import InsufficientDataError
     from castle.service.clustering_service import run_dbscan_on_local
     from castle.service.plotting_service import build_scatter_plot
 
+    try:
+        ms = int(min_samples) if min_samples and int(min_samples) > 0 else None
+    except (TypeError, ValueError):
+        ms = None
+
     progress(0, desc="Running DBSCAN...")
     try:
-        run_dbscan_on_local(local_latents, float(eps))
+        run_dbscan_on_local(local_latents, float(eps), min_samples=ms)
     except InsufficientDataError as e:
         gr.Info(str(e))
         return None, None

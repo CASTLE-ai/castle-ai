@@ -422,6 +422,20 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                             "Adjust based on the density of the embedding scatter plot."
                         ),
                     )
+                    ui['min_samples'] = gr.Number(
+                        label='DBSCAN min points',
+                        interactive=True,
+                        visible=True,
+                        value=5,
+                        precision=0,
+                        minimum=1,
+                        info=(
+                            "DBSCAN min_samples: how many neighbours a point needs "
+                            "(within the radius) to seed a cluster. Larger = more "
+                            "points dropped as noise (-1) and only denser regions "
+                            "cluster; smaller = more permissive. Default: 5."
+                        ),
+                    )
                     ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
                     ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
                     ui['overwrite_confirm_btn'] = gr.Button(
@@ -625,7 +639,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     )
     ui['cluster_run'].click(
         fn=generate_local_cluster,
-        inputs=[local_latents, ui['eps']],
+        inputs=[local_latents, ui['eps'], ui['min_samples']],
         outputs=[local_embedding_plot, ui['embedding_plot']],
     )
 

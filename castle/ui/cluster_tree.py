@@ -143,7 +143,7 @@ def build_cluster_tree_markdown(cluster_meta, cluster_array):
 _TREE_CSS = """\
 <style>
 .castle-cluster-tree{font-family:"Courier New",Consolas,monospace;font-size:12.5px;
-  border:1px solid var(--border-color-primary,#e0e0e0);border-radius:6px;padding:4px;max-height:620px;
+  border:1px solid var(--border-color-primary,#e0e0e0);border-radius:6px;padding:4px;max-height:460px;
   overflow-y:auto;background:var(--background-fill-primary,#fcfcfc);margin-bottom:2px;}
 .cct-node{display:flex;align-items:center;padding:3px 6px;border-radius:4px;
   gap:5px;line-height:1.6;cursor:pointer;user-select:none;color:var(--body-text-color,#333);

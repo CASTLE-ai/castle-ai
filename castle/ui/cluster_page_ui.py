@@ -343,12 +343,57 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             # race to delete each other's clip (3-A).
             last_clip_path_state = gr.State(None)
 
-            # Compact 3-column working area: cluster tree | controls | embedding
-            # + preview. Tuned so params, the UMAP scatter and the clip preview
-            # sit on one screen without vertical scrolling; the embedding has a
-            # FIXED render height so generating a plot never reflows the layout.
+            # Horizontal control bar (UMAP | DBSCAN | Submit) ABOVE the panels,
+            # so the tree + embedding + clip preview get the full width below it.
+            with gr.Row(visible=True, equal_height=False) as ui['cluster_controls_row']:
+                # --- UMAP group ---
+                with gr.Column(scale=4, min_width=300):
+                    ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
+                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=3, max_lines=8, interactive=True, visible=True)
+                    with gr.Row():
+                        ui['umap_seed'] = gr.Textbox(
+                            label='UMAP seed', value='', placeholder='blank = random',
+                            interactive=True, min_width=120,
+                        )
+                        ui['umap_device'] = gr.Radio(
+                            choices=["GPU", "CPU"], value="GPU", label="Backend",
+                            min_width=110,
+                        )
+                    with gr.Row():
+                        ui['umap_subsample'] = gr.Checkbox(
+                            label="Subsample UMAP", value=False, interactive=True,
+                            min_width=120,
+                        )
+                        ui['umap_subsample_pct'] = gr.Number(
+                            label="% points", value=30, precision=0,
+                            minimum=1, maximum=100, interactive=True, min_width=90,
+                        )
+                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
+                    ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
+                # --- DBSCAN group ---
+                with gr.Column(scale=2, min_width=160):
+                    ui['eps'] = gr.Number(
+                        label='eps (DBSCAN radius)', interactive=True, visible=True,
+                        value=1, step=0.1, minimum=0.1, maximum=10,
+                    )
+                    ui['min_samples'] = gr.Number(
+                        label='min points', interactive=True, visible=True,
+                        value=5, precision=0, minimum=1,
+                    )
+                    ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
+                # --- Submit group ---
+                with gr.Column(scale=2, min_width=160):
+                    ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
+                    ui['overwrite_confirm_btn'] = gr.Button(
+                        "⚠️ Confirm Overwrite", variant="stop", visible=False,
+                    )
+                    ui['overwrite_warning_md'] = gr.Markdown("", visible=False)
+                    ui['submit_status'] = gr.Markdown("", visible=True)
+
+            # Three panels side by side: cluster tree | embedding | clip preview.
+            # Embedding height is FIXED so generating a plot never reflows.
             with gr.Row(visible=True, equal_height=False) as ui['cluster_row_main']:
-                # --- cluster tree (narrow, scrolls internally) ---
+                # --- cluster tree (scrolls internally) ---
                 with gr.Column(scale=2, min_width=190):
                     ui['cluster_tree_html'] = gr.HTML(
                         value="<em style='color:#888;font-size:12px'>No clusters yet.</em>",
@@ -373,50 +418,12 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         "left:-9999px!important;width:1px!important;height:1px!important;"
                         "overflow:hidden!important;}</style>"
                     )
-                # --- controls (compact; paired rows, no help paragraphs) ---
-                with gr.Column(scale=3, min_width=270):
-                    ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
-                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=4, max_lines=8, interactive=True, visible=True)
-                    with gr.Row():
-                        ui['umap_seed'] = gr.Textbox(
-                            label='UMAP seed', value='', placeholder='blank = random',
-                            interactive=True, min_width=120,
-                        )
-                        ui['umap_device'] = gr.Radio(
-                            choices=["GPU", "CPU"], value="GPU", label="Backend",
-                            min_width=120,
-                        )
-                    with gr.Row():
-                        ui['umap_subsample'] = gr.Checkbox(
-                            label="Subsample UMAP", value=False, interactive=True,
-                            min_width=120,
-                        )
-                        ui['umap_subsample_pct'] = gr.Number(
-                            label="% points", value=30, precision=0,
-                            minimum=1, maximum=100, interactive=True, min_width=100,
-                        )
-                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
-                    ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
-                    with gr.Row():
-                        ui['eps'] = gr.Number(
-                            label='eps (DBSCAN radius)', interactive=True, visible=True,
-                            value=1, step=0.1, minimum=0.1, maximum=10, min_width=120,
-                        )
-                        ui['min_samples'] = gr.Number(
-                            label='min points', interactive=True, visible=True,
-                            value=5, precision=0, minimum=1, min_width=100,
-                        )
-                    ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
-                    ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
-                    ui['overwrite_confirm_btn'] = gr.Button(
-                        "⚠️ Confirm Overwrite", variant="stop", visible=False,
-                    )
-                    ui['overwrite_warning_md'] = gr.Markdown("", visible=False)
-                    ui['submit_status'] = gr.Markdown("", visible=True)
-                # --- embedding + clip preview (fixed heights → no reflow) ---
-                with gr.Column(scale=6, min_width=360):
-                    ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True, height=400)
-                    ui['display'] = gr.Video(label='Display', height=230, interactive=False, visible=True, autoplay=True, loop=True)
+                # --- embedding scatter ---
+                with gr.Column(scale=5, min_width=320):
+                    ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True, height=460)
+                # --- clip preview ---
+                with gr.Column(scale=4, min_width=280):
+                    ui['display'] = gr.Video(label='Display', height=330, interactive=False, visible=True, autoplay=True, loop=True)
                     ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
             
             ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)
@@ -745,6 +752,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     visibility_components = {
         'previous_sessions_accordion': ui['previous_sessions_accordion'],
         'cluster_input_accordion': ui['cluster_input_accordion'],
+        'cluster_controls_row': ui['cluster_controls_row'],
         'cluster_row_main': ui['cluster_row_main'],
         'syllables_plot': ui['syllables_plot'],
         'cluster_row_files': ui['cluster_row_files'],

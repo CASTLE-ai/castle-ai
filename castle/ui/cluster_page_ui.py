@@ -394,16 +394,17 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                                 )
                             ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
                             ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
-                # --- DBSCAN + Submit group ---
-                with gr.Column(scale=3, min_width=200):
-                    ui['eps'] = gr.Number(
-                        label='eps (DBSCAN radius)', interactive=True, visible=True,
-                        value=1, step=0.1, minimum=0.1, maximum=10,
-                    )
-                    ui['min_samples'] = gr.Number(
-                        label='min points', interactive=True, visible=True,
-                        value=5, precision=0, minimum=1,
-                    )
+                # --- DBSCAN + Submit group (narrow) ---
+                with gr.Column(scale=2, min_width=180):
+                    with gr.Row():
+                        ui['eps'] = gr.Number(
+                            label='eps (radius)', interactive=True, visible=True,
+                            value=1, step=0.1, minimum=0.1, maximum=10, min_width=85,
+                        )
+                        ui['min_samples'] = gr.Number(
+                            label='min points', interactive=True, visible=True,
+                            value=5, precision=0, minimum=1, min_width=85,
+                        )
                     ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True, size="sm")
                     ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary", size="sm")
                     ui['overwrite_confirm_btn'] = gr.Button(

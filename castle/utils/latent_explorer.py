@@ -661,11 +661,10 @@ class LocalLatent:
         if hasattr(self, 'cluster'):
             delattr(self, 'cluster')
 
-        if clusterer is None:
-            from castle.core.clustering_backends import build_default_clusterer
-            clusterer = build_default_clusterer(method, configs or {}, device=self.device)
-
         if self._subsample_idx is None:
+            if clusterer is None:
+                from castle.core.clustering_backends import build_default_clusterer
+                clusterer = build_default_clusterer(method, configs or {}, device=self.device)
             self.cluster = clusterer.fit_predict(self.embedding, random_state=random_state)
             return
 
@@ -680,9 +679,32 @@ class LocalLatent:
             "Sampled embedding length does not match the subsample index."
         )
         M = len(self.embedding)
+        S = len(self._embedding_sampled)
         assert int(self._subsample_idx.max(initial=-1)) < M, (
             "Subsample index points outside the current selection — stale state."
         )
+        # DBSCAN runs on the S-point subsample, but min_samples (a neighbour
+        # COUNT) is interpreted by the user at full-data scale. A uniform sample
+        # keeps the eps-radius density but scales counts by S/M, so feeding the
+        # full-scale min_samples straight in makes it ~M/S times stricter (e.g.
+        # 467 on a 1% sample needs ~10% of neighbours -> almost everything noise).
+        # Scale min_samples by S/M so "min points" behaves the same at any
+        # subsample %. eps is a 2D radius set by UMAP's layout (~N-invariant) and
+        # is NOT scaled. Only the default (config-built) DBSCAN is rescaled; an
+        # injected clusterer is used verbatim.
+        if clusterer is None:
+            from castle.core.clustering_backends import build_default_clusterer
+            cfg = dict(configs or {})
+            _ms = cfg.get('min_samples')
+            if _ms:
+                scaled = max(1, int(round(int(_ms) * S / M)))
+                if scaled != int(_ms):
+                    _logger.info(
+                        "DBSCAN min_samples %d -> %d (scaled by subsample S/M = %d/%d)",
+                        int(_ms), scaled, S, M,
+                    )
+                cfg['min_samples'] = scaled
+            clusterer = build_default_clusterer(method, cfg, device=self.device)
         labels_sampled = np.asarray(clusterer.fit_predict(
             self._embedding_sampled, random_state=random_state,
         ))

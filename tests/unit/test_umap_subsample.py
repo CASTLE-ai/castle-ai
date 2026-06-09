@@ -144,6 +144,21 @@ def test_stale_subsample_state_cleared_on_rerun():
     assert ll.cluster.shape == (400,)
 
 
+def test_min_samples_scaled_to_subsample():
+    # DBSCAN runs on the S-point subsample; a full-scale min_samples must be
+    # scaled by S/M, else it is ~M/S times stricter and clusters collapse to
+    # noise. Two separated blobs (2000), 10% sample, min_samples=100 (5% of full
+    # = sensible; 50% of the 200 sample = far too strict unless scaled).
+    data = _two_blobs(2000, sep=9.0)
+    ll = _local(data)
+    ll.build_embedding(_CFG1, base_seed=1, deterministic=True, max_points=200)
+    ll.build_cluster(method="dbscan", configs={"eps": 1.0, "min_samples": 100})
+    n_clusters = len(set(ll.cluster.tolist()) - {-1})
+    noise = int((ll.cluster == -1).sum())
+    assert n_clusters >= 2          # the two blobs still form (scaling worked)
+    assert noise < 2000 * 0.5       # not collapsed to mostly-noise
+
+
 def test_redbscan_after_subsample_reuses_sample():
     ll = _local(_two_blobs(400))
     ll.build_embedding(_CFG1, base_seed=3, deterministic=True, max_points=150)

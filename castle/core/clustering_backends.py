@@ -164,12 +164,20 @@ def resolve_dbscan_class(device: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-# cuML's build_algo='auto' silently reverts to exact brute_force_knn O(N^2)
-# whenever a random_state is set — and CASTLE always sets one — so the fast
-# approximate kNN (nn_descent) must be requested explicitly. Below this row
-# count, exact brute kNN is still fast (~<=15s at ~150k) AND higher quality, so
-# keep it; nn_descent only kicks in past here where brute gets slow / OOMs.
-_NN_DESCENT_MIN_ROWS = 150_000
+# cuML's build_algo='auto' reverts to exact brute_force_knn O(N^2) whenever a
+# random_state is set — and CASTLE always sets one — so the approximate kNN
+# (nn_descent) only runs if requested explicitly. We gate that request to a VERY
+# high row count, because nn_descent's approximate graph has LOW RECALL on real
+# high-dimensional behavior latents (continuous pose manifold, near-duplicate
+# frames, heavy-tailed neighbour distances): it builds a fragmented k-NN graph
+# and UMAP then lays the points out as a scattered cloud with no clusters —
+# observed in the field at >150k, while exact kNN below that produced clean
+# clusters (the only size-dependent branch in the path, so unambiguous). Exact
+# brute kNN is fast enough across the practical range (~22s at 200k x 1362 dims,
+# measured) and is what well-behaved runs already used, so prefer it; nn_descent
+# only engages past here, where brute is genuinely infeasible (and the user can
+# subsample instead). A build_algo in the UMAP config still overrides this.
+_NN_DESCENT_MIN_ROWS = 1_000_000
 
 
 def _resolve_cuda_index(device: Optional[str]) -> Optional[int]:

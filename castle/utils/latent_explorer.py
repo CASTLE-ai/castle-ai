@@ -23,10 +23,12 @@ if TYPE_CHECKING:
 # structure). 5 is also UMAP's documented minimum.
 _UMAP_MIN_N_NEIGHBORS = 5
 
-# Number of sampled neighbours used to place + label each non-sampled point when
-# UMAP subsampling is active (see build_embedding). Modest + fixed (NOT tied to
-# the UMAP n_neighbors, which can be 100s and would over-smooth the propagation).
-_PROP_K = 15
+# Non-sampled points are placed AND labelled by their single nearest sampled
+# point (nearest-prototype) when UMAP subsampling is active — see build_embedding
+# / build_cluster. One neighbour keeps the 2D position and the cluster label
+# mutually consistent (a k>1 majority vote diverges from the snapped position on
+# UMAP's non-linear layout and scatters labels).
+_PROP_K = 1
 
 _logger = _logging.getLogger(__name__)
 
@@ -81,28 +83,6 @@ def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
         dist_out[s:s + chunk] = d
     return idx_out, dist_out
 
-
-def _propagate_labels(labels_sampled, neighbor_idx):
-    """Majority cluster label for each non-sampled point from its k nearest
-    sampled neighbours, excluding DBSCAN noise (-1) — vectorised.
-
-    Mirrors :func:`castle.core.cluster_transfer._majority_vote_excluding_noise`:
-    -1 never wins a vote (a point all of whose neighbours are noise stays -1);
-    ties go to the lowest label id (argmax). One-shot over the (Nq, k) neighbour-
-    label matrix via a per-row bincount, so re-running DBSCAN for eps tuning
-    re-propagates in well under a second.
-    """
-    if len(neighbor_idx) == 0:
-        return np.empty(0, dtype=np.int64)
-    neigh = np.asarray(labels_sampled)[neighbor_idx]     # (Nq, k)
-    shifted = neigh.astype(np.int64) + 1                 # -1 -> bucket 0 (noise)
-    n_buckets = int(shifted.max()) + 1 if shifted.size else 1
-    nq = shifted.shape[0]
-    counts = np.zeros((nq, n_buckets), dtype=np.int32)
-    rows = np.repeat(np.arange(nq), shifted.shape[1])
-    np.add.at(counts, (rows, shifted.ravel()), 1)
-    counts[:, 0] = 0                                     # noise (-1) can never win
-    return (counts.argmax(axis=1) - 1).astype(np.int64)  # all-noise row -> argmax 0 -> -1
 
 DEFAULT_DEVICE = get_device()
 
@@ -599,17 +579,17 @@ class LocalLatent:
             self.embedding = np.array(Z_fit)
         else:
             # Z_fit is the S-row final embedding. Place the (M-S) non-sampled
-            # points into a length-M embedding via a SINGLE feature-space k-NN to
-            # the sample (original stage-0 features `Z`, NOT the discarded
-            # intermediate UMAP spaces). SNAP each to its NEAREST sampled
-            # neighbour's 2D position — do NOT distance-weight-average the k
-            # neighbours: UMAP (esp. min_dist=0) is non-linear, so a point's
-            # feature neighbours routinely land in DIFFERENT 2D clumps, and
-            # averaging then drags it into the empty gap between them —
-            # collapsing most points onto the global centroid (the dense central
-            # blob bug). Snapping keeps every point on a real clump, faithful to
-            # the sampled UMAP. The k neighbours still vote the LABEL in
-            # build_cluster (majority is robust; the nearest is one of them).
+            # points into a length-M embedding via a SINGLE feature-space nearest
+            # neighbour in the sample (original stage-0 features `Z`, NOT the
+            # discarded intermediate UMAP spaces). SNAP each to that nearest
+            # sampled point's 2D position — do NOT distance-weight-average
+            # several neighbours: UMAP (esp. min_dist=0) is non-linear, so a
+            # point's feature neighbours land in DIFFERENT 2D clumps, and
+            # averaging drags it into the empty gap between them — collapsing most
+            # points onto the global centroid. Snapping keeps every point on a
+            # real clump. build_cluster then labels each point with the SAME
+            # nearest sampled point's cluster (one neighbour for both position and
+            # label, so colour and location can't disagree).
             emb_sampled = np.asarray(Z_fit)
             metric = (configs[0].get('metric', 'euclidean')
                       if isinstance(configs[0], dict) else 'euclidean')
@@ -703,15 +683,25 @@ class LocalLatent:
         assert int(self._subsample_idx.max(initial=-1)) < M, (
             "Subsample index points outside the current selection — stale state."
         )
-        labels_sampled = clusterer.fit_predict(
+        labels_sampled = np.asarray(clusterer.fit_predict(
             self._embedding_sampled, random_state=random_state,
-        )
-        cluster = np.empty(M, dtype=np.asarray(labels_sampled).dtype)
+        ))
+        cluster = np.empty(M, dtype=labels_sampled.dtype)
         cluster[self._subsample_idx] = labels_sampled
         if self._prop_nonsampled_idx is not None and len(self._prop_nonsampled_idx):
-            cluster[self._prop_nonsampled_idx] = _propagate_labels(
-                labels_sampled, self._prop_neighbor_idx,
-            ).astype(cluster.dtype)
+            # Each non-sampled point inherits the cluster label of the SAME
+            # nearest sampled point that build_embedding snapped its 2D position
+            # to. Label and position must come from one neighbour: a k-NN
+            # majority vote (in feature space) routinely disagrees with the
+            # single nearest neighbour's 2D location (UMAP is non-linear, so a
+            # point's feature neighbours span different 2D clusters), which paints
+            # a point INSIDE cluster A with cluster B's colour — scattered
+            # confetti over the embedding. Nearest-prototype keeps colour and
+            # position consistent: the point sits on a sampled point and shares
+            # its label.
+            cluster[self._prop_nonsampled_idx] = labels_sampled[
+                self._prop_neighbor_idx[:, 0]
+            ]
         self.cluster = cluster
 
     def palette(self, x):

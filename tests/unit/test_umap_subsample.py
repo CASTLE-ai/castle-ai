@@ -20,7 +20,6 @@ from castle.core.types import CastleDataError
 from castle.utils.latent_explorer import (
     Latent,
     LocalLatent,
-    _propagate_labels,
     _knn_sampled,
 )
 from castle.service.clustering_service import run_umap_on_cluster, run_dbscan_on_local
@@ -48,19 +47,6 @@ _CFG2 = [
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
-def test_propagate_labels_excludes_noise_and_handles_ties():
-    labels_s = np.array([0, 0, 1, 1, 1, -1, 2])
-    nidx = np.array([
-        [0, 1, 2],   # 0,0,1 -> 0
-        [2, 3, 4],   # 1,1,1 -> 1
-        [5, 5, 5],   # all noise -> -1
-        [5, 5, 2],   # -1,-1,1 -> 1
-        [0, 2, 6],   # 0,1,2 tie -> lowest id 0
-    ])
-    assert list(_propagate_labels(labels_s, nidx)) == [0, 1, -1, 1, 0]
-    assert _propagate_labels(labels_s, np.empty((0, 3), dtype=int)).shape == (0,)
-
-
 def test_knn_sampled_cpu_euclidean():
     samp = np.array([[0.0, 0.0], [100.0, 100.0]], dtype=np.float32)
     q = np.array([[1.0, 1.0], [99.0, 99.0]], dtype=np.float32)
@@ -98,6 +84,23 @@ def test_nonsampled_points_snap_onto_sampled_positions():
     assert all(tuple(np.round(p, 6)) in sampled_set for p in ns_pos)
     # spread of non-sampled positions ~ spread of sampled (no centroid collapse)
     assert ns_pos.std(0).min() > 0.3 * sampled_pos.std(0).min()
+
+
+def test_nonsampled_label_matches_its_2d_position_cluster():
+    # Regression: a non-sampled point's cluster label MUST be the label of the
+    # sampled point it was snapped onto — otherwise it shows as a wrong-coloured
+    # dot sitting inside another cluster (confetti-over-the-embedding bug).
+    data = _two_blobs(400)
+    ll = _local(data)
+    ll.build_embedding(_CFG1, base_seed=4, deterministic=True, max_points=150)
+    ll.build_cluster(method="dbscan", configs={"eps": 1.5})
+    sub = ll._subsample_idx
+    ns = ll._prop_nonsampled_idx
+    # the sampled point each non-sampled point shares its 2D position with
+    sampled_pos = {tuple(np.round(ll.embedding[i], 6)): int(ll.cluster[i]) for i in sub}
+    for j in ns:
+        pos = tuple(np.round(ll.embedding[j], 6))
+        assert int(ll.cluster[j]) == sampled_pos[pos]   # label == co-located sample's label
 
 
 def test_subsample_is_reproducible_with_seed():

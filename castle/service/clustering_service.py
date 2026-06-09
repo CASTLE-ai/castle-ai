@@ -1339,6 +1339,7 @@ def submit_local_to_global(
     parent_cluster_name: Optional[str] = None,
     umap_config_str: Optional[str] = None,
     eps_value: Optional[float] = None,
+    min_samples_value: Optional[int] = None,
     preset_value: Optional[str] = None,
     umap_seed: Optional[int] = None,
     overwrite: bool = False,
@@ -1460,6 +1461,7 @@ def submit_local_to_global(
             'parent_cluster_name': parent_cluster_name,
             'umap_config': umap_config_str,
             'eps': eps_value,
+            'min_samples': min_samples_value,
             'preset': preset_value,
             'umap_seed': resolved_seed,
             'embedding_npz': (

@@ -647,7 +647,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         storage_path, project_name, latents, local_latents, mulvideo,
         ui['cluster_tree_select'],
         ui['umap_config_text'], ui['eps'], overwrite_state,
-        ui['preset_dropdown'], ui['umap_seed'],
+        ui['preset_dropdown'], ui['umap_seed'], ui['min_samples'],
     ]
     _submit_outputs = [
         ui['syllables_plot'],
@@ -681,7 +681,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         inputs=[ui['cluster_tree_select'], latents, storage_path, project_name],
         outputs=[ui['umap_config_text'], ui['eps'], ui['embedding_plot'],
                  local_latents, local_embedding_plot, overwrite_state,
-                 ui['submit_status'], ui['preset_dropdown'], ui['umap_seed']],
+                 ui['submit_status'], ui['preset_dropdown'], ui['umap_seed'],
+                 ui['min_samples']],
     )
 
     def _auto_update_tree(sp, pn, lat):

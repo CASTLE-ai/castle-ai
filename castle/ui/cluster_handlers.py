@@ -360,7 +360,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
     Outputs (in order, matching the .change binding):
         umap_config_text, eps, embedding_plot_image, local_latents_state,
         local_embedding_plot_state, overwrite_state (always reset to False),
-        submit_status_md, preset_dropdown, umap_seed_textbox.
+        submit_status_md, preset_dropdown, umap_seed_textbox, min_samples.
     """
     from castle.service.clustering_service import (
         load_node_meta, restore_local_latent_from_npz,
@@ -370,7 +370,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
 
     no_update = (
         gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
-        False, gr.update(), gr.update(), gr.update(),
+        False, gr.update(), gr.update(), gr.update(), gr.update(),
     )
     if not node_name or not storage_path or not project_name:
         return no_update
@@ -395,19 +395,22 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
             gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
             False,
             gr.update(value=""),
-            gr.update(), gr.update(),
+            gr.update(), gr.update(), gr.update(),
         )
 
     umap_cfg_update = gr.update()
     eps_update = gr.update()
     preset_update = gr.update()
     seed_update = gr.update()
+    min_samples_update = gr.update()
 
     if meta is not None:
         if meta.get('umap_config'):
             umap_cfg_update = gr.update(value=meta['umap_config'])
         if meta.get('eps') is not None:
             eps_update = gr.update(value=meta['eps'])
+        if meta.get('min_samples') is not None:
+            min_samples_update = gr.update(value=meta['min_samples'])
         if meta.get('preset'):
             preset_update = gr.update(value=meta['preset'])
         if meta.get('umap_seed') is not None:
@@ -437,7 +440,7 @@ def on_tree_node_select(node_name, latents, storage_path, project_name):
         local_embedding_plot_update,
         False,
         gr.update(value=f"📂 Loaded saved state for **{node_name}**."),
-        preset_update, seed_update,
+        preset_update, seed_update, min_samples_update,
     )
 
 
@@ -445,7 +448,7 @@ def label_all_and_submit(
     storage_path, project_name, latents, local_latents, aggregator,
     parent_name,
     umap_config_str="", eps_value=None, overwrite_confirmed=False,
-    preset_value=None, umap_seed_str="",
+    preset_value=None, umap_seed_str="", min_samples_value=None,
 ):
     """Thin Gradio wrapper: auto-label every DBSCAN cluster then submit.
 
@@ -527,11 +530,18 @@ def label_all_and_submit(
         except ValueError:
             seed_arg = None
 
+    try:
+        ms_arg = (int(min_samples_value)
+                  if min_samples_value and int(min_samples_value) > 0 else None)
+    except (TypeError, ValueError):
+        ms_arg = None
+
     result = import_info_from_local_latent(
         storage_path, project_name, latents, local_latents, aggregator,
         parent_cluster_name=parent_name,
         umap_config_str=umap_config_str,
         eps_value=eps_value,
+        min_samples_value=ms_arg,
         preset_value=preset_value,
         umap_seed=seed_arg,
         overwrite=overwrite_confirmed,
@@ -683,7 +693,7 @@ def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggr
 def import_info_from_local_latent(
     storage_path, project_name, latents, local_latents, aggregator,
     parent_cluster_name=None, umap_config_str=None, eps_value=None,
-    preset_value=None, umap_seed=None, overwrite=False,
+    min_samples_value=None, preset_value=None, umap_seed=None, overwrite=False,
 ):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.submit_local_to_global`.
@@ -707,6 +717,7 @@ def import_info_from_local_latent(
             parent_cluster_name=parent_cluster_name,
             umap_config_str=umap_config_str,
             eps_value=eps_value,
+            min_samples_value=min_samples_value,
             preset_value=preset_value,
             umap_seed=umap_seed,
             overwrite=overwrite,

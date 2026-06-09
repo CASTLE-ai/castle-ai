@@ -8,10 +8,13 @@ empty parent and aborted with "No cluster selected". The gate must leave the
 tree + selection untouched (``gr.update()``).
 """
 
+import json
+import os
+
 import gradio as gr
 
 import castle.service.clustering_service as cs
-from castle.ui.cluster_handlers import label_all_and_submit
+from castle.ui.cluster_handlers import label_all_and_submit, on_tree_node_select
 
 
 class _Latents:
@@ -57,3 +60,19 @@ def test_no_cluster_selected_does_not_blank_tree(monkeypatch, tmp_path):
     )
     assert _noop(out[1]) and _noop(out[2])
     assert out[9] is False
+
+
+def test_node_sidecar_restores_eps_and_min_samples(tmp_path):
+    """min_samples persists in the node sidecar and is restored on node-select,
+    exactly like eps (regression for the new DBSCAN-min-points persistence)."""
+    cluster = tmp_path / "proj" / "cluster"
+    cluster.mkdir(parents=True)
+    (cluster / "node_initX_meta.json").write_text(json.dumps({
+        "parent_cluster_name": "initX", "umap_config": None,
+        "eps": 0.7, "min_samples": 12, "preset": None,
+        "umap_seed": None, "embedding_npz": None,
+    }))
+    out = on_tree_node_select("initX", None, str(tmp_path), "proj")
+    assert len(out) == 10                       # added min_samples output
+    assert dict(out[1]).get("value") == 0.7     # eps restored
+    assert dict(out[9]).get("value") == 12      # min_samples restored

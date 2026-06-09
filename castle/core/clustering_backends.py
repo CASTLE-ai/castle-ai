@@ -231,12 +231,14 @@ def umap_peak_bytes(n: int, d: int, n_neighbors: int) -> float:
 
     Models the dominant buffers (whichever device): input ``n*d*4``; the
     nn_descent kNN graph + equal-degree intermediate graph (~24 bytes/point/
-    degree); the fuzzy simplicial set (~32 bytes/point/n_neighbors); times a 1.5x
-    safety factor. Used to BOTH auto-cap the subsample size and drive the
-    pre-flight guards — they must agree, so they share this one estimator.
+    degree); the fuzzy simplicial set (~32 bytes/point/n_neighbors). This is a
+    RAW estimate — no safety multiplier. The single safety margin lives in the
+    guard's free-VRAM fraction (default 0.7 → ~1.4x headroom); stacking a 1.5x
+    factor here too made the guard ~2x over-conservative and refused fits that
+    comfortably fit. Drives the pre-flight guard.
     """
     gd = nn_descent_graph_degree(n_neighbors)
-    return float(n) * (4.0 * int(d) + 24.0 * gd + 32.0 * int(n_neighbors)) * 1.5
+    return float(n) * (4.0 * int(d) + 24.0 * gd + 32.0 * int(n_neighbors))
 
 
 def _cuda_device_ctx(device: Optional[str]) -> Any:

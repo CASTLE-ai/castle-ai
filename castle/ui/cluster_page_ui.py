@@ -343,13 +343,29 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             # race to delete each other's clip (3-A).
             last_clip_path_state = gr.State(None)
 
+            # Compact CSS for the control bar: Gradio's default form/block padding
+            # + inter-block gaps make this bar very tall, pushing the panels below
+            # off-screen. Scope tight padding/gaps/heights to #castle-controls-row
+            # only (panels below keep normal sizing).
+            gr.HTML(
+                "<style>"
+                "#castle-controls-row{gap:6px!important;}"
+                "#castle-controls-row .gap{gap:4px!important;}"
+                "#castle-controls-row .form{padding:4px!important;gap:4px!important;border:none!important;}"
+                "#castle-controls-row .block{padding:4px 6px!important;}"
+                "#castle-controls-row label{margin-bottom:2px!important;}"
+                "#castle-controls-row textarea,#castle-controls-row input{padding:4px 6px!important;}"
+                "#castle-controls-row button{min-height:30px!important;padding:4px 8px!important;}"
+                "#castle-controls-row .wrap{padding:2px!important;}"
+                "</style>"
+            )
             # Horizontal control bar (UMAP | DBSCAN | Submit) ABOVE the panels,
             # so the tree + embedding + clip preview get the full width below it.
-            with gr.Row(visible=True, equal_height=False) as ui['cluster_controls_row']:
+            with gr.Row(visible=True, equal_height=False, elem_id="castle-controls-row") as ui['cluster_controls_row']:
                 # --- UMAP group ---
                 with gr.Column(scale=4, min_width=300):
                     ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
-                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=3, max_lines=8, interactive=True, visible=True)
+                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=2, max_lines=8, interactive=True, visible=True)
                     with gr.Row():
                         ui['umap_seed'] = gr.Textbox(
                             label='UMAP seed', value='', placeholder='blank = random',
@@ -368,7 +384,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                             label="% points", value=30, precision=0,
                             minimum=1, maximum=100, interactive=True, min_width=90,
                         )
-                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
+                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
                 # --- DBSCAN group ---
                 with gr.Column(scale=2, min_width=160):
@@ -380,12 +396,12 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         label='min points', interactive=True, visible=True,
                         value=5, precision=0, minimum=1,
                     )
-                    ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
+                    ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True, size="sm")
                 # --- Submit group ---
                 with gr.Column(scale=2, min_width=160):
-                    ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
+                    ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary", size="sm")
                     ui['overwrite_confirm_btn'] = gr.Button(
-                        "⚠️ Confirm Overwrite", variant="stop", visible=False,
+                        "⚠️ Confirm Overwrite", variant="stop", visible=False, size="sm",
                     )
                     ui['overwrite_warning_md'] = gr.Markdown("", visible=False)
                     ui['submit_status'] = gr.Markdown("", visible=True)

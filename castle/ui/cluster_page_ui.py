@@ -343,8 +343,13 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             # race to delete each other's clip (3-A).
             last_clip_path_state = gr.State(None)
 
-            with gr.Row(visible=True) as ui['cluster_row_main']:
-                with gr.Column(scale=2):
+            # Compact 3-column working area: cluster tree | controls | embedding
+            # + preview. Tuned so params, the UMAP scatter and the clip preview
+            # sit on one screen without vertical scrolling; the embedding has a
+            # FIXED render height so generating a plot never reflows the layout.
+            with gr.Row(visible=True, equal_height=False) as ui['cluster_row_main']:
+                # --- cluster tree (narrow, scrolls internally) ---
+                with gr.Column(scale=2, min_width=190):
                     ui['cluster_tree_html'] = gr.HTML(
                         value="<em style='color:#888;font-size:12px'>No clusters yet.</em>",
                         label="Cluster Tree",
@@ -368,74 +373,39 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         "left:-9999px!important;width:1px!important;height:1px!important;"
                         "overflow:hidden!important;}</style>"
                     )
+                # --- controls (compact; paired rows, no help paragraphs) ---
+                with gr.Column(scale=3, min_width=270):
                     ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
-                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=8, max_lines=8, interactive=True, visible=True)
-                    ui['umap_seed'] = gr.Textbox(
-                        label='UMAP seed',
-                        value='',
-                        placeholder='Empty = randomize each run',
-                        interactive=True,
-                        info=(
-                            "Leave blank to draw a fresh seed each run. "
-                            "Paste a seed from the status line below to reproduce a layout."
-                        ),
-                    )
-                    ui['umap_device'] = gr.Radio(
-                        choices=["GPU", "CPU"],
-                        value="GPU",
-                        label="UMAP backend",
-                        info="GPU (cuML): fast, layout may vary slightly run-to-run. "
-                             "CPU (umap-learn): slower but layout is reproducible with the same seed.",
-                    )
-                    ui['umap_subsample'] = gr.Checkbox(
-                        label="Subsample UMAP (faster on huge selections)",
-                        value=False,
-                        interactive=True,
-                        info=("Fit UMAP on a random sample of the points, then "
-                              "propagate cluster labels to ALL points (time-series "
-                              "stays complete). Use it when a selection is too large "
-                              "to embed or too slow. Off = fit every point."),
-                    )
-                    ui['umap_subsample_pct'] = gr.Number(
-                        label="UMAP % of points",
-                        value=30,
-                        precision=0,
-                        minimum=1,
-                        maximum=100,
-                        interactive=True,
-                        info="% of selected points UMAP fits (only when Subsample is on). "
-                             "Lower = faster + cleaner layout; higher = more faithful.",
-                    )
+                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=4, max_lines=8, interactive=True, visible=True)
+                    with gr.Row():
+                        ui['umap_seed'] = gr.Textbox(
+                            label='UMAP seed', value='', placeholder='blank = random',
+                            interactive=True, min_width=120,
+                        )
+                        ui['umap_device'] = gr.Radio(
+                            choices=["GPU", "CPU"], value="GPU", label="Backend",
+                            min_width=120,
+                        )
+                    with gr.Row():
+                        ui['umap_subsample'] = gr.Checkbox(
+                            label="Subsample UMAP", value=False, interactive=True,
+                            min_width=120,
+                        )
+                        ui['umap_subsample_pct'] = gr.Number(
+                            label="% points", value=30, precision=0,
+                            minimum=1, maximum=100, interactive=True, min_width=100,
+                        )
                     ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True)
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
-                    ui['eps'] = gr.Number(
-                        label='epsilon-neighborhood radius',
-                        interactive=True,
-                        visible=True,
-                        value=1,
-                        step=0.1,
-                        minimum=0.1,
-                        maximum=10,
-                        info=(
-                            "DBSCAN neighborhood radius. Larger values = fewer, bigger clusters; "
-                            "smaller values = more, finer-grained clusters. Default: 1.0. "
-                            "Adjust based on the density of the embedding scatter plot."
-                        ),
-                    )
-                    ui['min_samples'] = gr.Number(
-                        label='DBSCAN min points',
-                        interactive=True,
-                        visible=True,
-                        value=5,
-                        precision=0,
-                        minimum=1,
-                        info=(
-                            "DBSCAN min_samples: how many neighbours a point needs "
-                            "(within the radius) to seed a cluster. Larger = more "
-                            "points dropped as noise (-1) and only denser regions "
-                            "cluster; smaller = more permissive. Default: 5."
-                        ),
-                    )
+                    with gr.Row():
+                        ui['eps'] = gr.Number(
+                            label='eps (DBSCAN radius)', interactive=True, visible=True,
+                            value=1, step=0.1, minimum=0.1, maximum=10, min_width=120,
+                        )
+                        ui['min_samples'] = gr.Number(
+                            label='min points', interactive=True, visible=True,
+                            value=5, precision=0, minimum=1, min_width=100,
+                        )
                     ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True)
                     ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary")
                     ui['overwrite_confirm_btn'] = gr.Button(
@@ -443,9 +413,10 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                     )
                     ui['overwrite_warning_md'] = gr.Markdown("", visible=False)
                     ui['submit_status'] = gr.Markdown("", visible=True)
-                with gr.Column(scale=8):
-                    ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True)
-                    ui['display'] = gr.Video(label='Display', height=420, interactive=False, visible=True, autoplay=True, loop=True)
+                # --- embedding + clip preview (fixed heights → no reflow) ---
+                with gr.Column(scale=6, min_width=360):
+                    ui['embedding_plot'] = gr.Image(label='Embedding', interactive=False, visible=True, height=400)
+                    ui['display'] = gr.Video(label='Display', height=230, interactive=False, visible=True, autoplay=True, loop=True)
                     ui['display_eps'] = gr.File(label="Display EPS", interactive=False, visible=True)
             
             ui['syllables_plot'] = gr.Plot(label='Syllable', visible=True)

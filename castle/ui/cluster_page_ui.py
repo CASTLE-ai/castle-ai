@@ -349,51 +349,48 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             # only (panels below keep normal sizing).
             gr.HTML(
                 "<style>"
-                "#castle-controls-row{gap:4px!important;}"
-                "#castle-controls-row .gap{gap:3px!important;}"
-                "#castle-controls-row .form{padding:3px!important;gap:3px!important;border:none!important;}"
-                "#castle-controls-row .block{padding:2px 6px!important;}"
-                "#castle-controls-row label{margin-bottom:1px!important;}"
+                "#castle-controls-row{gap:3px!important;}"
+                "#castle-controls-row .gap{gap:2px!important;}"
+                "#castle-controls-row .form{padding:2px!important;gap:2px!important;}"
+                "#castle-controls-row .block{padding:1px 6px!important;}"
+                "#castle-controls-row label{margin-bottom:0!important;}"
                 "#castle-controls-row textarea,#castle-controls-row input{padding:3px 6px!important;}"
                 "#castle-controls-row button{min-height:28px!important;padding:3px 8px!important;}"
                 "#castle-controls-row .wrap{padding:1px!important;}"
                 # pull the panels up tight under the control bar
-                "#castle-panels-row{margin-top:-2px!important;}"
+                "#castle-panels-row{margin-top:-6px!important;}"
                 "</style>"
             )
-            # Horizontal control bar ABOVE the panels. Two columns: UMAP (preset +
-            # configs side by side; seed / backend / subsample / % all on one row)
-            # and DBSCAN+Submit (eps, min points, Generate Cluster, then Submit
-            # right below it). Kept short so the panels below fit on screen.
+            # Horizontal control bar ABOVE the panels. UMAP column groups all its
+            # settings into ONE bordered panel (preset + configs side by side on
+            # top, then seed / backend / subsample-% inline) so it reads as a
+            # single "UMAP settings" unit; DBSCAN+Submit is the narrow column.
             with gr.Row(visible=True, equal_height=False, elem_id="castle-controls-row") as ui['cluster_controls_row']:
-                # --- UMAP group: two sub-columns (configs | everything else) ---
+                # --- UMAP group (one cohesive panel) ---
                 with gr.Column(scale=5, min_width=440):
-                    with gr.Row():
-                        # configs gets its own sub-column so the JSON reads clearly
-                        with gr.Column(scale=2, min_width=190):
-                            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=4, max_lines=8, interactive=True, visible=True)
-                        # everything else: preset on top, then the inline param row
-                        with gr.Column(scale=3, min_width=240):
-                            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
-                            with gr.Row():
-                                ui['umap_seed'] = gr.Textbox(
-                                    label='seed', value='', placeholder='blank = random',
-                                    interactive=True, min_width=80,
-                                )
-                                ui['umap_device'] = gr.Radio(
-                                    choices=["GPU", "CPU"], value="GPU", label="Backend",
-                                    min_width=95,
-                                )
-                                ui['umap_subsample'] = gr.Checkbox(
-                                    label="Subsample", value=False, interactive=True,
-                                    min_width=85,
-                                )
-                                ui['umap_subsample_pct'] = gr.Number(
-                                    label="% pts", value=30, precision=0,
-                                    minimum=1, maximum=100, interactive=True, min_width=70,
-                                )
-                            ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
-                            ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
+                    with gr.Group():
+                        with gr.Row():
+                            ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True, min_width=190, scale=1)
+                            ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=4, max_lines=8, interactive=True, visible=True, min_width=190, scale=1)
+                        with gr.Row():
+                            ui['umap_seed'] = gr.Textbox(
+                                label='seed', value='', placeholder='random',
+                                interactive=True, min_width=80,
+                            )
+                            ui['umap_device'] = gr.Radio(
+                                choices=["GPU", "CPU"], value="GPU", label="Backend",
+                                min_width=95,
+                            )
+                            # Subsample folded into a single % field: 100 = use all
+                            # points (off); lower it to subsample. No separate
+                            # checkbox / column.
+                            ui['umap_subsample_pct'] = gr.Number(
+                                label="Subsample %", value=100, precision=0,
+                                minimum=1, maximum=100, interactive=True, min_width=110,
+                                info="100 = all points",
+                            )
+                    ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
+                    ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
                 # --- DBSCAN + Submit group (narrow) ---
                 with gr.Column(scale=2, min_width=180):
                     with gr.Row():
@@ -624,7 +621,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
             storage_path,
             project_name,
             ui['umap_device'],
-            ui['umap_subsample'],
             ui['umap_subsample_pct'],
         ],
         outputs=[

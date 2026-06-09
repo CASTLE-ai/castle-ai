@@ -126,17 +126,15 @@ def generate_embedding(
     storage_path: str | None = None,
     project_name: str | None = None,
     umap_device: str = "GPU",
-    umap_subsample: bool = False,
-    umap_subsample_pct=30,
+    umap_subsample_pct=100,
     progress=gr.Progress(),
 ):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.run_umap_on_cluster`.
 
-    ``umap_subsample`` (the "Subsample UMAP" toggle) fits UMAP on a seeded
-    ``umap_subsample_pct`` percent of the selected points and propagates the
-    labels to all of them — the speed lever for huge selections. Off → UMAP
-    fits every point.
+    ``umap_subsample_pct`` is the single subsample control: ``100`` = fit UMAP on
+    every point (off); a lower value fits a seeded sample of that percent and
+    propagates labels to all points — the speed lever for huge selections.
 
     Returns ``(local_latents, scatter_plot, plot_image, status_md)``.
     """
@@ -232,7 +230,9 @@ def generate_embedding(
     try:
         _pct = float(umap_subsample_pct)
     except (TypeError, ValueError):
-        _pct = 30.0
+        _pct = 100.0
+    # Single control: 100% = use every point (no subsample); below that, sample.
+    _subsample = _pct < 100.0
 
     try:
         result = run_umap_on_cluster(
@@ -241,7 +241,7 @@ def generate_embedding(
             deterministic=deterministic,
             progress_callback=umap_progress,
             log_path=log_path,
-            subsample=bool(umap_subsample),
+            subsample=_subsample,
             subsample_pct=_pct,
         )
     except InsufficientDataError as e:

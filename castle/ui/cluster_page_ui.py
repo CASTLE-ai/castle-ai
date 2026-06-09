@@ -359,35 +359,37 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 "#castle-controls-row .wrap{padding:2px!important;}"
                 "</style>"
             )
-            # Horizontal control bar (UMAP | DBSCAN | Submit) ABOVE the panels,
-            # so the tree + embedding + clip preview get the full width below it.
+            # Horizontal control bar ABOVE the panels. Two columns: UMAP (preset +
+            # configs side by side; seed / backend / subsample / % all on one row)
+            # and DBSCAN+Submit (eps, min points, Generate Cluster, then Submit
+            # right below it). Kept short so the panels below fit on screen.
             with gr.Row(visible=True, equal_height=False, elem_id="castle-controls-row") as ui['cluster_controls_row']:
                 # --- UMAP group ---
-                with gr.Column(scale=4, min_width=300):
-                    ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True)
-                    ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=2, max_lines=8, interactive=True, visible=True)
+                with gr.Column(scale=5, min_width=440):
+                    with gr.Row():
+                        ui['preset_dropdown'] = gr.Dropdown(preset_dropdown_list, value='Low-magnification objective 100', label="UMAP preset", visible=True, interactive=True, min_width=200)
+                        ui['umap_config_text'] = gr.Textbox(label='UMAP configs', value=umap_config_template, lines=2, max_lines=8, interactive=True, visible=True, min_width=200)
                     with gr.Row():
                         ui['umap_seed'] = gr.Textbox(
                             label='UMAP seed', value='', placeholder='blank = random',
-                            interactive=True, min_width=120,
+                            interactive=True, min_width=110,
                         )
                         ui['umap_device'] = gr.Radio(
                             choices=["GPU", "CPU"], value="GPU", label="Backend",
                             min_width=110,
                         )
-                    with gr.Row():
                         ui['umap_subsample'] = gr.Checkbox(
                             label="Subsample UMAP", value=False, interactive=True,
-                            min_width=120,
+                            min_width=110,
                         )
                         ui['umap_subsample_pct'] = gr.Number(
                             label="% points", value=30, precision=0,
-                            minimum=1, maximum=100, interactive=True, min_width=90,
+                            minimum=1, maximum=100, interactive=True, min_width=80,
                         )
                     ui['umap_run'] = gr.Button("Generate Embedding", interactive=True, visible=True, size="sm")
                     ui['umap_seed_status'] = gr.Markdown(value="", visible=True)
-                # --- DBSCAN group ---
-                with gr.Column(scale=2, min_width=160):
+                # --- DBSCAN + Submit group ---
+                with gr.Column(scale=3, min_width=200):
                     ui['eps'] = gr.Number(
                         label='eps (DBSCAN radius)', interactive=True, visible=True,
                         value=1, step=0.1, minimum=0.1, maximum=10,
@@ -397,8 +399,6 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         value=5, precision=0, minimum=1,
                     )
                     ui['cluster_run'] = gr.Button("Generate Cluster", interactive=True, visible=True, size="sm")
-                # --- Submit group ---
-                with gr.Column(scale=2, min_width=160):
                     ui['enter_submit_all_btn'] = gr.Button("Submit", interactive=True, visible=True, variant="primary", size="sm")
                     ui['overwrite_confirm_btn'] = gr.Button(
                         "⚠️ Confirm Overwrite", variant="stop", visible=False, size="sm",

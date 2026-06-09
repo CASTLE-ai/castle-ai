@@ -461,19 +461,24 @@ def label_all_and_submit(
         auto_label_local_clusters, load_node_meta,
     )
 
-    _none9 = (None,) * 9
+    # No-op for the 9 display outputs (syllables, tree_html, tree_select, csvs,
+    # plots, eps). Early returns (warnings + the overwrite-confirm gate) must
+    # PRESERVE them — returning None blanks the cluster tree AND clears the
+    # selection, so the follow-up "Confirm Overwrite" click then sees an empty
+    # parent and aborts with "No cluster selected". gr.update() = leave as-is.
+    _keep9 = (gr.update(),) * 9
     _hide_btn = gr.update(visible=False)
     _hide_warn = gr.update(visible=False, value="")
 
     if latents is None:
         gr.Warning("No session initialized. Please click '⚙️ New Session' first.")
-        return _none9 + (False, _hide_btn, _hide_warn, "")
+        return _keep9 + (False, _hide_btn, _hide_warn, "")
 
     if not parent_name:
         gr.Warning(
             "No cluster selected. Click a node in the cluster tree before submitting."
         )
-        return _none9 + (False, _hide_btn, _hide_warn, "")
+        return _keep9 + (False, _hide_btn, _hide_warn, "")
 
     # Overwrite-confirmation gate: only kicks in when sidecar meta exists.
     cluster_path = os.path.join(storage_path or '', project_name or '', 'cluster')
@@ -492,7 +497,7 @@ def label_all_and_submit(
             f"**{n_del} cluster(s)**: {preview}\n\n"
             f"Click **⚠️ Confirm Overwrite** to proceed."
         )
-        return _none9 + (
+        return _keep9 + (
             True,                                       # overwrite_state → True
             gr.update(visible=True),                    # show confirm button
             gr.update(visible=True, value=warn_txt),    # show warning block
@@ -503,7 +508,7 @@ def label_all_and_submit(
         count = auto_label_local_clusters(local_latents, parent_name)
     except InsufficientDataError as e:
         gr.Warning(str(e))
-        return _none9 + (False, _hide_btn, _hide_warn, "")
+        return _keep9 + (False, _hide_btn, _hide_warn, "")
 
     gr.Info(f'Auto-labeled {count} clusters.')
 
@@ -524,7 +529,9 @@ def label_all_and_submit(
         overwrite=overwrite_confirmed,
     )
     if result[0] is None:
-        return result + (False, _hide_btn, _hide_warn, "")
+        # Submit failed (import_info_from_local_latent already surfaced why) —
+        # preserve the tree/selection rather than blanking the UI.
+        return _keep9 + (False, _hide_btn, _hide_warn, "")
 
     mgr = SessionManager(storage_path, project_name)
     active_id = mgr.get_active_session_id()

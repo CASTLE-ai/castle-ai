@@ -154,7 +154,7 @@ def create_project_ui(OS_SYS, root=''):
         dict: Dictionary containing all UI components
     """
     # Welcome and user guidance (collapsible)
-    with gr.Accordion("🏰 Welcome to Castle AI - Getting Started Guide", open=True, visible=True):
+    with gr.Accordion("🏰 Welcome to Castle AI - Getting Started Guide", open=False, visible=True):
         gr.Markdown("""
         **Castle AI** helps you analyze animal behavior in videos using AI-powered Region of Interest (ROI) tracking 
         and clustering. Follow this workflow to get the best results:

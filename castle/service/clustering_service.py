@@ -1228,7 +1228,10 @@ def run_umap_on_cluster(
         _S = _M
 
     # One fraction/budget for the guard (env override shared with _init_prepared).
-    _frac_default = 0.6 if deterministic else 0.7
+    # umap_peak_bytes is the raw 1x estimate, so the fraction is the only safety
+    # margin — keep VRAM loose (0.85) now that it isn't double-counted; host RAM
+    # stays tighter (0.6) since over-committing RAM thrashes swap.
+    _frac_default = 0.6 if deterministic else 0.85
     try:
         _frac = float(os.environ.get('CASTLE_UMAP_VRAM_FRACTION', _frac_default))
     except ValueError:

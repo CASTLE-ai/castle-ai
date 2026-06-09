@@ -126,7 +126,6 @@ def generate_embedding(
     storage_path: str | None = None,
     project_name: str | None = None,
     umap_device: str = "GPU",
-    umap_init: str = "spectral",
     umap_subsample: bool = False,
     umap_subsample_pct=30,
     progress=gr.Progress(),
@@ -186,12 +185,14 @@ def generate_embedding(
     # Without this strip, restoring a tree node embeds the OLD random_state
     # values into the config JSON, which then silently override the seed box
     # (even an empty box intended to re-roll would always re-use the old seed).
-    # Apply the UMAP-init choice as each stage's default, unless that stage's
-    # JSON already pins its own 'init' (per-stage override wins). 'spectral' =
-    # faithful/stable but adds an eigensolve; 'random' = near-instant init.
+    # Default each stage to spectral init (faithful/stable), unless that stage's
+    # JSON pins its own 'init'. The init choice used to be a UI radio, but
+    # 'random' gave no measurable speedup in-app (field-observed) so the control
+    # was removed; spectral is the fixed default. (Init-cost optimisation is
+    # parked — see DEPLOY_LOG / memory.) A per-stage 'init' in the config wins.
     def _with_init(c):
-        if isinstance(c, dict) and 'init' not in c and umap_init:
-            c['init'] = umap_init
+        if isinstance(c, dict) and 'init' not in c:
+            c['init'] = 'spectral'
         return c
 
     if isinstance(cfg, list):

@@ -59,9 +59,7 @@ def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
         try:
             from cuml.neighbors import NearestNeighbors as _cuNN  # noqa: PLC0415
             import cupy as _cp  # noqa: PLC0415
-            from castle.core.clustering_backends import (
-                _cuda_device_ctx, free_cuda_memory_pools,
-            )
+            from castle.core.clustering_backends import _cuda_device_ctx
             with _cuda_device_ctx('cuda'):
                 nn = _cuNN(n_neighbors=k, metric=metric)
                 nn.fit(_cp.asarray(np.ascontiguousarray(sampled, dtype=np.float32)))
@@ -71,8 +69,7 @@ def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
                     d, i = nn.kneighbors(q)
                     idx_out[s:s + chunk] = _cp.asnumpy(i)
                     dist_out[s:s + chunk] = _cp.asnumpy(d)
-                del nn  # release the cuML index + cupy query buffers...
-            free_cuda_memory_pools()  # ...then drain the pool back to the driver
+            # Pool drained once at the end of build_embedding, not here.
             return idx_out, dist_out
         except Exception as exc:  # noqa: BLE001 — cuML/cupy absent or OOM → CPU
             _logger.info("GPU k-NN propagation unavailable (%s); using CPU.", exc)
@@ -620,6 +617,16 @@ class LocalLatent:
             )
         self.configs = resolved_configs
         self.umap_seeds = resolved_seeds
+        # Release the GPU memory pool ONCE, after the whole run (all UMAP stages
+        # + k-NN propagation). cuML/cupy cache freed device blocks in the pool
+        # rather than returning them to the driver, so without this the VRAM
+        # stays pinned (nvidia-smi / the pre-flight guard see it as used). Doing
+        # it here — not per stage — keeps the pool warm DURING the run (no
+        # mid-pipeline re-cudaMalloc) and frees it only when we're done.
+        if (isinstance(self.device, str) and self.device.startswith('cuda')
+                and not deterministic):
+            from castle.core.clustering_backends import free_cuda_memory_pools
+            free_cuda_memory_pools()
         return resolved_seeds
 
 

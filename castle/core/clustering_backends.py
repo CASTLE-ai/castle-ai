@@ -415,16 +415,12 @@ class UMAPReducer:
                     'nnd_intermediate_graph_degree': deg,
                 }
         # cuML/myumap run on the idlest GPU (cupy current-device); no-op on CPU.
+        # NB: do NOT drain the cupy pool here — this runs once PER STAGE, and
+        # draining between stages forces cuML to re-cudaMalloc from the driver
+        # (slow, device-synchronising). The pool is drained once at the end of
+        # the whole run in LocalLatent.build_embedding instead.
         with _cuda_device_ctx(self.device):
-            reducer = self._umap_cls(**full_cfg)
-            emb = np.asarray(reducer.fit_transform(X))
-            if self.device.startswith('cuda'):
-                # Drop the fitted model (kNN graph + fuzzy set + device embedding)
-                # and return its VRAM to the driver, so it isn't pinned until the
-                # next op and the pre-flight guard sees the true free figure.
-                del reducer
-                free_cuda_memory_pools()
-            return emb
+            return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))
 
 
 # ---------------------------------------------------------------------------

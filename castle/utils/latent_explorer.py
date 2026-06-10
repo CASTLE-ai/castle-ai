@@ -59,7 +59,9 @@ def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
         try:
             from cuml.neighbors import NearestNeighbors as _cuNN  # noqa: PLC0415
             import cupy as _cp  # noqa: PLC0415
-            from castle.core.clustering_backends import _cuda_device_ctx
+            from castle.core.clustering_backends import (
+                _cuda_device_ctx, free_cuda_memory_pools,
+            )
             with _cuda_device_ctx('cuda'):
                 nn = _cuNN(n_neighbors=k, metric=metric)
                 nn.fit(_cp.asarray(np.ascontiguousarray(sampled, dtype=np.float32)))
@@ -69,6 +71,8 @@ def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
                     d, i = nn.kneighbors(q)
                     idx_out[s:s + chunk] = _cp.asnumpy(i)
                     dist_out[s:s + chunk] = _cp.asnumpy(d)
+                del nn  # release the cuML index + cupy query buffers...
+            free_cuda_memory_pools()  # ...then drain the pool back to the driver
             return idx_out, dist_out
         except Exception as exc:  # noqa: BLE001 — cuML/cupy absent or OOM → CPU
             _logger.info("GPU k-NN propagation unavailable (%s); using CPU.", exc)

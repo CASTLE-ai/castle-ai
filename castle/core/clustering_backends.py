@@ -50,6 +50,7 @@ __all__ = [
     "umap_peak_bytes",
     "umap_host_bytes",
     "target_cuda_free_bytes",
+    "free_cuda_memory_pools",
 ]
 
 
@@ -299,6 +300,35 @@ def _cuda_device_ctx(device: Optional[str]) -> Any:
         return contextlib.nullcontext()
 
 
+def free_cuda_memory_pools() -> None:
+    """Return cached device VRAM to the CUDA driver after a GPU op finishes.
+
+    cuML/cupy don't hand freed device blocks straight back to the driver: cupy
+    caches them in its default memory pool, and cuML objects only release their
+    buffers once garbage-collected. So after a UMAP fit / kNN propagation
+    completes, ``nvidia-smi`` — and our own pre-flight VRAM guard, which reads
+    driver-level free via :func:`target_cuda_free_bytes` /
+    ``torch.cuda.mem_get_info`` — keep counting that VRAM as in use, which can
+    falsely refuse the *next* run. Force a GC pass so dropped cuML objects are
+    finalised, then drain cupy's device + pinned pools. No-op when cupy is
+    absent (CPU-only path).
+    """
+    import gc  # noqa: PLC0415
+    gc.collect()
+    try:
+        import cupy  # noqa: PLC0415
+        # MemoryPool.free_all_blocks() drains only the CURRENT device's free
+        # list, so iterate every device — the op may have run on the idlest GPU
+        # (not device 0), and the caller's current device is unspecified here.
+        pool = cupy.get_default_memory_pool()
+        for d in range(cupy.cuda.runtime.getDeviceCount()):
+            with cupy.cuda.Device(d):
+                pool.free_all_blocks()
+        cupy.get_default_pinned_memory_pool().free_all_blocks()  # host pinned, global
+    except Exception:  # noqa: BLE001 — cupy absent or no device → nothing to drain
+        pass
+
+
 class UMAPReducer:
     """:class:`DimensionReducer` adapter wrapping the device-appropriate UMAP.
 
@@ -386,7 +416,15 @@ class UMAPReducer:
                 }
         # cuML/myumap run on the idlest GPU (cupy current-device); no-op on CPU.
         with _cuda_device_ctx(self.device):
-            return np.asarray(self._umap_cls(**full_cfg).fit_transform(X))
+            reducer = self._umap_cls(**full_cfg)
+            emb = np.asarray(reducer.fit_transform(X))
+            if self.device.startswith('cuda'):
+                # Drop the fitted model (kNN graph + fuzzy set + device embedding)
+                # and return its VRAM to the driver, so it isn't pinned until the
+                # next op and the pre-flight guard sees the true free figure.
+                del reducer
+                free_cuda_memory_pools()
+            return emb
 
 
 # ---------------------------------------------------------------------------

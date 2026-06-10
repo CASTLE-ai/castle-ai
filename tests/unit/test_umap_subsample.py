@@ -222,6 +222,14 @@ def test_umap_host_bytes_counts_only_marginal_allocations():
     assert no_sub < M * 4 * d
 
 
+def test_free_cuda_memory_pools_is_safe_to_call():
+    # Must be a harmless no-op on the CPU/no-cupy path and never raise; on a GPU
+    # box it drains cupy's per-device pools back to the driver after a fit.
+    from castle.core.clustering_backends import free_cuda_memory_pools
+    assert free_cuda_memory_pools() is None
+    free_cuda_memory_pools()  # idempotent
+
+
 def test_gpu_path_refuses_when_host_ram_too_tight(monkeypatch):
     # On the GPU path the VRAM guard never sees the host side. Simulate a GPU
     # with ample VRAM but a host with almost no free RAM: the run must refuse

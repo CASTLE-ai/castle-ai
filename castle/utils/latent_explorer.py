@@ -115,16 +115,18 @@ _palette = PALETTE_HEX * 5
 
 
 def generate_distinct_color(index, saturation=0.7, value=0.9):
-    """Generate a distinct color using golden ratio for even distribution in HSV space.
-
-    This ensures an unlimited number of visually distinct colors can be generated,
-    preventing clusters from becoming grey when the fixed palette is exhausted.
+    """A visually distinct colour for cluster ``index`` via the golden-ratio hue
+    sequence — unlimited non-repeating colours (vs the old fixed 62-colour
+    palette, which repeated and, after ancestor-colour avoidance, collapsed to a
+    few near-identical pales). Value cycles over a few levels so even many
+    clusters with near-equal hues stay separable. ``-1`` is handled by callers.
     """
     import colorsys
-    golden_ratio = 0.618033988749895
-    hue = (index * golden_ratio) % 1.0
+    i = int(index)
+    hue = (i * 0.618033988749895) % 1.0
+    value = (0.95, 0.75, 0.87, 0.68)[i % 4]   # vary lightness to split near hues
     rgb = colorsys.hsv_to_rgb(hue, saturation, value)
-    return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
+    return '#{:02x}{:02x}{:02x}'.format(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
 
 
 def generate_palette(avoid):
@@ -363,12 +365,20 @@ class Latent:
             self.num_cluster += 1
 
             old_cluster[cluster == cluster_local_id] = cluster_id
+            # Colour by GLOBAL cluster id so every cluster across the whole tree
+            # is visually distinct (the named-cluster legend / ethogram). The
+            # local-id colour from `export` would collide across sibling nodes
+            # (each node starts its local ids at 0). A user-set custom colour
+            # (different from the local-id default) is preserved.
+            local_default = generate_distinct_color(int(cluster_local_id))
+            color = it['color'] if it.get('color') and it['color'] != local_default \
+                else generate_distinct_color(int(cluster_id))
             self.cluster_meta[cluster_id] = {
                 'name': incoming_name,
-                'color': it['color']
+                'color': color,
             }
             self.behavior_name2cluster_id[incoming_name] = cluster_id
-            self.used_palette.add(it['color'])
+            self.used_palette.add(color)
 
         self.cluster[index_mask] = old_cluster
 
@@ -764,7 +774,9 @@ class LocalLatent:
     def palette(self, x):
         if x == -1:
             return '#DDDDDD'
-        return self._palette[x % len(self._palette)]
+        # Golden-ratio distinct colour per local cluster id — never repeats and
+        # doesn't shrink as ancestor clusters consume palette entries.
+        return generate_distinct_color(int(x))
 
     
     def plot_embedding(self, dims=None):
@@ -799,7 +811,7 @@ class LocalLatent:
     def label_cluster(self, cluster_id, cluster_name, cluster_color=''):
         self.export[cluster_id] = {
             'name': cluster_name,
-            'color': cluster_color or self._palette[cluster_id % len(self._palette)],
+            'color': cluster_color or generate_distinct_color(int(cluster_id)),
         }
     
     def clean_label(self):

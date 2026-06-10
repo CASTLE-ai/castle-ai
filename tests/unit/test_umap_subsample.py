@@ -204,6 +204,41 @@ def test_service_subsample_notes_and_propagates():
     assert ll.cluster.shape == (500,)
 
 
+def test_umap_host_bytes_counts_only_marginal_allocations():
+    # The estimate must NOT include the already-resident n_total x d matrix
+    # (select() materialises it before the guard, so MemAvailable already
+    # excludes it — counting it again falsely refuses runs). Only the subsample
+    # draw, the embedding output, and (optionally) a conversion copy.
+    from castle.core.clustering_backends import umap_host_bytes
+    M, S, d = 1000, 100, 50
+    no_sub = umap_host_bytes(M, M, d, 2)                    # S == M, no copy
+    sub = umap_host_bytes(M, S, d, 2)                       # + sampled draw
+    with_copy = umap_host_bytes(M, M, d, 2, full_copy=True)  # + f32 conversion
+    assert no_sub == M * 4 * 2                               # embedding output only
+    assert sub == S * 4 * d + M * 4 * 2                      # + sampled draw
+    assert with_copy == M * 4 * d + M * 4 * 2                # + full conversion copy
+    assert sub > no_sub and with_copy > no_sub
+    # the resident matrix (M*4*d ~ 200 KB here) is NOT in the no-copy estimate
+    assert no_sub < M * 4 * d
+
+
+def test_gpu_path_refuses_when_host_ram_too_tight(monkeypatch):
+    # On the GPU path the VRAM guard never sees the host side. Simulate a GPU
+    # with ample VRAM but a host with almost no free RAM: the run must refuse
+    # with a host-RAM error (not silently proceed into an OS-killing OOM). Wide
+    # blobs so the subsample draw alone exceeds the (tiny) free-RAM budget.
+    import castle.core.clustering_backends as cb
+    import castle.core.runtime_env as rt
+    lat = Latent(_two_blobs(500, width=200), time_window=1, device="cpu")
+    monkeypatch.setattr(cb, "target_cuda_free_bytes", lambda *a, **k: 40 * 10**9)
+    monkeypatch.setattr(rt, "available_ram_bytes", lambda: 100_000)
+    with pytest.raises(CastleDataError, match="host RAM"):
+        run_umap_on_cluster(
+            lat, "init", _CFG1, base_seed=1, deterministic=False,
+            subsample=True, subsample_pct=40,
+        )
+
+
 def test_service_no_subsample_uses_all_points():
     lat = Latent(_two_blobs(500), time_window=1, device="cpu")
     res = run_umap_on_cluster(

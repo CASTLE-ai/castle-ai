@@ -1205,6 +1205,7 @@ def run_umap_on_cluster(
     from castle.core.clustering_backends import (
         target_cuda_free_bytes,
         umap_peak_bytes,
+        umap_host_bytes,
     )
     from castle.utils.latent_explorer import _UMAP_MIN_N_NEIGHBORS
 
@@ -1227,35 +1228,79 @@ def run_umap_on_cluster(
     else:
         _S = _M
 
-    # One fraction/budget for the guard (env override shared with _init_prepared).
-    # umap_peak_bytes is the raw 1x estimate, so the fraction is the only safety
-    # margin — keep VRAM loose (0.85) now that it isn't double-counted; host RAM
-    # stays tighter (0.6) since over-committing RAM thrashes swap.
-    _frac_default = 0.6 if deterministic else 0.85
-    try:
-        _frac = float(os.environ.get('CASTLE_UMAP_VRAM_FRACTION', _frac_default))
-    except ValueError:
-        _frac = _frac_default
-    _free: Optional[float] = None if deterministic else target_cuda_free_bytes('cuda')
-    if _free is None:
+    # Pre-flight memory guards. umap_peak_bytes / umap_host_bytes are raw 1x
+    # estimates, so the free-memory fraction is the only safety margin. Two
+    # independent constraints, each refused with a concrete fix:
+    #   • device peak — UMAP's working buffers (VRAM on GPU, RAM on the CPU/
+    #     reproducible path).
+    #   • host RAM    — on the GPU path the buffers are on the device, but the
+    #     latent matrix + its transient copies (select()'s slice, the float32
+    #     conversion, the sampled draw) + the embedding output still live in
+    #     host RAM. The VRAM guard never sees these, so add a host-RAM floor.
+    # Both fractions default to 0.85 (~1.18x headroom). Env overrides:
+    # CASTLE_UMAP_VRAM_FRACTION, CASTLE_UMAP_RAM_FRACTION.
+    def _env_frac(name: str, default: float) -> float:
         try:
-            _free = runtime_env.available_ram_bytes()
+            raw = os.environ.get(name)
+            return float(raw) if raw is not None else default
+        except ValueError:
+            return default
+
+    _frac_vram = _env_frac('CASTLE_UMAP_VRAM_FRACTION', 0.85)
+    _frac_ram = _env_frac('CASTLE_UMAP_RAM_FRACTION', 0.85)
+    _ncomp = int(cfg[-1].get('n_components', 2)) if (
+        isinstance(cfg, (list, tuple)) and cfg and isinstance(cfg[-1], dict)
+    ) else (int(_first_cfg.get('n_components', 2)) if isinstance(_first_cfg, dict) else 2)
+    _fix = (
+        f"Lower the 'UMAP % of points' (currently {_pct:.0f}%)."
+        if subsample else
+        "Turn on 'Subsample UMAP' and set a % of points."
+    )
+
+    def _ram_free() -> Optional[float]:
+        try:
+            return runtime_env.available_ram_bytes()
         except Exception:  # noqa: BLE001
-            _free = None
+            return None
 
     _peak = umap_peak_bytes(_S, _width, _nn)
-    if _free and _peak > _frac * float(_free):
-        _dev = "GPU memory" if (not deterministic and target_cuda_free_bytes('cuda')) else "RAM"
-        _fix = (
-            f"Lower the 'UMAP % of points' (currently {_pct:.0f}%)."
-            if subsample else
-            "Turn on 'Subsample UMAP' and set a % of points."
+    _vram_free: Optional[float] = (
+        None if deterministic else target_cuda_free_bytes('cuda')
+    )
+    if _vram_free:
+        # GPU path: UMAP buffers in VRAM; matrix + copies + embedding in host RAM.
+        if _peak > _frac_vram * float(_vram_free):
+            raise CastleDataError(
+                f"UMAP on cluster '{cluster_name}' ({_S:,} points x {_width} dims, "
+                f"n_neighbors={_nn}) needs ~{_peak / 1e9:.1f} GB GPU memory but only "
+                f"~{_vram_free / 1e9:.1f} GB is free (safe limit {_frac_vram:.0%}). {_fix}"
+            )
+        # build_embedding only re-copies the matrix when it isn't already
+        # float32 + C-contiguous (mirrors latent_explorer.build_embedding).
+        _dat = local_latents.data
+        _full_copy = not (
+            getattr(_dat, 'dtype', None) == np.float32
+            and getattr(_dat, 'flags', None) is not None
+            and _dat.flags['C_CONTIGUOUS']
         )
-        raise CastleDataError(
-            f"UMAP on cluster '{cluster_name}' ({_S:,} points x {_width} dims, "
-            f"n_neighbors={_nn}) needs ~{_peak / 1e9:.1f} GB {_dev} but only "
-            f"~{_free / 1e9:.1f} GB is free (safe limit {_frac:.0%}). {_fix}"
-        )
+        _host = umap_host_bytes(_M, _S, _width, _ncomp, full_copy=_full_copy)
+        _rf = _ram_free()
+        if _rf and _host > _frac_ram * float(_rf):
+            raise CastleDataError(
+                f"UMAP on cluster '{cluster_name}' ({_M:,} points x {_width} dims) "
+                f"needs ~{_host / 1e9:.1f} GB additional host RAM for its working "
+                f"copies but only ~{_rf / 1e9:.1f} GB is free (safe limit "
+                f"{_frac_ram:.0%}). {_fix}"
+            )
+    else:
+        # CPU / no-GPU path: everything is in host RAM; umap_peak models it.
+        _rf = _ram_free()
+        if _rf and _peak > _frac_ram * float(_rf):
+            raise CastleDataError(
+                f"UMAP on cluster '{cluster_name}' ({_S:,} points x {_width} dims, "
+                f"n_neighbors={_nn}) needs ~{_peak / 1e9:.1f} GB RAM but only "
+                f"~{_rf / 1e9:.1f} GB is free (safe limit {_frac_ram:.0%}). {_fix}"
+            )
 
     _cap = _S if (subsample and _S < _M) else None
     sub_note = ""

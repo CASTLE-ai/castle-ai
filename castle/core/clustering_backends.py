@@ -48,6 +48,7 @@ __all__ = [
     "build_default_clusterer",
     "nn_descent_graph_degree",
     "umap_peak_bytes",
+    "umap_host_bytes",
     "target_cuda_free_bytes",
 ]
 
@@ -233,12 +234,49 @@ def umap_peak_bytes(n: int, d: int, n_neighbors: int) -> float:
     nn_descent kNN graph + equal-degree intermediate graph (~24 bytes/point/
     degree); the fuzzy simplicial set (~32 bytes/point/n_neighbors). This is a
     RAW estimate — no safety multiplier. The single safety margin lives in the
-    guard's free-VRAM fraction (default 0.7 → ~1.4x headroom); stacking a 1.5x
+    guard's free-VRAM fraction (default 0.85 → ~1.18x headroom); stacking a 1.5x
     factor here too made the guard ~2x over-conservative and refused fits that
     comfortably fit. Drives the pre-flight guard.
     """
     gd = nn_descent_graph_degree(n_neighbors)
     return float(n) * (4.0 * int(d) + 24.0 * gd + 32.0 * int(n_neighbors))
+
+
+def umap_host_bytes(
+    n_total: int,
+    n_fit: int,
+    d: int,
+    n_components: int = 2,
+    *,
+    full_copy: bool = False,
+) -> float:
+    """*Marginal* host-RAM (bytes) a UMAP + label-propagation run allocates
+    **beyond the already-resident input matrix**.
+
+    The ``n_total x d`` latent matrix is materialised by ``select()`` *before*
+    this guard runs, so it is already counted as used RAM (excluded from
+    MemAvailable) — re-counting it would double-count and refuse fits that
+    actually run. Model only what the step newly allocates in host RAM:
+
+    * ``full_copy`` — the float32/contiguity conversion duplicates the whole
+      ``n_total x d`` matrix. Only happens when the selected latents aren't
+      already float32 + C-contiguous (``select()`` usually yields both, so this
+      is normally False and contributes nothing).
+    * the subsample draws an ``n_fit x d`` copy (only when ``n_fit < n_total``).
+    * the length-``n_total`` embedding output (``n_total x n_components``).
+
+    On the GPU path the UMAP buffers themselves live on the *device* (covered by
+    the VRAM guard via :func:`umap_peak_bytes`); on the CPU path those buffers
+    dominate host RAM and are covered by :func:`umap_peak_bytes` against RAM
+    instead. RAW estimate; the guard's free-RAM fraction is the only margin.
+    """
+    host = 0.0
+    if full_copy:
+        host += float(n_total) * 4.0 * int(d)         # f32/contiguity conversion
+    if int(n_fit) < int(n_total):
+        host += float(n_fit) * 4.0 * int(d)           # subsample draw
+    host += float(n_total) * 4.0 * int(n_components)  # embedding output
+    return host
 
 
 def _cuda_device_ctx(device: Optional[str]) -> Any:

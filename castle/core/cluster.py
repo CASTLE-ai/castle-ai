@@ -4,6 +4,7 @@ Core clustering logic and data aggregation.
 """
 
 import os
+import re
 import threading
 from collections import OrderedDict
 import numpy as np
@@ -188,6 +189,47 @@ def _pooling_variant_of(filename: str, select_roi_id: int) -> str:
     return "multiscale" if "spp" in tail.lower() else "weighted_average"
 
 
+def _spp_scales_of(filename: str, scales_hint: Optional[List[int]] = None) -> List[int]:
+    """SPP scale list of a latent file, ascending. Prefer the explicit metadata
+    hint (``tags.pooling_scales``); otherwise parse the ``spp<AxBx...>`` filename
+    tag. A weighted-average file (no ``spp`` tag) returns ``[]``.
+
+    Per-scale files (new extraction) carry a single scale, e.g. ``spp2`` → [2];
+    a legacy combined file carries all, e.g. ``spp1x2x4`` → [1, 2, 4].
+    """
+    if scales_hint:
+        return sorted(int(s) for s in scales_hint)
+    m = re.search(r'spp([0-9]+(?:x[0-9]+)*)', os.path.basename(filename).lower())
+    if not m:
+        return []
+    return sorted(int(x) for x in m.group(1).split('x') if x)
+
+
+def _scale_block(array: np.ndarray, file_scales: List[int], scale: int) -> np.ndarray:
+    """Return the ``(N, scale²·C)`` column block for ``scale`` from a latent file
+    whose columns are the concatenated multiscale blocks in ascending-scale order
+    (``[s1 | s2 | …]``, each ``s²·C`` wide). ``C`` (base feature dim) is derived as
+    ``width // Σ s²``. Extraction writes scales sorted ascending (``_latent_filename``
+    sorts the tag), so the column order matches ``sorted(file_scales)``.
+    """
+    fs = sorted(int(s) for s in file_scales)
+    units = sum(s * s for s in fs)
+    if units == 0 or array.shape[1] % units != 0:
+        raise CastleDataError(
+            f"Latent width {array.shape[1]} is not divisible by Σs²={units} for "
+            f"SPP scales {fs}; cannot slice scale {scale}. The file may be a "
+            f"different pooling variant than its name implies."
+        )
+    base_c = array.shape[1] // units
+    off = 0
+    for s in fs:
+        w = s * s * base_c
+        if s == int(scale):
+            return array[:, off:off + w]
+        off += w
+    raise KeyError(f"scale {scale} not in file scales {fs}")
+
+
 def _select_pooling_variant(
     matched: List[Tuple[str, str, str]],
     pooling: str,
@@ -369,7 +411,7 @@ class LatentAggregator:
     def __init__(self, storage_path: str, project_name: str, select_roi_id: int, bin_size: int,
                  model_name: str, notify: Optional[NotificationCallback] = None,
                  prepare_id: Optional[str] = None, k_prime: Optional[int] = None,
-                 pooling: str = 'auto') -> None:
+                 pooling: str = 'auto', scales: Optional[List[int]] = None) -> None:
         """
         Initialize the LatentAggregator.
         
@@ -390,6 +432,14 @@ class LatentAggregator:
         # 'auto' | 'weighted_average' | 'multiscale' — which pooling variant to
         # aggregate when a project's latent/<model>/ dir holds more than one.
         self.pooling = (pooling or 'auto').strip().lower()
+        # Optional subset of SPP scales to COMBINE when the chosen variant is
+        # multiscale (e.g. [1, 2] uses only the 1×1 and 2×2 blocks). None = use
+        # every scale available (== whole multiscale latent). Lets the user mix
+        # and match scales from per-scale files OR slice them out of a legacy
+        # combined spp1x2x4 file — no re-extraction needed either way.
+        self.scales: Optional[List[int]] = (
+            sorted({int(s) for s in scales}) if scales else None
+        )
         self.notify = notify or print  # Fallback to print
         
         # C-02 / PERF-03: VideoReader LRU cache — keeps N most-recently-used
@@ -442,12 +492,13 @@ class LatentAggregator:
         self.fps_per_video: Dict[str, float] = {}
         
         latent_files = []
+        scales_by_file: Dict[str, List[int]] = {}  # filename -> SPP scales (metadata hint)
         if 'latent' in project_config:
             for filename, video_source_name in project_config['latent'].items():
                 # Check 1: Must match ROI ID
                 if roi_key not in filename:
                     continue
-                
+
                 # Check 2: Match Model Name. BUG-14 — prefer the metadata
                 # embedded in the npz (or its sidecar .json) over fragile
                 # filename splitting. Fall back to the old stem-split when
@@ -461,6 +512,10 @@ class LatentAggregator:
                     elif meta is not None and meta.get("roi_id") is not None:
                         # Metadata present but model mismatch → definitively skip.
                         continue
+                    if meta is not None:
+                        _ms = (meta.get("tags") or {}).get("pooling_scales")
+                        if _ms:
+                            scales_by_file[filename] = [int(s) for s in _ms]
                 if not model_name_matches:
                     stem = os.path.splitext(os.path.basename(filename))[0]
                     stem_after_roi = stem.split(f'_ROI_{select_roi_id}_', 1)
@@ -488,49 +543,55 @@ class LatentAggregator:
         total_frames_loaded = 0
         latents_buffer: List[np.ndarray] = []  # Buffer for pre-alloc / memmap fill
 
-        # Load and aggregate latents
-        for filename, video_source_name in selected_files:
-            self.notify(f'Loading latent: {video_source_name}')
-            try:
+        # Resolve each selected file's SPP scales (metadata hint else filename
+        # tag). If the chosen variant is multiscale, COMBINE the requested scales
+        # per video (column-concat) — handles both new per-scale files and slicing
+        # a legacy combined spp1x2x4 file. Weighted-average → one file per video.
+        sel = [(f, v, _spp_scales_of(f, scales_by_file.get(f))) for f, v in selected_files]
+        if any(sc for _, _, sc in sel):
+            video_chunks = self._combine_scales_per_video(sel, latent_dir_path)
+        else:
+            video_chunks = []
+            for filename, video_source_name, _ in sel:
                 latent_path = _resolve_latent_path(latent_dir_path, filename)
                 if not os.path.exists(latent_path):
                     self.notify(f"Latent file missing: {latent_path}", "warning")
                     continue
-
-                # BUG-10: typed corruption errors instead of cryptic BadZipFile
-                latent_chunk = load_latent_safe(latent_path)
-
-                # Truncate to multiple of bin_size
-                n_bins = len(latent_chunk) // bin_size
-                n_frames_to_keep = n_bins * bin_size
-
-                if n_frames_to_keep == 0:
-                    continue
-
-                # Read each video's OWN fps (not just the first). A project may
-                # mix frame rates; using one video's fps for all others produces
-                # systematically wrong timestamps. self.fps keeps the first
-                # successful read as a fallback for any video we can't probe.
                 try:
-                    video_path = os.path.join(self.source_path, video_source_name)
-                    with VideoReader(video_path) as vr:
-                        video_fps = vr.fps
-                    self.fps_per_video[video_source_name] = video_fps
-                    if not latents_buffer:
-                        self.fps = video_fps
-                except Exception as e:
-                    self.notify(f"Warning: Could not read FPS from {video_source_name}, using fallback {self.fps}. Error: {e}", "warning")
+                    # BUG-10: typed corruption errors instead of cryptic BadZipFile
+                    video_chunks.append((video_source_name, load_latent_safe(latent_path)))
+                except LatentCorruptError as e:
+                    self.notify(str(e), "error")
+                except Exception as e:  # noqa: BLE001
+                    self.notify(f"Error loading {filename}: {e}", "error")
 
-                latents_buffer.append(latent_chunk[:n_frames_to_keep])
-                self.videos_meta.append((n_bins, video_source_name))
-                total_frames_loaded += n_frames_to_keep
+        # Shared aggregation: truncate to a bin_size multiple, read per-video fps,
+        # buffer for the memmap-backed concatenation.
+        for video_source_name, latent_chunk in video_chunks:
+            self.notify(f'Loading latent: {video_source_name}')
+            # Truncate to multiple of bin_size
+            n_bins = len(latent_chunk) // bin_size
+            n_frames_to_keep = n_bins * bin_size
+            if n_frames_to_keep == 0:
+                continue
 
-            except LatentCorruptError as e:
-                # Surface the typed error with the hint, but keep loading the rest
-                # — corrupting one video should not break the whole session.
-                self.notify(str(e), "error")
+            # Read each video's OWN fps (not just the first). A project may
+            # mix frame rates; using one video's fps for all others produces
+            # systematically wrong timestamps. self.fps keeps the first
+            # successful read as a fallback for any video we can't probe.
+            try:
+                video_path = os.path.join(self.source_path, video_source_name)
+                with VideoReader(video_path) as vr:
+                    video_fps = vr.fps
+                self.fps_per_video[video_source_name] = video_fps
+                if not latents_buffer:
+                    self.fps = video_fps
             except Exception as e:
-                self.notify(f"Error loading {filename}: {e}", "error")
+                self.notify(f"Warning: Could not read FPS from {video_source_name}, using fallback {self.fps}. Error: {e}", "warning")
+
+            latents_buffer.append(latent_chunk[:n_frames_to_keep])
+            self.videos_meta.append((n_bins, video_source_name))
+            total_frames_loaded += n_frames_to_keep
 
         if latents_buffer:
             # Unique-per-aggregator memmap filename so two concurrent runs
@@ -557,6 +618,72 @@ class LatentAggregator:
             self.videos_meta, self.bin_size, self.fps_per_video,
             {v: int(self.select_roi_id) for _, v in self.videos_meta},
         ).for_window(1)
+
+    def _combine_scales_per_video(
+        self,
+        sel: List[Tuple[str, str, List[int]]],
+        latent_dir_path: str,
+    ) -> List[Tuple[str, np.ndarray]]:
+        """Combine the requested SPP scales into one feature matrix per video.
+
+        ``sel`` is ``[(filename, video_source_name, file_scales), …]`` for the
+        chosen (multiscale) variant. ``self.scales`` (or every available scale
+        when None) selects which scale blocks to use; for each video the blocks
+        are column-concatenated in ascending-scale order. A scale block is read
+        from a per-scale file (``spp{s}``) when present, or sliced out of a legacy
+        combined file (``spp1x2x4``) — so existing data needs no re-extraction.
+
+        Returns ``[(video_source_name, combined_array), …]``; videos missing a
+        requested scale are skipped with a warning.
+        """
+        from collections import defaultdict
+        by_video: "defaultdict[str, List[Tuple[str, List[int]]]]" = defaultdict(list)
+        for filename, vid, sc in sel:
+            if sc:
+                by_video[vid].append((filename, sc))
+
+        available = sorted({s for _, _, sc in sel for s in sc})
+        req = [s for s in (self.scales or available) if s in available]
+        if not req:
+            self.notify(
+                f"No SPP scales to combine (requested {self.scales}, "
+                f"available {available}).", "warning",
+            )
+            return []
+        self.notify(f"Combining SPP scales {req} of available {available}.")
+
+        out: List[Tuple[str, np.ndarray]] = []
+        for vid, files in by_video.items():
+            try:
+                blocks: Dict[int, np.ndarray] = {}
+                for filename, sc in files:
+                    needed = [s for s in req if s in sc and s not in blocks]
+                    if not needed:
+                        continue
+                    path = _resolve_latent_path(latent_dir_path, filename)
+                    if not os.path.exists(path):
+                        self.notify(f"Latent file missing: {path}", "warning")
+                        continue
+                    arr = load_latent_safe(path)
+                    for s in needed:
+                        blocks[s] = _scale_block(arr, sc, s)
+                missing = [s for s in req if s not in blocks]
+                if missing:
+                    self.notify(
+                        f"Video '{vid}': missing SPP scale(s) {missing} "
+                        f"(have {sorted(blocks)}); skipped.", "warning",
+                    )
+                    continue
+                n = min(blocks[s].shape[0] for s in req)
+                combined = np.hstack([
+                    np.ascontiguousarray(blocks[s][:n]) for s in req
+                ])
+                out.append((vid, combined))
+            except (LatentCorruptError, CastleDataError) as e:
+                self.notify(str(e), "error")
+            except Exception as e:  # noqa: BLE001
+                self.notify(f"Error combining scales for '{vid}': {e}", "error")
+        return out
 
     def _init_prepared(self, prepare_id: str, *, window: int, k_prime: Optional[int]) -> None:
         """Load a prepared cache and set up the explore-ready state.

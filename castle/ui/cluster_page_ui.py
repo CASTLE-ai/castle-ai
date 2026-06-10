@@ -290,6 +290,19 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         "variant)."
                     ),
                 )
+                ui['spp_scales'] = gr.CheckboxGroup(
+                    label="SPP scales to combine (multiscale)",
+                    choices=["1", "2", "4"],
+                    value=["1", "2", "4"],
+                    interactive=True,
+                    info=(
+                        "When pooling is multiscale, which spatial-pyramid scales to "
+                        "combine: 1=1×1 (global), 2=2×2, 4=4×4. Mix and match to compare "
+                        "scales. Works on per-scale files AND legacy combined spp1x2x4 "
+                        "files (sliced on the fly — no re-extraction). All selected = the "
+                        "full multiscale latent. Ignored for weighted_average."
+                    ),
+                )
                 ui['select_roi_id'] = gr.Textbox(
                     label="Enter ROI ID",
                     value="1",
@@ -536,7 +549,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'],
-                ui['data_source'], ui['variance_pct'], ui['pooling']],
+                ui['data_source'], ui['variance_pct'], ui['pooling'], ui['spp_scales']],
         outputs=[mulvideo, latents, session_info]
     ).then(
         fn=_format_session_status,

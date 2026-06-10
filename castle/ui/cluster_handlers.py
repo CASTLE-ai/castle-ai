@@ -748,7 +748,8 @@ def import_info_from_local_latent(
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model,
-                  data_source=None, variance_pct=95, pooling='auto', progress=gr.Progress()):
+                  data_source=None, variance_pct=95, pooling='auto', scales=None,
+                  progress=gr.Progress()):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.init_clustering_aggregator`.
 
@@ -773,6 +774,15 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
     if data_source and not str(data_source).startswith("(legacy"):
         prepare_id = str(data_source)
 
+    # SPP scales to combine (multiscale only). The CheckboxGroup hands back a
+    # list of strings; empty / all-selected → None (use every available scale).
+    scales_sel: list | None = None
+    if scales:
+        try:
+            scales_sel = sorted({int(s) for s in scales})
+        except (TypeError, ValueError):
+            scales_sel = None
+
     # Visible feedback: the click outputs are all gr.State (no spinner), so drive
     # a gr.Progress bar. Routine load messages update its description (one bar,
     # not a toast per video); warnings/errors still surface as toasts.
@@ -791,6 +801,7 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             select_roi_id=select_roi_id, bin_size=bin_size,
             select_model=select_model, notify=notify_callback,
             prepare_id=prepare_id, variance_pct=variance_pct, pooling=pooling,
+            scales=scales_sel,
         )
         session_info = check_session_exists(storage_path, project_name)
         n_dp = (

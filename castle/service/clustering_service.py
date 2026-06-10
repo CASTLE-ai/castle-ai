@@ -12,6 +12,7 @@ import glob
 import os
 import json
 import logging
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable, Any, Tuple
@@ -21,11 +22,15 @@ import pandas as pd
 
 from castle.core import runtime_env
 from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
+from castle.core.logging_config import setup_logger
 from castle.core.types import CastleDataError, InsufficientDataError
 from castle.service.session_manager import SessionManager
 from castle.utils.latent_explorer import LocalLatent
 
-logger = logging.getLogger(__name__)
+# setup_logger attaches an INFO StreamHandler (the module previously used a bare
+# getLogger, so its INFO lines — incl. the [UMAP timing] log — were dropped when
+# the app left root logging at the default WARNING).
+logger = setup_logger(__name__)
 
 
 class ClusteringSession:
@@ -1188,7 +1193,9 @@ def run_umap_on_cluster(
             should surface this to the user — already does so via
             ``gr.Info`` in the Gradio path).
     """
+    _t0 = time.perf_counter()
     local_latents = latents.select(selected_cluster=cluster_name)
+    _t_select = time.perf_counter()
     if len(local_latents.data) == 0:
         raise InsufficientDataError(
             f"Cluster '{cluster_name}' has no data points. Select a "
@@ -1314,6 +1321,7 @@ def run_umap_on_cluster(
             _M, _cap, _pct, _width, _nn,
         )
 
+    _t_guard = time.perf_counter()
     resolved_seeds = local_latents.build_embedding(
         cfg,
         progress_callback=progress_callback,
@@ -1321,6 +1329,13 @@ def run_umap_on_cluster(
         deterministic=deterministic,
         log_path=log_path,
         max_points=_cap,
+    )
+    _t_build = time.perf_counter()
+    logger.info(
+        "[UMAP timing] select=%.2fs guard+setup=%.2fs build_embedding(UMAP+prop)=%.2fs "
+        "total=%.2fs (M=%d S=%d width=%d nn=%d device=%s)",
+        _t_select - _t0, _t_guard - _t_select, _t_build - _t_guard, _t_build - _t0,
+        _M, _S, _width, _nn, "cpu" if deterministic else "cuda",
     )
 
     mode_note = " (CPU, reproducible)" if deterministic else ""

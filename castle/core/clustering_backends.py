@@ -363,6 +363,9 @@ class UMAPReducer:
             self.cfg['n_jobs'] = max(1, _cpu - 2)
         self.device = device
         self._umap_cls = resolve_umap_class(device)
+        # cuML estimator? (vs umap-learn / in-repo myumap) — gates cuML-only
+        # kwargs like build_algo and the verbose log-level.
+        self._is_cuml = getattr(self._umap_cls, '__module__', '').startswith('cuml')
         # Does the resolved UMAP accept build_algo? cuML >= 25.08 yes; umap-learn
         # and the in-repo myumap do not (passing it there would TypeError).
         try:
@@ -414,6 +417,18 @@ class UMAPReducer:
                     'nnd_graph_degree': deg,
                     'nnd_intermediate_graph_degree': deg,
                 }
+        # Silence cuML's per-fit "[CUML] [info] build_algo set to brute_force_knn
+        # because random_state is given" line — CASTLE always sets a seed, so it
+        # printed every stage. Only the estimator-level verbose suppresses it
+        # (the global logger set_level does not). cuML only; umap-learn/myumap
+        # take a bool verbose, so leave theirs untouched.
+        if self._is_cuml and 'verbose' not in full_cfg:
+            try:
+                from cuml.internals.logger import level_enum  # noqa: PLC0415
+                full_cfg['verbose'] = level_enum.warn
+            except Exception:  # noqa: BLE001 — cuML internals moved; not fatal
+                pass
+
         # cuML/myumap run on the idlest GPU (cupy current-device); no-op on CPU.
         # NB: do NOT drain the cupy pool here — this runs once PER STAGE, and
         # draining between stages forces cuML to re-cudaMalloc from the driver

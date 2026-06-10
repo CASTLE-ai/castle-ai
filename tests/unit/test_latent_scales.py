@@ -132,6 +132,61 @@ def test_combine_skips_video_missing_a_requested_scale():
         assert out[0][1].shape == (6, (1 + 4) * C)
 
 
+# --------------------------------------------------------------------------- #
+# extraction split: _split_scales / _expected_latent_filenames / round-trip
+# --------------------------------------------------------------------------- #
+def test_split_scales():
+    from castle.core.extractor import _split_scales
+    assert _split_scales("multiscale", [1, 2, 4]) == [[1], [2], [4]]
+    assert _split_scales("multiscale", [2, 1]) == [[1], [2]]   # sorted
+    assert _split_scales("multiscale", [1]) == [[1]]            # single scale: no split
+    assert _split_scales("weighted_average", None) == [None]
+
+
+def test_expected_latent_filenames_split():
+    from castle.core.extractor import _expected_latent_filenames
+    pc = SimpleNamespace(center_roi_switch=False, remove_background_switch=False)
+    names = _expected_latent_filenames("v.mp4", 1, "m", pc, "multiscale", [1, 2, 4], None, None)
+    assert len(names) == 3
+    assert sorted(n.rsplit("_", 1)[-1] for n in names) == ["spp1.npz", "spp2.npz", "spp4.npz"]
+    wa = _expected_latent_filenames("v.mp4", 1, "m", pc, "weighted_average", None, None, None)
+    assert len(wa) == 1 and "spp" not in wa[0]
+
+
+def test_extraction_split_roundtrip(monkeypatch, tmp_path):
+    import contextlib
+    from castle.core import extractor
+
+    cfg: dict = {}
+
+    @contextlib.contextmanager
+    def fake_update_config(sp, pn):
+        yield cfg
+
+    monkeypatch.setattr("castle.core.project.update_config", fake_update_config)
+    pc = SimpleNamespace(center_roi_switch=False, remove_background_switch=False)
+    arr = _multiscale(12, [1, 2, 4])  # (12, 21*C), block s filled with s
+
+    extractor._save_and_register_latents(
+        arr, latent_dir_path=str(tmp_path),
+        video_name="vid.mp4", roi_id=1, model_name="m", preprocess_config=pc,
+        pooling_method="multiscale", pooling_scales=[1, 2, 4],
+        feature_layers=None, session_id=None, extra_tags={}, dtype=np.float32,
+        storage_path="x", project_name="y",
+    )
+    npz = sorted(f for f in os.listdir(tmp_path) if f.endswith(".npz"))
+    assert len(npz) == 3 and len(cfg["latent"]) == 3   # one file + one registration per scale
+
+    # Reconstruct: per-scale blocks hstacked in scale order == the original.
+    blocks = []
+    for s in (1, 2, 4):
+        fn = [f for f in npz if f.endswith(f"spp{s}.npz")][0]
+        blk = np.load(os.path.join(tmp_path, fn))["latent"]
+        assert blk.shape == (12, s * s * C) and (blk == s).all()
+        blocks.append(blk)
+    assert np.array_equal(np.hstack(blocks), arr)
+
+
 def test_combine_request_unavailable_scale_uses_available():
     with tempfile.TemporaryDirectory() as d:
         # Only scale 1 exists anywhere; requesting {1,2} → scale 2 is dropped

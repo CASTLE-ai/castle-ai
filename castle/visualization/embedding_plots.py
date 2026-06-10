@@ -44,15 +44,23 @@ def plot_embedding(embedding: np.ndarray,
                     x=embedding[mask, dims[0]],
                     y=embedding[mask, dims[1]],
                     c=palette_fn(cid),
-                    label=f'{cid}'
+                    label=f'{cid}',
+                    alpha=0.7,
+                    zorder=2,
                 )
         if -1 in cluster:
+            # Draw noise UNDERNEATH the clusters (zorder=1), never on top.
+            # Plotted last only so the legend keeps the natural 0,1,…,-1 order;
+            # zorder controls the actual layering. Otherwise grey dots paint OVER
+            # coloured clusters and look like noise sitting *inside* them.
             mask = cluster == -1
             plt.scatter(
                 x=embedding[mask, dims[0]],
                 y=embedding[mask, dims[1]],
                 c='grey',
-                label='-1'
+                label='-1',
+                alpha=0.7,
+                zorder=1,
             )
         if legend:
             plt.legend()
@@ -60,7 +68,8 @@ def plot_embedding(embedding: np.ndarray,
         plt.scatter(
             x=embedding[:, dims[0]],
             y=embedding[:, dims[1]],
-            c='grey'
+            c='grey',
+            alpha=0.7,
         )
 
 
@@ -102,7 +111,8 @@ def plot_named_embedding(embedding: np.ndarray,
                 x=embedding[mask, dims[0]],
                 y=embedding[mask, dims[1]],
                 c=c,
-                label=label
+                label=label,
+                alpha=0.7,
             )
         if legend:
             plt.legend()
@@ -110,7 +120,8 @@ def plot_named_embedding(embedding: np.ndarray,
         plt.scatter(
             x=embedding[:, dims[0]],
             y=embedding[:, dims[1]],
-            c='grey'
+            c='grey',
+            alpha=0.7,
         )
 
 
@@ -239,15 +250,23 @@ def plot_focus_embedding(embedding: np.ndarray,
                     x=embedding[mask, dims[0]],
                     y=embedding[mask, dims[1]],
                     c=palette_fn(cid),
-                    label=f'{cid}'
+                    label=f'{cid}',
+                    alpha=0.7,
+                    zorder=2,
                 )
         if -1 in cluster:
+            # Draw noise UNDERNEATH the clusters (zorder=1), never on top.
+            # Plotted last only so the legend keeps the natural 0,1,…,-1 order;
+            # zorder controls the actual layering. Otherwise grey dots paint OVER
+            # coloured clusters and look like noise sitting *inside* them.
             mask = cluster == -1
             plt.scatter(
                 x=embedding[mask, dims[0]],
                 y=embedding[mask, dims[1]],
                 c='grey',
-                label='-1'
+                label='-1',
+                alpha=0.7,
+                zorder=1,
             )
         if legend:
             plt.legend()
@@ -255,5 +274,6 @@ def plot_focus_embedding(embedding: np.ndarray,
         plt.scatter(
             x=embedding[focus, dims[0]],
             y=embedding[focus, dims[1]],
-            c='grey'
+            c='grey',
+            alpha=0.7,
         )

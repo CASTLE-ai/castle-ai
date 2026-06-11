@@ -20,11 +20,13 @@ config registry, atomic dir swap, filelock) lives in
 :mod:`castle.service.prepare_service`.
 
 Design notes that matter:
-* ``load_latent_safe`` already normalises +/-Inf -> NaN, and non-finite values
-  appear as **whole rows** (tracking-loss frames). We keep that row-alignment
-  end to end: NaN rows are excluded from the PCA *fit* but pass through
-  *transform* as NaN, so downstream ``Latent.__init__`` still marks them
-  ``cluster = -1``.
+* We load latents with ``load_latent_safe(fix_nonfinite=False)`` (the Inf->NaN
+  rewrite is skipped — it costs ~3x RAM and every file has non-finite rows).
+  Non-finite values appear as **whole rows** (tracking-loss frames; +/-Inf or
+  NaN). We keep that row-alignment end to end: those rows are detected by
+  ``torch.isfinite`` / ``np.isfinite`` here, excluded from the PCA *fit*, but
+  pass through *transform* as NaN, so downstream ``Latent.__init__`` still marks
+  them ``cluster = -1``.
 * Windowing (``time_window``) is an Explore-time op and is **not** applied here.
   The cache is at decimated-frame resolution; :class:`FrameIndexMap` is
   W-agnostic and gains a ``for_window(W)`` view at explore time.
@@ -378,49 +380,44 @@ def l2_normalize_rows(x: npt.ArrayLike, eps: float = _L2_EPS) -> FloatArr:
 class SourceSpec:
     """One selected latent source for a video, resolved by the service layer.
 
-    Normally a single ``.npz`` file. For multiscale scale-combination the source
-    instead column-concatenates the requested SPP scale blocks (``req_scales``)
-    gathered from ``scale_files`` — each ``(npz_path, file_scales)`` — *before*
-    Prepare's L2/PCA, so the cache is built on exactly the chosen scales. The
-    block for a scale is read from a per-scale file or sliced from a legacy
-    combined file (see :func:`castle.core.latent_scales._scale_block`).
+    A single combined ``.npz`` latent file. When ``req_scales`` is set the source
+    slices those SPP scale blocks out of the combined file and column-concatenates
+    them (ascending) *before* Prepare's L2/PCA, so the cache is built on exactly
+    the chosen scales (see :func:`castle.core.latent_scales._scale_block`).
+    ``req_scales is None`` means use the whole file unchanged — including the case
+    where every available scale was selected (no slicing needed).
     """
 
-    key: str          # config['latent'] logical key (the primary file)
-    npz_path: str     # physical .npz path (the primary / first file)
+    key: str          # config['latent'] logical key
+    npz_path: str     # physical combined .npz path
     video_name: str   # source mp4 filename
     raw_fps: float
     roi: int          # source ROI id (for grid mask overlay)
-    scale_files: Optional[List[Tuple[str, List[int]]]] = None  # (path, file_scales)
-    req_scales: Optional[List[int]] = None                     # ascending subset to combine
+    file_scales: Optional[List[int]] = None  # SPP scales present in the file, ascending ([] / None = weighted_average)
+    req_scales: Optional[List[int]] = None   # ascending subset to slice/combine (None = whole file)
 
 
 def _load_scale_combined_latent(s: "SourceSpec") -> npt.NDArray[Any]:
-    """Column-concatenate ``s.req_scales`` blocks for one source, ascending.
+    """Slice ``s.req_scales`` blocks from the combined file and hstack, ascending.
 
-    Each contributing file is loaded once (native dtype, no Inf→NaN rewrite —
-    matching :func:`_load_raw_decidx`); its blocks for any requested scales are
-    sliced out and the per-scale blocks are hstacked in ascending-scale order.
+    The file is loaded once (native dtype, no Inf→NaN rewrite — matching
+    :func:`_load_raw_decidx`); each requested scale's block is sliced out with
+    :func:`castle.core.latent_scales._scale_block` and the blocks are
+    concatenated in ascending-scale order.
     """
     from castle.core.latent_scales import _scale_block
-    assert s.req_scales and s.scale_files
+    assert s.req_scales and s.file_scales
     req = sorted(s.req_scales)
-    blocks: Dict[int, npt.NDArray[Any]] = {}
-    for path, file_scales in s.scale_files:
-        needed = [sc for sc in req if sc in file_scales and sc not in blocks]
-        if not needed:
-            continue
-        arr = load_latent_safe(path, fix_nonfinite=False)
-        for sc in needed:
-            blocks[sc] = _scale_block(arr, file_scales, sc)
-    missing = [sc for sc in req if sc not in blocks]
+    missing = [sc for sc in req if sc not in s.file_scales]
     if missing:
         raise ValueError(
             f"Source '{s.video_name}' is missing SPP scale(s) {missing} for the "
-            f"requested combination {req}."
+            f"requested combination {req} (file has {sorted(s.file_scales)})."
         )
-    n = min(blocks[sc].shape[0] for sc in req)
-    return np.hstack([np.ascontiguousarray(blocks[sc][:n]) for sc in req])
+    arr = load_latent_safe(s.npz_path, fix_nonfinite=False)
+    return np.hstack(
+        [np.ascontiguousarray(_scale_block(arr, s.file_scales, sc)) for sc in req]
+    )
 
 
 def _round6(x: float) -> float:
@@ -455,21 +452,18 @@ def compute_prepare_id(
         f"fit_fraction={_round6(fit_fraction)}",
     ]
     for s in sorted(sources, key=lambda x: x.key):
-        # Hash every contributing file (a scale-combination source has several),
-        # plus the requested scale subset, so different scale combos / edited
-        # files map to different caches.
-        files = s.scale_files if s.scale_files else [(s.npz_path, [])]
-        sigs = []
-        for path, _fs in sorted(files):
-            try:
-                st = os.stat(path)
-                sigs.append(f"{path}|{_round6(st.st_mtime)}|{st.st_size}")
-            except OSError:
-                sigs.append(f"{path}|missing|missing")
+        # Hash the source file + the requested scale subset, so different scale
+        # combos / edited files map to different caches. ``req_scales is None``
+        # (whole file, incl. "every scale selected") hashes to the same "-" tag.
+        try:
+            st = os.stat(s.npz_path)
+            sig = f"{s.npz_path}|{_round6(st.st_mtime)}|{st.st_size}"
+        except OSError:
+            sig = f"{s.npz_path}|missing|missing"
         scales_tag = (
             "x".join(str(x) for x in sorted(s.req_scales)) if s.req_scales else "-"
         )
-        parts.append(f"{s.key}|scales={scales_tag}|" + ";".join(sigs))
+        parts.append(f"{s.key}|scales={scales_tag}|{sig}")
     payload = "\n".join(parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
@@ -523,14 +517,10 @@ def _max_concurrent_loads(sources: Sequence[SourceSpec], avail_ram_bytes: Option
     max_raw = 1
     for s in sources:
         try:
-            # A scale-combination source holds several files resident while it
-            # combines; sum their raw bytes for the worst-case footprint.
-            files = [p for p, _ in s.scale_files] if s.scale_files else [s.npz_path]
-            raw = 0
-            for p in files:
-                n0, nf, isz = _peek_header(p)
-                raw += n0 * nf * isz
-            max_raw = max(max_raw, raw)
+            # One combined file resident per loader during inflate (a scale-subset
+            # source slices in place, so its footprint is still one file's bytes).
+            n0, nf, isz = _peek_header(s.npz_path)
+            max_raw = max(max_raw, n0 * nf * isz)
         except Exception:  # noqa: BLE001
             pass
     usable = max(0, avail - margin)
@@ -786,17 +776,13 @@ def _source_geometry(s: SourceSpec) -> Tuple[int, int]:
     the array is stored float16); the header is authoritative.
     """
     if s.req_scales:
-        # Combined width = C · Σ(requested s²), with C derived from one file.
+        # Sliced width = C · Σ(requested s²), with C derived from the file layout.
         req = sorted(s.req_scales)
-        n0 = base_c = 0
-        for path, file_scales in s.scale_files or []:
-            if any(sc in file_scales for sc in req):
-                rows, nf, _isz = _peek_header(path)
-                units = sum(s2 * s2 for s2 in sorted(int(x) for x in file_scales))
-                if units and nf % units == 0:
-                    n0, base_c = rows, nf // units
-                    break
-        return n0, base_c * sum(s2 * s2 for s2 in req)
+        rows, nf, _isz = _peek_header(s.npz_path)
+        fs = sorted(int(x) for x in (s.file_scales or []))
+        units = sum(s2 * s2 for s2 in fs)
+        base_c = nf // units if units and nf % units == 0 else 0
+        return rows, base_c * sum(s2 * s2 for s2 in req)
     n0, nf, _itemsize = _peek_header(s.npz_path)
     return n0, nf
 
@@ -1070,10 +1056,22 @@ def run_prepare(
         np.save(os.path.join(out_dir, PCA_COMPONENTS_FILENAME), np.asarray(components, dtype=np.float32))
         np.save(os.path.join(out_dir, PCA_MEAN_FILENAME), np.asarray(mean_vec, dtype=np.float32))
 
+    # SPP scale provenance (Q1): which scales this cache represents — an explicit
+    # subset (req_scales) if one was requested, else the full set present in the
+    # source files, else None for weighted_average. All sources in a build share
+    # the same selection, so the first non-empty value is representative.
+    _req = next((s.req_scales for s in sources if s.req_scales), None)
+    if _req:
+        scales_meta: Optional[List[int]] = sorted(_req)
+    else:
+        _fs = next((s.file_scales for s in sources if s.file_scales), None)
+        scales_meta = sorted(_fs) if _fs else None
+
     meta = {
         "prepare_schema_version": PREPARE_SCHEMA_VERSION,
         "created_at": None,  # stamped by service (no clock in pure core)
         "model_name": model_name,
+        "scales": scales_meta,  # SPP scales the cache was built on (None = weighted_average)
         "downsample": {"on": bool(downsample), "target_fps_cap": float(target_fps_cap)},
         "normalize": normalize,
         "pca": {

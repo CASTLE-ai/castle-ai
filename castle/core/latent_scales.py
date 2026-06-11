@@ -2,11 +2,10 @@
 
 A multiscale latent stores the per-scale pooled blocks concatenated in
 ascending-scale order: scale ``s`` occupies a contiguous ``s²·C`` column block
-(``C`` = base feature dim, 768 for DINOv3 ViT-B/16). Extraction writes one file
-per scale (``…_spp{s}.npz``) but a legacy combined file (``…_spp1x2x4.npz``)
-holds every block. These helpers parse the scale list and slice a single scale's
-block — used by both the clustering aggregator (legacy raw path) and the Prepare
-cache builder, which is where scales are combined *before* PCA.
+(``C`` = base feature dim, 768 for DINOv3 ViT-B/16). Extraction writes a single
+combined file (``…_spp1x2x4.npz``) holding every block. These helpers parse the
+scale list and slice a single scale's block — used by the Prepare cache builder,
+which is where the wanted scale subset is sliced/combined *before* PCA.
 """
 
 import os

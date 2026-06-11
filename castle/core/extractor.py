@@ -530,6 +530,13 @@ def extract_roi_latent_from_video(
     """
     batch_size = int(batch_size)
     roi_id = int(roi_id)
+    # Normalise SPP scales to ascending order ONCE: the column-block order emitted
+    # by _multiscale_pooling, the filename spp tag (sorted), and the stored
+    # metadata must all agree, because downstream slicing (latent_scales._scale_block,
+    # Prepare) assumes ascending. A caller passing e.g. [4,1,2] would otherwise
+    # mislabel the blocks. Idempotent for the usual ascending input.
+    if pooling_scales:
+        pooling_scales = sorted(int(s) for s in pooling_scales)
 
     # PERF-07: honour strict_cuda; otherwise turn on cudnn benchmark for speed.
     _enable_cudnn_benchmark_if_not_strict()
@@ -1221,6 +1228,10 @@ def extract_roi_latent_from_video_2gpu(
     """
     batch_size = int(batch_size)
     roi_id = int(roi_id)
+    # Ascending SPP scales (see extract_roi_latent_from_video): keep column order,
+    # filename tag, and metadata in agreement for downstream slicing.
+    if pooling_scales:
+        pooling_scales = sorted(int(s) for s in pooling_scales)
     _enable_cudnn_benchmark_if_not_strict()
     _apply_extraction_thread_cap("cuda")
 

@@ -106,15 +106,16 @@ def resolve_sources(
         resolved.append((key, npz_path, video_name, raw_fps, roi, _spp_scales_of(key)))
 
     want = sorted({int(s) for s in scales}) if scales else None
-    spp = [r for r in resolved if r[5]]
-    if not want or not spp:
-        # No scale-combination: one SourceSpec per file (legacy behaviour).
+    spp_present = any(fs for (*_, fs) in resolved)
+    if not want or not spp_present:
+        # No scale selection (or nothing multiscale): one source per file, whole.
         return [
-            SourceSpec(key=k, npz_path=p, video_name=v, raw_fps=f, roi=roi)
-            for (k, p, v, f, roi, _) in resolved
+            SourceSpec(key=k, npz_path=p, video_name=v, raw_fps=f, roi=roi,
+                       file_scales=(sorted(fs) if fs else None))
+            for (k, p, v, f, roi, fs) in resolved
         ]
 
-    available = sorted({s for r in spp for s in r[5]})
+    available = sorted({s for (*_, fs) in resolved for s in fs})
     req = [s for s in want if s in available]
     if not req:
         raise ValueError(
@@ -122,23 +123,23 @@ def resolve_sources(
             f"(have {available}). Pick available scales or re-extract."
         )
 
-    from collections import defaultdict
-    groups = defaultdict(list)
-    for (k, p, v, f, roi, fs) in spp:
-        groups[(v, roi)].append((k, p, f, fs))
-
     specs: List[SourceSpec] = []
-    for (video_name, roi), files in groups.items():
-        provided = {s for (_, _, _, fs) in files for s in fs}
-        missing = [s for s in req if s not in provided]
-        if missing:
-            notify(f"Prepare: video '{video_name}' missing SPP scale(s) {missing}; skipped.")
+    for (k, p, v, f, roi, fs) in resolved:
+        if not fs:
+            notify(f"Prepare: '{v}' is a weighted_average latent; "
+                   f"skipped while SPP scales are selected.")
             continue
-        scale_files = [(p, fs) for (_, p, _, fs) in files]
-        first_key, first_path, first_fps, _ = files[0]
+        avail = sorted(fs)
+        missing = [s for s in req if s not in avail]
+        if missing:
+            notify(f"Prepare: '{v}' missing SPP scale(s) {missing}; skipped.")
+            continue
+        # Selecting every available scale needs no slicing — load the whole file
+        # (req_scales=None), so "all scales" and "no selection" share one cache.
+        req_scales = None if req == avail else req
         specs.append(SourceSpec(
-            key=first_key, npz_path=first_path, video_name=video_name,
-            raw_fps=first_fps, roi=roi, scale_files=scale_files, req_scales=req,
+            key=k, npz_path=p, video_name=v, raw_fps=f, roi=roi,
+            file_scales=avail, req_scales=req_scales,
         ))
     return specs
 
@@ -230,6 +231,7 @@ def build_prepare(
             "n_sources": len(specs),
             "n_dp_total": meta["n_dp_total"],
             "width": meta["width"],
+            "scales": meta.get("scales"),  # SPP scales this cache represents (provenance)
             "downsample": meta["downsample"],
             "normalize": meta["normalize"],
             "pca_on": meta["pca"]["on"],

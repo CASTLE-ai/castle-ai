@@ -251,10 +251,11 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 interactive=True,
                 info=(
                     "For multiscale latents: which spatial-pyramid scales to combine "
-                    "INTO this cache — 1=1×1 (global), 2=2×2, 4=4×4. They are "
-                    "concatenated before PCA, so each combination is its own cache "
-                    "(build several to compare). Reads per-scale files (…_spp1/2/4) "
-                    "or slices a legacy combined file. Ignored for weighted_average."
+                    "INTO this cache — 1=1×1 (global), 2=2×2, 4=4×4. The chosen blocks "
+                    "are sliced from each combined latent file and concatenated before "
+                    "PCA, so each combination is its own cache (build several to "
+                    "compare). Selecting every available scale = the full latent "
+                    "(no slicing). Ignored for weighted_average."
                 ),
             )
             with gr.Row():
@@ -539,6 +540,23 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=_format_session_status,
         inputs=[session_info],
         outputs=[ui['restore_btn'], ui['session_status'], ui['session_dropdown']]
+    )
+
+    # When a prepared cache is the data source, model / pooling / ROID are baked
+    # into the cache and ignored downstream — hide them to avoid the impression
+    # they still apply. Legacy raw uses all three, so show them for the sentinel.
+    def _toggle_source_fields(source):
+        is_legacy = (not source) or str(source).startswith("(legacy")
+        return (
+            gr.update(visible=is_legacy),  # select_model
+            gr.update(visible=is_legacy),  # pooling
+            gr.update(visible=is_legacy),  # select_roi_id
+        )
+
+    ui['data_source'].change(
+        fn=_toggle_source_fields,
+        inputs=[ui['data_source']],
+        outputs=[ui['select_model'], ui['pooling'], ui['select_roi_id']],
     )
 
     # Initialize: create aggregator + check for previous session.

@@ -1053,8 +1053,9 @@ def build_prepare_handler(storage_path, project_name, model, selected_keys,
         return
 
     # SPP scales to combine into this cache (CheckboxGroup → list of strings).
-    # Empty / all → None (every available scale). Combined before PCA, so each
-    # combo is a distinct cache.
+    # Empty → None (no selection). resolve_sources slices a strict subset before
+    # PCA (each subset = its own cache) and collapses "every available scale" to
+    # the whole file (so all-selected and no-selection share one cache).
     scales_sel = None
     if spp_scales:
         try:

@@ -807,6 +807,14 @@ def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_
     each frame inherits its window's cluster label/embedding. The Prepare
     transform (L2 + PCA basis + k') is bundled so apply() can map a new
     project's RAW latents into the same space. See cluster_transfer.ClusterModel.
+
+    NOTE (scale provenance): the bundled ``raw_feature_dim`` is the *combined*
+    width of the SPP scales this cache was built on, but the scale identity is
+    NOT carried into the transfer model. apply() only dim-checks. So a model
+    built from a SCALE-SUBSET cache (e.g. only 2×2 → 3072-d) cannot be applied to
+    a fresh project's full combined latent (16128-d) — it raises on the dim
+    mismatch, and there is no scale info to auto-slice. Build transfer-export
+    caches on the full scale set (or match the subset width on the new project).
     """
     import glob
     from castle.core.cluster_transfer import save_cluster_model

@@ -748,8 +748,7 @@ def import_info_from_local_latent(
 
 
 def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_model,
-                  data_source=None, variance_pct=95, pooling='auto', scales=None,
-                  progress=gr.Progress()):
+                  data_source=None, variance_pct=95, pooling='auto', progress=gr.Progress()):
     """Thin Gradio wrapper around
     :func:`castle.service.clustering_service.init_clustering_aggregator`.
 
@@ -774,15 +773,6 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
     if data_source and not str(data_source).startswith("(legacy"):
         prepare_id = str(data_source)
 
-    # SPP scales to combine (multiscale only). The CheckboxGroup hands back a
-    # list of strings; empty / all-selected → None (use every available scale).
-    scales_sel: list | None = None
-    if scales:
-        try:
-            scales_sel = sorted({int(s) for s in scales})
-        except (TypeError, ValueError):
-            scales_sel = None
-
     # Visible feedback: the click outputs are all gr.State (no spinner), so drive
     # a gr.Progress bar. Routine load messages update its description (one bar,
     # not a toast per video); warnings/errors still surface as toasts.
@@ -801,7 +791,6 @@ def init_mulvideo(storage_path, project_name, select_roi_id, bin_size, select_mo
             select_roi_id=select_roi_id, bin_size=bin_size,
             select_model=select_model, notify=notify_callback,
             prepare_id=prepare_id, variance_pct=variance_pct, pooling=pooling,
-            scales=scales_sel,
         )
         session_info = check_session_exists(storage_path, project_name)
         n_dp = (
@@ -1026,7 +1015,7 @@ _PREP_CANCEL_BTN_IDLE = "Cancel"
 
 def build_prepare_handler(storage_path, project_name, model, selected_keys,
                           downsample, target_fps, normalize, pca, K, fit_fraction,
-                          cancel_event=None):
+                          spp_scales=None, cancel_event=None):
     """Build a prepared cache — same live UX as the Extract / Pre-process tabs.
 
     Generator that runs the build on a background thread and **polls** every
@@ -1063,6 +1052,16 @@ def build_prepare_handler(storage_path, project_name, model, selected_keys,
         )
         return
 
+    # SPP scales to combine into this cache (CheckboxGroup → list of strings).
+    # Empty / all → None (every available scale). Combined before PCA, so each
+    # combo is a distinct cache.
+    scales_sel = None
+    if spp_scales:
+        try:
+            scales_sel = sorted({int(s) for s in spp_scales})
+        except (TypeError, ValueError):
+            scales_sel = None
+
     messages: list = []
     prog = {"frames": 0, "total_frames": 0, "steps": 0, "total_steps": 0}
     lock = threading.Lock()
@@ -1084,7 +1083,7 @@ def build_prepare_handler(storage_path, project_name, model, selected_keys,
                 storage_path, project_name, model, list(selected_keys),
                 downsample=bool(downsample), target_fps_cap=float(target_fps),
                 normalize=str(normalize), pca=bool(pca), K=int(K),
-                fit_fraction=float(fit_fraction),
+                fit_fraction=float(fit_fraction), scales=scales_sel,
                 notify=_note, progress_cb=_progress,
                 should_cancel=(cancel_event.is_set if cancel_event is not None else (lambda: False)),
             )

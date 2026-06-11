@@ -24,6 +24,7 @@ from filelock import FileLock
 from castle.core import prepare as _prepare
 from castle.core import runtime_env
 from castle.core.cluster import _resolve_latent_path
+from castle.core.latent_scales import _spp_scales_of
 from castle.core.prepare import SourceSpec, compute_prepare_id, is_stale, load_prepare, run_prepare
 from castle.core.project import get_project_config, update_config
 
@@ -72,25 +73,73 @@ def resolve_sources(
     model_name: str,
     selected_keys: Sequence[str],
     notify: Callable[[str], None] = logger.info,
+    scales: Optional[Sequence[int]] = None,
 ) -> List[SourceSpec]:
-    """Resolve config['latent'] keys into SourceSpec (path, video, fps, roi)."""
+    """Resolve config['latent'] keys into SourceSpec (path, video, fps, roi).
+
+    When ``scales`` is given AND the selection contains SPP (multiscale) files,
+    the per-video files are grouped and a single scale-combination SourceSpec is
+    built per video (the requested scale blocks are column-concatenated before
+    Prepare's PCA — so each scale-combo is its own cache). A video missing a
+    requested scale is skipped with a warning. Otherwise (no scales, or
+    weighted-average files) one SourceSpec is built per file, as before.
+    """
     latent_dir = _latent_dir(storage_path, project_name, model_name)
     _, config = get_project_config(storage_path, project_name)
     latent_map = config.get("latent", {})
     sources_dir = os.path.join(storage_path, project_name, "sources")
 
-    specs: List[SourceSpec] = []
-    for key in selected_keys:
-        npz_path = _resolve_latent_path(latent_dir, key)
-        video_name = latent_map.get(key)
-        if video_name is None:
-            # Not registered under this exact key; derive the mp4 from the name.
+    def _video_of(key: str) -> str:
+        v = latent_map.get(key)
+        if v is None:
             stem = os.path.basename(key)
             m = _ROI_RE.search(stem)
-            video_name = (stem[: m.start()] + f"_ROI_{m.group(1)}.mp4") if m else stem
+            v = (stem[: m.start()] + f"_ROI_{m.group(1)}.mp4") if m else stem
+        return str(v)
+
+    resolved = []  # (key, npz_path, video_name, raw_fps, roi, file_scales)
+    for key in selected_keys:
+        npz_path = _resolve_latent_path(latent_dir, key)
+        video_name = _video_of(key)
         roi = _roi_from_key(key)
         raw_fps = _read_fps(os.path.join(sources_dir, video_name), notify)
-        specs.append(SourceSpec(key=key, npz_path=npz_path, video_name=video_name, raw_fps=raw_fps, roi=roi))
+        resolved.append((key, npz_path, video_name, raw_fps, roi, _spp_scales_of(key)))
+
+    want = sorted({int(s) for s in scales}) if scales else None
+    spp = [r for r in resolved if r[5]]
+    if not want or not spp:
+        # No scale-combination: one SourceSpec per file (legacy behaviour).
+        return [
+            SourceSpec(key=k, npz_path=p, video_name=v, raw_fps=f, roi=roi)
+            for (k, p, v, f, roi, _) in resolved
+        ]
+
+    available = sorted({s for r in spp for s in r[5]})
+    req = [s for s in want if s in available]
+    if not req:
+        raise ValueError(
+            f"None of the requested SPP scales {want} are available "
+            f"(have {available}). Pick available scales or re-extract."
+        )
+
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for (k, p, v, f, roi, fs) in spp:
+        groups[(v, roi)].append((k, p, f, fs))
+
+    specs: List[SourceSpec] = []
+    for (video_name, roi), files in groups.items():
+        provided = {s for (_, _, _, fs) in files for s in fs}
+        missing = [s for s in req if s not in provided]
+        if missing:
+            notify(f"Prepare: video '{video_name}' missing SPP scale(s) {missing}; skipped.")
+            continue
+        scale_files = [(p, fs) for (_, p, _, fs) in files]
+        first_key, first_path, first_fps, _ = files[0]
+        specs.append(SourceSpec(
+            key=first_key, npz_path=first_path, video_name=video_name,
+            raw_fps=first_fps, roi=roi, scale_files=scale_files, req_scales=req,
+        ))
     return specs
 
 
@@ -107,6 +156,7 @@ def build_prepare(
     K: int = 1024,
     fit_fraction: float = 1.0,
     seed: int = 0,
+    scales: Optional[Sequence[int]] = None,
     force: bool = False,
     notify: Callable[[str], None] = logger.info,
     progress_cb: Optional[Callable[[float, str], None]] = None,
@@ -120,7 +170,7 @@ def build_prepare(
     ``should_cancel`` are forwarded to :func:`run_prepare`; on cancellation the
     partial ``{id}.tmp`` dir is removed and :class:`BuildCancelled` propagates.
     """
-    specs = resolve_sources(storage_path, project_name, model_name, selected_keys, notify)
+    specs = resolve_sources(storage_path, project_name, model_name, selected_keys, notify, scales)
     if not specs:
         raise ValueError("build_prepare: no latent files selected.")
 

@@ -376,13 +376,51 @@ def l2_normalize_rows(x: npt.ArrayLike, eps: float = _L2_EPS) -> FloatArr:
 # --------------------------------------------------------------------------- #
 @dataclass
 class SourceSpec:
-    """One selected latent file, resolved by the service layer."""
+    """One selected latent source for a video, resolved by the service layer.
 
-    key: str          # config['latent'] logical key
-    npz_path: str     # physical .npz path
+    Normally a single ``.npz`` file. For multiscale scale-combination the source
+    instead column-concatenates the requested SPP scale blocks (``req_scales``)
+    gathered from ``scale_files`` — each ``(npz_path, file_scales)`` — *before*
+    Prepare's L2/PCA, so the cache is built on exactly the chosen scales. The
+    block for a scale is read from a per-scale file or sliced from a legacy
+    combined file (see :func:`castle.core.latent_scales._scale_block`).
+    """
+
+    key: str          # config['latent'] logical key (the primary file)
+    npz_path: str     # physical .npz path (the primary / first file)
     video_name: str   # source mp4 filename
     raw_fps: float
     roi: int          # source ROI id (for grid mask overlay)
+    scale_files: Optional[List[Tuple[str, List[int]]]] = None  # (path, file_scales)
+    req_scales: Optional[List[int]] = None                     # ascending subset to combine
+
+
+def _load_scale_combined_latent(s: "SourceSpec") -> npt.NDArray[Any]:
+    """Column-concatenate ``s.req_scales`` blocks for one source, ascending.
+
+    Each contributing file is loaded once (native dtype, no Inf→NaN rewrite —
+    matching :func:`_load_raw_decidx`); its blocks for any requested scales are
+    sliced out and the per-scale blocks are hstacked in ascending-scale order.
+    """
+    from castle.core.latent_scales import _scale_block
+    assert s.req_scales and s.scale_files
+    req = sorted(s.req_scales)
+    blocks: Dict[int, npt.NDArray[Any]] = {}
+    for path, file_scales in s.scale_files:
+        needed = [sc for sc in req if sc in file_scales and sc not in blocks]
+        if not needed:
+            continue
+        arr = load_latent_safe(path, fix_nonfinite=False)
+        for sc in needed:
+            blocks[sc] = _scale_block(arr, file_scales, sc)
+    missing = [sc for sc in req if sc not in blocks]
+    if missing:
+        raise ValueError(
+            f"Source '{s.video_name}' is missing SPP scale(s) {missing} for the "
+            f"requested combination {req}."
+        )
+    n = min(blocks[sc].shape[0] for sc in req)
+    return np.hstack([np.ascontiguousarray(blocks[sc][:n]) for sc in req])
 
 
 def _round6(x: float) -> float:
@@ -417,12 +455,21 @@ def compute_prepare_id(
         f"fit_fraction={_round6(fit_fraction)}",
     ]
     for s in sorted(sources, key=lambda x: x.key):
-        try:
-            st = os.stat(s.npz_path)
-            sig = f"{_round6(st.st_mtime)}|{st.st_size}"
-        except OSError:
-            sig = "missing|missing"
-        parts.append(f"{s.key}|{sig}")
+        # Hash every contributing file (a scale-combination source has several),
+        # plus the requested scale subset, so different scale combos / edited
+        # files map to different caches.
+        files = s.scale_files if s.scale_files else [(s.npz_path, [])]
+        sigs = []
+        for path, _fs in sorted(files):
+            try:
+                st = os.stat(path)
+                sigs.append(f"{path}|{_round6(st.st_mtime)}|{st.st_size}")
+            except OSError:
+                sigs.append(f"{path}|missing|missing")
+        scales_tag = (
+            "x".join(str(x) for x in sorted(s.req_scales)) if s.req_scales else "-"
+        )
+        parts.append(f"{s.key}|scales={scales_tag}|" + ";".join(sigs))
     payload = "\n".join(parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
@@ -476,8 +523,14 @@ def _max_concurrent_loads(sources: Sequence[SourceSpec], avail_ram_bytes: Option
     max_raw = 1
     for s in sources:
         try:
-            n0, nf, isz = _peek_header(s.npz_path)
-            max_raw = max(max_raw, n0 * nf * isz)
+            # A scale-combination source holds several files resident while it
+            # combines; sum their raw bytes for the worst-case footprint.
+            files = [p for p, _ in s.scale_files] if s.scale_files else [s.npz_path]
+            raw = 0
+            for p in files:
+                n0, nf, isz = _peek_header(p)
+                raw += n0 * nf * isz
+            max_raw = max(max_raw, raw)
         except Exception:  # noqa: BLE001
             pass
     usable = max(0, avail - margin)
@@ -697,7 +750,10 @@ def _load_raw_decidx(
     in :func:`_to_device_l2` and written to the cache as NaN, so the result is
     identical to the eager conversion.
     """
-    arr = load_latent_safe(s.npz_path, fix_nonfinite=False)  # native dtype; ~1x RAM
+    if s.req_scales:
+        arr = _load_scale_combined_latent(s)  # column-combine selected scales
+    else:
+        arr = load_latent_safe(s.npz_path, fix_nonfinite=False)  # native dtype; ~1x RAM
     n_orig = int(arr.shape[0])
     tgt = effective_target_fps(s.raw_fps, target_fps_cap) if downsample else None
     if tgt is not None and s.raw_fps is not None and s.raw_fps > tgt:
@@ -729,6 +785,18 @@ def _source_geometry(s: SourceSpec) -> Tuple[int, int]:
     because the sidecar's recorded ``dtype`` can be stale (it says float32 while
     the array is stored float16); the header is authoritative.
     """
+    if s.req_scales:
+        # Combined width = C · Σ(requested s²), with C derived from one file.
+        req = sorted(s.req_scales)
+        n0 = base_c = 0
+        for path, file_scales in s.scale_files or []:
+            if any(sc in file_scales for sc in req):
+                rows, nf, _isz = _peek_header(path)
+                units = sum(s2 * s2 for s2 in sorted(int(x) for x in file_scales))
+                if units and nf % units == 0:
+                    n0, base_c = rows, nf // units
+                    break
+        return n0, base_c * sum(s2 * s2 for s2 in req)
     n0, nf, _itemsize = _peek_header(s.npz_path)
     return n0, nf
 

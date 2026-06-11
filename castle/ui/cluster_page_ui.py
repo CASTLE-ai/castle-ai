@@ -244,6 +244,19 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                 ui['prep_fit_fraction'] = gr.Number(
                     value=1.0, label="PCA fit fraction", minimum=0.01, maximum=1.0, step=0.01,
                 )
+            ui['prep_spp_scales'] = gr.CheckboxGroup(
+                label="SPP scales to combine (multiscale)",
+                choices=["1", "2", "4"],
+                value=["1", "2", "4"],
+                interactive=True,
+                info=(
+                    "For multiscale latents: which spatial-pyramid scales to combine "
+                    "INTO this cache — 1=1×1 (global), 2=2×2, 4=4×4. They are "
+                    "concatenated before PCA, so each combination is its own cache "
+                    "(build several to compare). Reads per-scale files (…_spp1/2/4) "
+                    "or slices a legacy combined file. Ignored for weighted_average."
+                ),
+            )
             with gr.Row():
                 ui['prep_refresh_btn'] = gr.Button("↻ Refresh file list")
                 ui['prep_build_btn'] = gr.Button("⚙️ Build cache", variant="primary", scale=4)
@@ -290,19 +303,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         "variant)."
                     ),
                 )
-                ui['spp_scales'] = gr.CheckboxGroup(
-                    label="SPP scales to combine (multiscale)",
-                    choices=["1", "2", "4"],
-                    value=["1", "2", "4"],
-                    interactive=True,
-                    info=(
-                        "When pooling is multiscale, which spatial-pyramid scales to "
-                        "combine: 1=1×1 (global), 2=2×2, 4=4×4. Mix and match to compare "
-                        "scales. Works on per-scale files AND legacy combined spp1x2x4 "
-                        "files (sliced on the fly — no re-extraction). All selected = the "
-                        "full multiscale latent. Ignored for weighted_average."
-                    ),
-                )
+                # SPP scale selection now lives in the Prepare tab (scales are
+                # combined BEFORE PCA, baked into each cache). The legacy raw path
+                # still combines all available scales by default.
                 ui['select_roi_id'] = gr.Textbox(
                     label="Enter ROI ID",
                     value="1",
@@ -549,7 +552,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=init_mulvideo,
         inputs=[storage_path, project_name, ui['select_roi_id'], ui['bin_size'], ui['select_model'],
-                ui['data_source'], ui['variance_pct'], ui['pooling'], ui['spp_scales']],
+                ui['data_source'], ui['variance_pct'], ui['pooling']],
         outputs=[mulvideo, latents, session_info]
     ).then(
         fn=_format_session_status,
@@ -752,7 +755,8 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=build_prepare_handler,
         inputs=[storage_path, project_name, ui['prep_model'], ui['prep_files']['group'],
                 ui['prep_downsample'], ui['prep_target_fps'], ui['prep_normalize'],
-                ui['prep_pca'], ui['prep_K'], ui['prep_fit_fraction'], ui['prep_cancel_event']],
+                ui['prep_pca'], ui['prep_K'], ui['prep_fit_fraction'],
+                ui['prep_spp_scales'], ui['prep_cancel_event']],
         outputs=[ui['prep_log'], ui['prep_build_btn'], ui['prep_cancel_btn'],
                  ui['prep_status'], ui['data_source']],
         show_progress="hidden",

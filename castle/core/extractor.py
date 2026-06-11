@@ -474,83 +474,6 @@ def _resolve_latent_dtype(latent_dtype):
     return np.float16 if str(latent_dtype).lower() in ("float16", "fp16", "half") else np.float32
 
 
-def _split_scales(pooling_method, pooling_scales):
-    """Return the per-file scale lists for an extraction. Multiscale with >1
-    scale → one single-scale list per scale (each saved as its own ``spp{s}``
-    file, so Behavior Microscope can combine scales freely). Otherwise → a single
-    entry with the original scales (``None`` for weighted_average)."""
-    if pooling_method == 'multiscale' and pooling_scales and len(pooling_scales) > 1:
-        return [[int(s)] for s in sorted(pooling_scales)]
-    return [list(pooling_scales) if pooling_scales else None]
-
-
-def _expected_latent_filenames(video_name, roi_id, model_name, preprocess_config,
-                               pooling_method, pooling_scales, feature_layers,
-                               session_id):
-    """The latent filename(s) an extraction will write (one per scale when the
-    multiscale output is split). Used for ``skip_existing`` checks."""
-    return [
-        _latent_filename(video_name, roi_id, model_name, preprocess_config,
-                         pooling_method, sc, feature_layers, session_id)
-        for sc in _split_scales(pooling_method, pooling_scales)
-    ]
-
-
-def _save_and_register_latents(
-    latent_array, *, latent_dir_path, video_name, roi_id, model_name,
-    preprocess_config, pooling_method, pooling_scales, feature_layers,
-    session_id, extra_tags, dtype, storage_path, project_name,
-):
-    """Save the extracted latent(s) and register them in ``config['latent']``.
-
-    When pooling is multiscale with more than one scale, the concatenated latent
-    (columns = ``[s1 | s2 | …]`` blocks, each ``s²·C`` wide) is split into ONE
-    file per scale (``..._spp{s}.npz``) so scales can be mixed/matched in the
-    Behavior Microscope without re-extraction. Otherwise a single file is saved.
-    Slices are column views — :func:`save_latent_with_metadata` streams them
-    RAM-bounded. Returns the primary (first) latent path.
-    """
-    per_file_scales = _split_scales(pooling_method, pooling_scales)
-    if len(per_file_scales) > 1:
-        all_scales = sorted(int(s) for s in pooling_scales)
-        base_c = latent_array.shape[1] // sum(s * s for s in all_scales)
-        offsets, off = {}, 0
-        for s in all_scales:
-            offsets[s] = (off, off + s * s * base_c)
-            off += s * s * base_c
-
-    from castle.core.project import update_config
-    primary_path = None
-    registry = {}
-    for sc in per_file_scales:
-        fn = _latent_filename(video_name, roi_id, model_name, preprocess_config,
-                              pooling_method, sc, feature_layers, session_id)
-        path = os.path.join(latent_dir_path, fn)
-        if len(per_file_scales) > 1:
-            lo, hi = offsets[int(sc[0])]
-            block = latent_array[:, lo:hi]
-        else:
-            block = latent_array
-        save_latent_with_metadata(
-            path, block,
-            video_name=video_name, roi_id=int(roi_id), model_name=model_name,
-            tags={
-                "pooling_method": pooling_method,
-                "pooling_scales": list(sc) if sc else None,
-                "feature_layers": list(feature_layers) if feature_layers else None,
-                **extra_tags,
-            },
-            dtype=dtype,
-        )
-        key = f"{session_id}/{fn}" if session_id else fn
-        registry[key] = video_name
-        if primary_path is None:
-            primary_path = path
-    with update_config(storage_path, project_name) as config:
-        config.setdefault('latent', {}).update(registry)
-    return primary_path
-
-
 # --- Core Function 1: Extract Latent ---
 def extract_roi_latent_from_video(
     storage_path: str,
@@ -625,17 +548,9 @@ def extract_roi_latent_from_video(
     )
     latent_path = os.path.join(latent_dir_path, latent_filename)
 
-    # Multiscale extractions are written one file per scale (see
-    # _save_and_register_latents); skip only when ALL expected files exist.
-    expected_paths = [
-        os.path.join(latent_dir_path, fn) for fn in _expected_latent_filenames(
-            video_name, roi_id, model_name, preprocess_config,
-            pooling_method, pooling_scales, feature_layers, session_id,
-        )
-    ]
-    if skip_existing and all(os.path.exists(p) for p in expected_paths):
-        logger.info(f"Skipping existing latent(s): {expected_paths[0]}")
-        return expected_paths[0]
+    if skip_existing and os.path.exists(latent_path):
+        logger.info(f"Skipping existing latent: {latent_path}")
+        return latent_path
 
     # 2. Load Resources
     source_path = source_video_path or os.path.join(storage_path, project_name, 'sources', video_name)
@@ -768,14 +683,16 @@ def extract_roi_latent_from_video(
     try:
         if hasattr(latent_array, "flush"):
             latent_array.flush()
-        latent_path = _save_and_register_latents(
+        save_latent_with_metadata(
+            latent_path,
             latent_array,
-            latent_dir_path=latent_dir_path,
-            video_name=video_name, roi_id=int(roi_id), model_name=model_name,
-            preprocess_config=preprocess_config,
-            pooling_method=pooling_method, pooling_scales=pooling_scales,
-            feature_layers=feature_layers, session_id=session_id,
-            extra_tags={
+            video_name=video_name,
+            roi_id=int(roi_id),
+            model_name=model_name,
+            tags={
+                "pooling_method": pooling_method,
+                "pooling_scales": list(pooling_scales) if pooling_scales else None,
+                "feature_layers": list(feature_layers) if feature_layers else None,
                 "rotation": False,
                 "failed_frame_ranges": failed_frame_ranges or None,
                 "remove_background": bool(preprocess_config.remove_background_switch),
@@ -789,7 +706,6 @@ def extract_roi_latent_from_video(
                 **_compute_determinism_tags(device),
             },
             dtype=_resolve_latent_dtype(latent_dtype),
-            storage_path=storage_path, project_name=project_name,
         )
     finally:
         if latent_tmp is not None:
@@ -813,8 +729,13 @@ def extract_roi_latent_from_video(
             max_batch_failure_rate * 100, n_nan_frames,
         )
 
-    # Config registration (atomic RMW, per-scale files) is handled inside
-    # _save_and_register_latents above. latent_path is the primary file.
+    # Update Config — use atomic read-modify-write context manager so two
+    # concurrent extractions writing different videos don't lose updates (3-F).
+    from castle.core.project import update_config
+    latent_key = f"{session_id}/{latent_filename}" if session_id else latent_filename
+    with update_config(storage_path, project_name) as config:
+        config.setdefault('latent', {})[latent_key] = video_name
+
     return latent_path
 
 # --- Core Function 2: Extract Crop Video ---
@@ -1312,15 +1233,9 @@ def extract_roi_latent_from_video_2gpu(
         pooling_method, pooling_scales, feature_layers, session_id,
     )
     latent_path = os.path.join(latent_dir_path, latent_filename)
-    expected_paths = [
-        os.path.join(latent_dir_path, fn) for fn in _expected_latent_filenames(
-            video_name, roi_id, model_name, preprocess_config,
-            pooling_method, pooling_scales, feature_layers, session_id,
-        )
-    ]
-    if skip_existing and all(os.path.exists(p) for p in expected_paths):
-        logger.info(f"Skipping existing latent(s): {expected_paths[0]}")
-        return expected_paths[0]
+    if skip_existing and os.path.exists(latent_path):
+        logger.info(f"Skipping existing latent: {latent_path}")
+        return latent_path
 
     source_path = source_video_path or os.path.join(storage_path, project_name, 'sources', video_name)
     track_dir_path = os.path.join(project_path, 'track', video_name)
@@ -1474,14 +1389,16 @@ def extract_roi_latent_from_video_2gpu(
 
         if hasattr(latent_array, "flush"):
             latent_array.flush()
-        latent_path = _save_and_register_latents(
+        save_latent_with_metadata(
+            latent_path,
             latent_array,
-            latent_dir_path=latent_dir_path,
-            video_name=video_name, roi_id=int(roi_id), model_name=model_name,
-            preprocess_config=preprocess_config,
-            pooling_method=pooling_method, pooling_scales=pooling_scales,
-            feature_layers=feature_layers, session_id=session_id,
-            extra_tags={
+            video_name=video_name,
+            roi_id=int(roi_id),
+            model_name=model_name,
+            tags={
+                "pooling_method": pooling_method,
+                "pooling_scales": list(pooling_scales) if pooling_scales else None,
+                "feature_layers": list(feature_layers) if feature_layers else None,
                 "rotation": False,
                 "failed_frame_ranges": failed_frame_ranges or None,
                 "multi_gpu_device_ids": list(device_ids),
@@ -1491,7 +1408,6 @@ def extract_roi_latent_from_video_2gpu(
                 **_compute_determinism_tags(),
             },
             dtype=_resolve_latent_dtype(latent_dtype),
-            storage_path=storage_path, project_name=project_name,
         )
     finally:
         if latent_tmp is not None:
@@ -1512,8 +1428,11 @@ def extract_roi_latent_from_video_2gpu(
             video_name, n_batches_failed, n_nan_frames,
         )
 
-    # Config registration (atomic RMW, per-scale files) is handled inside
-    # _save_and_register_latents above. latent_path is the primary file.
+    from castle.core.project import update_config
+    latent_key = f"{session_id}/{latent_filename}" if session_id else latent_filename
+    with update_config(storage_path, project_name) as config:
+        config.setdefault('latent', {})[latent_key] = video_name
+
     logger.info(
         "Multi-GPU extraction complete for %s (%d frames across GPUs %s) -> %s",
         video_name, video_len, list(device_ids), latent_path,

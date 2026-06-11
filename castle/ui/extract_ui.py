@@ -721,9 +721,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
             choices=['1', '2', '4', '8'],
             value=['1', '2', '4'],
             label='Multiscale Grid Sizes',
-            info='Only used when Pooling Method is multiscale. Each scale is saved '
-                 'as its OWN latent file (…_spp1 / _spp2 / _spp4) so the Behavior '
-                 'Microscope can combine scales freely (pick scales in New Session).',
+            info='Only used when Pooling Method is multiscale.',
         )
         ui['feature_layers'] = gr.Textbox(
             value='',

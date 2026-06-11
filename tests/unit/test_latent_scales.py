@@ -1,28 +1,19 @@
-"""Per-scale SPP latents: filename/metadata scale parsing, column slicing, and
-the Behavior-Microscope scale-combination (per-scale files AND legacy combined
-files), which lets users mix and match 1×1 / 2×2 / 4×4 blocks.
+"""Shared SPP-scale helpers: parse a latent file's scale list and slice one
+scale's column block. These back the Prepare-time scale combination (see
+test_prepare_scales.py); here we pin the low-level parsing/slicing contract.
 
-C (base feature dim) is small here so the math is easy to read; real DINOv3 is
-768. A multiscale latent's columns are the concatenated per-scale blocks in
-ascending-scale order: scale s occupies s²·C columns.
+C (base feature dim) is tiny here; real DINOv3 is 768. A multiscale latent's
+columns are the concatenated per-scale blocks in ascending-scale order: scale s
+occupies s²·C columns.
 """
-
-import os
-import tempfile
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from castle.core.cluster import (
-    LatentAggregator,
-    _scale_block,
-    _spp_scales_of,
-)
+from castle.core.latent_scales import _scale_block, _spp_scales_of
 from castle.core.types import CastleDataError
-from castle.utils.latent_metadata import save_latent_with_metadata
 
-C = 5  # tiny base feature dim
+C = 5
 
 
 def _block(n, scale, fill):
@@ -30,7 +21,6 @@ def _block(n, scale, fill):
 
 
 def _multiscale(n, scales):
-    """Concatenated [s1|s2|…] blocks; block for scale s is filled with value s."""
     return np.hstack([_block(n, s, s) for s in sorted(scales)])
 
 
@@ -45,7 +35,6 @@ def test_spp_scales_from_filename():
 
 
 def test_spp_scales_metadata_hint_wins():
-    # Metadata hint overrides the filename tag (and is sorted).
     assert _spp_scales_of("weird_name.npz", scales_hint=[4, 1, 2]) == [1, 2, 4]
 
 
@@ -71,127 +60,3 @@ def test_scale_block_single_scale_file():
 def test_scale_block_bad_width_raises():
     with pytest.raises(CastleDataError):
         _scale_block(np.zeros((4, 7), dtype=np.float32), [1, 2], 1)  # 7 % (1+4) != 0
-
-
-# --------------------------------------------------------------------------- #
-# _combine_scales_per_video — both file layouts
-# --------------------------------------------------------------------------- #
-def _save(path, arr, scales):
-    save_latent_with_metadata(
-        path, arr, video_name=os.path.basename(path), roi_id=1,
-        model_name="m", tags={"pooling_method": "multiscale", "pooling_scales": scales},
-    )
-
-
-def _agg(scales):
-    return SimpleNamespace(scales=scales, notify=lambda *a, **k: None)
-
-
-def test_combine_from_legacy_combined_file():
-    with tempfile.TemporaryDirectory() as d:
-        fn = "vidA_ROI_1_m_spp1x2x4.npz"
-        _save(os.path.join(d, fn), _multiscale(10, [1, 2, 4]), [1, 2, 4])
-        sel = [(fn, "vidA", [1, 2, 4])]
-        # subset {1,2}: width = (1+4)*C, block order ascending
-        out = LatentAggregator._combine_scales_per_video(_agg([1, 2]), sel, d)
-        assert len(out) == 1
-        vid, mat = out[0]
-        assert vid == "vidA" and mat.shape == (10, (1 + 4) * C)
-        assert (mat[:, :C] == 1).all() and (mat[:, C:] == 2).all()
-        # default (None) → all scales
-        out_all = LatentAggregator._combine_scales_per_video(_agg(None), sel, d)
-        assert out_all[0][1].shape == (10, (1 + 4 + 16) * C)
-
-
-def test_combine_from_perscale_files_matches_combined():
-    with tempfile.TemporaryDirectory() as d:
-        for s in (1, 2, 4):
-            fn = f"vidB_ROI_1_m_spp{s}.npz"
-            _save(os.path.join(d, fn), _block(8, s, s), [s])
-        sel = [(f"vidB_ROI_1_m_spp{s}.npz", "vidB", [s]) for s in (1, 2, 4)]
-        out = LatentAggregator._combine_scales_per_video(_agg([1, 4]), sel, d)
-        vid, mat = out[0]
-        # only scales 1 and 4, in ascending order
-        assert mat.shape == (8, (1 + 16) * C)
-        assert (mat[:, :C] == 1).all() and (mat[:, C:] == 4).all()
-
-
-def test_combine_skips_video_missing_a_requested_scale():
-    with tempfile.TemporaryDirectory() as d:
-        # vidD has scales {1,2}; vidE has only {1}. Requesting {1,2}: vidD is
-        # combined, vidE is skipped (missing scale 2) rather than crashing.
-        _save(os.path.join(d, "vidD_ROI_1_m_spp1x2.npz"), _multiscale(6, [1, 2]), [1, 2])
-        _save(os.path.join(d, "vidE_ROI_1_m_spp1.npz"), _block(6, 1, 1), [1])
-        sel = [
-            ("vidD_ROI_1_m_spp1x2.npz", "vidD", [1, 2]),
-            ("vidE_ROI_1_m_spp1.npz", "vidE", [1]),
-        ]
-        out = LatentAggregator._combine_scales_per_video(_agg([1, 2]), sel, d)
-        vids = [v for v, _ in out]
-        assert vids == ["vidD"]                       # vidE dropped, no crash
-        assert out[0][1].shape == (6, (1 + 4) * C)
-
-
-# --------------------------------------------------------------------------- #
-# extraction split: _split_scales / _expected_latent_filenames / round-trip
-# --------------------------------------------------------------------------- #
-def test_split_scales():
-    from castle.core.extractor import _split_scales
-    assert _split_scales("multiscale", [1, 2, 4]) == [[1], [2], [4]]
-    assert _split_scales("multiscale", [2, 1]) == [[1], [2]]   # sorted
-    assert _split_scales("multiscale", [1]) == [[1]]            # single scale: no split
-    assert _split_scales("weighted_average", None) == [None]
-
-
-def test_expected_latent_filenames_split():
-    from castle.core.extractor import _expected_latent_filenames
-    pc = SimpleNamespace(center_roi_switch=False, remove_background_switch=False)
-    names = _expected_latent_filenames("v.mp4", 1, "m", pc, "multiscale", [1, 2, 4], None, None)
-    assert len(names) == 3
-    assert sorted(n.rsplit("_", 1)[-1] for n in names) == ["spp1.npz", "spp2.npz", "spp4.npz"]
-    wa = _expected_latent_filenames("v.mp4", 1, "m", pc, "weighted_average", None, None, None)
-    assert len(wa) == 1 and "spp" not in wa[0]
-
-
-def test_extraction_split_roundtrip(monkeypatch, tmp_path):
-    import contextlib
-    from castle.core import extractor
-
-    cfg: dict = {}
-
-    @contextlib.contextmanager
-    def fake_update_config(sp, pn):
-        yield cfg
-
-    monkeypatch.setattr("castle.core.project.update_config", fake_update_config)
-    pc = SimpleNamespace(center_roi_switch=False, remove_background_switch=False)
-    arr = _multiscale(12, [1, 2, 4])  # (12, 21*C), block s filled with s
-
-    extractor._save_and_register_latents(
-        arr, latent_dir_path=str(tmp_path),
-        video_name="vid.mp4", roi_id=1, model_name="m", preprocess_config=pc,
-        pooling_method="multiscale", pooling_scales=[1, 2, 4],
-        feature_layers=None, session_id=None, extra_tags={}, dtype=np.float32,
-        storage_path="x", project_name="y",
-    )
-    npz = sorted(f for f in os.listdir(tmp_path) if f.endswith(".npz"))
-    assert len(npz) == 3 and len(cfg["latent"]) == 3   # one file + one registration per scale
-
-    # Reconstruct: per-scale blocks hstacked in scale order == the original.
-    blocks = []
-    for s in (1, 2, 4):
-        fn = [f for f in npz if f.endswith(f"spp{s}.npz")][0]
-        blk = np.load(os.path.join(tmp_path, fn))["latent"]
-        assert blk.shape == (12, s * s * C) and (blk == s).all()
-        blocks.append(blk)
-    assert np.array_equal(np.hstack(blocks), arr)
-
-
-def test_combine_request_unavailable_scale_uses_available():
-    with tempfile.TemporaryDirectory() as d:
-        # Only scale 1 exists anywhere; requesting {1,2} → scale 2 is dropped
-        # globally (no file has it), scale 1 is still combined.
-        fn = "vidC_ROI_1_m_spp1.npz"
-        _save(os.path.join(d, fn), _block(5, 1, 1), [1])
-        out = LatentAggregator._combine_scales_per_video(_agg([1, 2]), [(fn, "vidC", [1])], d)
-        assert len(out) == 1 and out[0][1].shape == (5, 1 * C)

@@ -320,9 +320,20 @@ def generate_local_cluster(local_latents, eps, min_samples=None, progress=gr.Pro
     except (TypeError, ValueError):
         ms = None
 
+    # eps comes from a gr.Number that can be cleared to None/empty; validate it
+    # here so a blank box yields a friendly toast, not a raw float() exception.
+    try:
+        eps_f = float(eps)
+    except (TypeError, ValueError):
+        gr.Info("Enter a numeric eps (radius) before clustering.")
+        return None, None
+    if eps_f <= 0:
+        gr.Info("eps (radius) must be a positive number.")
+        return None, None
+
     progress(0, desc="Running DBSCAN...")
     try:
-        run_dbscan_on_local(local_latents, float(eps), min_samples=ms)
+        run_dbscan_on_local(local_latents, eps_f, min_samples=ms)
     except InsufficientDataError as e:
         gr.Info(str(e))
         return None, None
@@ -491,16 +502,18 @@ def label_all_and_submit(
         )
         return _keep9 + (False, _hide_btn, _hide_warn, "")
 
-    # Overwrite-confirmation gate: only kicks in when sidecar meta exists.
+    # Overwrite-confirmation gate. Drive it off the parent's EXISTING CHILDREN
+    # (prefix scan), NOT the node_*_meta.json sidecar: a node restored from id.csv
+    # or created before the sidecar feature has children but no sidecar, and the
+    # old sidecar-gated check skipped overwrite for it — re-submitting then piled
+    # up _N-suffixed duplicate children instead of replacing them.
     cluster_path = os.path.join(storage_path or '', project_name or '', 'cluster')
-    existing_meta = load_node_meta(cluster_path, parent_name)
-    if existing_meta is not None and not overwrite_confirmed:
-        # Compute which clusters will be deleted so the user knows the impact.
-        prefix = parent_name + '_'
-        children_to_delete = sorted([
-            n for n in latents.behavior_name2cluster_id
-            if n.startswith(prefix)
-        ])
+    prefix = parent_name + '_'
+    children_to_delete = sorted([
+        n for n in latents.behavior_name2cluster_id
+        if n.startswith(prefix)
+    ])
+    if children_to_delete and not overwrite_confirmed:
         n_del = len(children_to_delete)
         preview = ', '.join(children_to_delete[:5]) + ('…' if n_del > 5 else '')
         warn_txt = (
@@ -597,18 +610,30 @@ def show_delete_confirmation(session_id):
 
 
 def confirm_delete_session(storage_path, project_name, session_id):
-    """Second click of delete flow: actually delete the session."""
+    """Second click of delete flow: actually delete the session.
+
+    On a successful delete, also CLEAR the in-memory clustering state
+    (latents/mulvideo/local_latents/local_embedding_plot) and the tree, forcing
+    the user to re-Initialize/Restore. Otherwise, since SessionManager reassigns
+    the active session to a surviving one, a later Submit would snapshot the
+    still-loaded clusters into the wrong session's directory and corrupt it.
+    """
     import gradio as gr
+    # 6 trailing outputs: latents, mulvideo, local_latents, local_embedding_plot,
+    # cluster_tree_html, cluster_tree_select. gr.update() = leave unchanged.
+    _keep6 = (gr.update(),) * 6
     if not session_id or not project_name:
-        return None, gr.update(visible=False, value=""), gr.update(visible=False)
+        return (None, gr.update(visible=False, value=""), gr.update(visible=False)) + _keep6
     mgr = SessionManager(storage_path, project_name)
     deleted = mgr.delete_session(session_id)
+    new_info = check_session_exists(storage_path, project_name)
+    hide = (gr.update(visible=False, value=""), gr.update(visible=False))
     if not deleted:
         gr.Warning(f"Session '{session_id}' not found or already deleted.")
-    else:
-        gr.Info(f"Session '{session_id}' deleted.")
-    new_info = check_session_exists(storage_path, project_name)
-    return new_info, gr.update(visible=False, value=""), gr.update(visible=False)
+        return (new_info,) + hide + _keep6
+    gr.Info(f"Session '{session_id}' deleted. Re-initialize or restore a session to continue.")
+    cleared = (None, None, None, None, gr.update(value=""), gr.update(value=""))
+    return (new_info,) + hide + cleared
 
 
 def _find_latest_npz(cluster_path):
@@ -631,7 +656,7 @@ def _restore_embedding_from_npz(npz_path, latents):
 
 def restore_session(storage_path, project_name, select_roi_id, bin_size, select_model, session_id=None):
     """Restore latents from saved CSV files and optionally restore UMAP embedding."""
-    _empty = (None, None, None, None, None, None, None, None, None)
+    _empty = (None, None, None, None, None, None, None, None, None, None)
     if project_name is None:
         return _empty
 
@@ -679,10 +704,13 @@ def _do_restore_session(storage_path, project_name, select_roi_id, bin_size, sel
     gr.Info(f'Restored session with {artifacts.latents.num_cluster - 1} clusters')
 
     tree_html_upd, tree_dd_upd = artifacts.cluster_choices
+    # Append local_latents (10th) so the restore wiring repopulates that gr.State;
+    # without it DBSCAN/Submit no-op on a restored session until a tree node is
+    # clicked, because the LocalLatent carrying .embedding stays None.
     return (artifacts.aggregator, artifacts.latents,
             artifacts.syllables_fig, tree_html_upd, tree_dd_upd,
             _existing(artifacts.id_csv_path), _existing(artifacts.time_series_paths),
-            restored_Z_plt, restored_emb_img)
+            restored_Z_plt, restored_emb_img, artifacts.local_latents)
 
 
 def convert_latent_cluster_to_subtitle(storage_path, project_name, latents, aggregator):

@@ -114,11 +114,11 @@ DEFAULT_DEVICE = get_device()
 _palette = PALETTE_HEX * 5
 
 
-def generate_distinct_color(index, saturation=0.7, value=0.9):
+def generate_distinct_color(index, saturation=0.7):
     """A visually distinct colour for cluster ``index`` via the golden-ratio hue
     sequence — unlimited non-repeating colours (vs the old fixed 62-colour
     palette, which repeated and, after ancestor-colour avoidance, collapsed to a
-    few near-identical pales). Value cycles over a few levels so even many
+    few near-identical pales). Lightness cycles over a few levels so even many
     clusters with near-equal hues stay separable. ``-1`` is handled by callers.
     """
     import colorsys
@@ -127,6 +127,21 @@ def generate_distinct_color(index, saturation=0.7, value=0.9):
     value = (0.95, 0.75, 0.87, 0.68)[i % 4]   # vary lightness to split near hues
     rgb = colorsys.hsv_to_rgb(hue, saturation, value)
     return '#{:02x}{:02x}{:02x}'.format(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+
+
+def _color_for_name(name: str) -> str:
+    """Stable distinct colour derived from a cluster's NAME.
+
+    Used identically by the live labelling scatter
+    (:meth:`LocalLatent.label_cluster`) and the persisted tree / ethogram
+    (:meth:`Latent.import_local_latent`) so a cluster keeps the SAME colour from
+    the moment it is labelled through Submit. The hierarchical name is unique
+    across the tree, so this also keeps siblings distinct — unlike colouring by
+    the per-node local DBSCAN id (which restarts at 0 under every parent).
+    """
+    import hashlib
+    idx = int(hashlib.md5(name.encode("utf-8")).hexdigest()[:8], 16)
+    return generate_distinct_color(idx)
 
 
 def generate_palette(avoid):
@@ -365,14 +380,16 @@ class Latent:
             self.num_cluster += 1
 
             old_cluster[cluster == cluster_local_id] = cluster_id
-            # Colour by GLOBAL cluster id so every cluster across the whole tree
-            # is visually distinct (the named-cluster legend / ethogram). The
-            # local-id colour from `export` would collide across sibling nodes
-            # (each node starts its local ids at 0). A user-set custom colour
-            # (different from the local-id default) is preserved.
-            local_default = generate_distinct_color(int(cluster_local_id))
-            color = it['color'] if it.get('color') and it['color'] != local_default \
-                else generate_distinct_color(int(cluster_id))
+            # Colour by the cluster NAME, identically to LocalLatent.label_cluster,
+            # so the persisted tree/ethogram colour matches what the user saw in
+            # the live labelling scatter (cross-view continuity). The name is
+            # hierarchical and tree-wide unique, so siblings stay distinct. A
+            # user-set custom colour (differing from the name default) is kept;
+            # if the name was auto-suffixed to avoid a collision, the new name's
+            # colour is used (a genuinely different cluster).
+            name_default = _color_for_name(it['name'])
+            color = it['color'] if it.get('color') and it['color'] != name_default \
+                else _color_for_name(incoming_name)
             self.cluster_meta[cluster_id] = {
                 'name': incoming_name,
                 'color': color,
@@ -809,9 +826,12 @@ class LocalLatent:
 
 
     def label_cluster(self, cluster_id, cluster_name, cluster_color=''):
+        # Colour by NAME (not local id) so the live scatter matches the colour
+        # the persisted tree/ethogram will use after Submit (import_local_latent
+        # colours by the same name-derived key). A user-set colour wins.
         self.export[cluster_id] = {
             'name': cluster_name,
-            'color': cluster_color or generate_distinct_color(int(cluster_id)),
+            'color': cluster_color or _color_for_name(cluster_name),
         }
     
     def clean_label(self):

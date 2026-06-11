@@ -35,8 +35,11 @@ def _result_path(yaml_path: str) -> str:
 @app.command("run")
 def batch_run(
     yaml_file: str = typer.Argument(..., help="Path to experiments.yaml"),
-    parallel: bool = typer.Option(False, "--parallel", help="Run projects in parallel"),
-    max_workers: int = typer.Option(2, "--max-workers", help="Number of parallel workers"),
+    parallel: Optional[bool] = typer.Option(
+        None, "--parallel/--no-parallel",
+        help="Run projects in parallel (overrides YAML; default: YAML value)"),
+    max_workers: Optional[int] = typer.Option(
+        None, "--max-workers", help="Number of parallel workers (overrides YAML)"),
     no_save: bool = typer.Option(False, "--no-save", help="Do not save results to disk"),
 ) -> None:
     """Process all experiments defined in *yaml_file*."""
@@ -52,12 +55,16 @@ def batch_run(
         typer.echo(f"Error loading YAML: {exc}", err=True)
         raise typer.Exit(1)
 
-    # Override YAML-level parallel settings with CLI flags when explicitly set
-    config.parallel = parallel
-    config.max_workers = max_workers
+    # Override YAML-level parallel settings only when the flag was actually given;
+    # a plain bool/int default cannot signal "unset" and would silently clobber
+    # the YAML's parallel/max_workers.
+    if parallel is not None:
+        config.parallel = parallel
+    if max_workers is not None:
+        config.max_workers = max_workers
 
     n = len(config.projects)
-    typer.echo(f"🚀 Starting batch run: {n} project(s)  [parallel={parallel}]")
+    typer.echo(f"🚀 Starting batch run: {n} project(s)  [parallel={config.parallel}]")
 
     def _cb(frac: float, msg: str) -> None:
         pct = int(frac * 100)

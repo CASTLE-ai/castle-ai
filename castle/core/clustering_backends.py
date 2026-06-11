@@ -351,16 +351,17 @@ class UMAPReducer:
         # threaded through ``fit_transform``; ``standardize`` is consumed by
         # ``LocalLatent.build_embedding`` (applied to the raw features once).
         self.cfg = {k: v for k, v in cfg.items() if k not in ('random_state', 'standardize')}
-        # CPU path: auto-inject n_jobs so pynndescent (the k-NN builder) can
-        # use multiple cores. umap-learn's SGD stays single-threaded (numba
-        # loop), so the seed still controls the optimisation deterministically.
-        # Reserve 2 cores for the OS / GUI so the machine stays responsive.
-        # On a 2-core machine this yields 1 (floor at 1); on 4-core → 2;
-        # on 16-core → 14. Users can override by setting 'n_jobs' in cfg.
+        # CPU path: pin n_jobs=1 explicitly. CASTLE always passes a random_state
+        # (build_embedding draws a master seed if none is given), and umap-learn
+        # force-resets n_jobs to 1 whenever random_state is set — but its DEFAULT
+        # n_jobs is -1, so leaving it unset triggers a per-stage UserWarning
+        # ("n_jobs value 1 overridden to 1 by setting random_state"). Setting it
+        # to 1 up-front is honest (CPU UMAP is single-threaded under a fixed seed,
+        # by design: reproducibility over parallelism) and silences the warning.
+        # The earlier cpu_count-2 injection was dead — it never enabled multi-core
+        # k-NN because random_state always overrode it.
         if device == 'cpu' and 'n_jobs' not in self.cfg:
-            import os
-            _cpu = os.cpu_count() or 1
-            self.cfg['n_jobs'] = max(1, _cpu - 2)
+            self.cfg['n_jobs'] = 1
         self.device = device
         self._umap_cls = resolve_umap_class(device)
         # cuML estimator? (vs umap-learn / in-repo myumap) — gates cuML-only

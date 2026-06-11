@@ -41,41 +41,34 @@ def _extract_bouts(
 ) -> List[dict]:
     """Extract behavioral bouts from cluster label sequence.
 
+    Delegates to :func:`castle.core.ethogram.extract_bouts` so the bout
+    definition stays identical to the ethogram engine: runs of ``-1``
+    (noise / unlabeled gaps) are **not** emitted as bouts, but still segment
+    the real bouts on either side. Avoids a second, divergent run-length
+    segmenter that would otherwise label gaps as a spurious ``cluster_-1`` bout.
+
     Returns list of dicts with keys:
         cluster_id, start_frame, stop_frame, start_time, stop_time, duration_s
+    (``stop_frame`` is the inclusive last frame of the bout.)
     """
+    from castle.core.ethogram import extract_bouts as _engine_extract_bouts
+
     labels = np.asarray(cluster_labels).ravel()
-    n = len(labels)
-    if n == 0:
+    if labels.size == 0:
         return []
 
     bouts = []
-    start = 0
-    current = labels[0]
-
-    for i in range(1, n):
-        if labels[i] != current:
-            bouts.append({
-                "cluster_id": int(current),
-                "start_frame": int(start),
-                "stop_frame": int(i - 1),
-                "start_time": float(start / fps),
-                "stop_time": float((i - 1) / fps),
-                "duration_s": float((i - start) / fps),
-            })
-            start = i
-            current = labels[i]
-
-    # Final bout
-    bouts.append({
-        "cluster_id": int(current),
-        "start_frame": int(start),
-        "stop_frame": int(n - 1),
-        "start_time": float(start / fps),
-        "stop_time": float((n - 1) / fps),
-        "duration_s": float((n - start) / fps),
-    })
-
+    for b in _engine_extract_bouts(labels, fps=float(fps)):
+        # BoutInfo.end_frame is EXCLUSIVE; the NWB dict uses an inclusive stop_frame.
+        stop_frame = int(b.end_frame) - 1
+        bouts.append({
+            "cluster_id": int(b.cluster_id),
+            "start_frame": int(b.start_frame),
+            "stop_frame": stop_frame,
+            "start_time": float(b.start_frame / fps),
+            "stop_time": float(stop_frame / fps),
+            "duration_s": float(b.duration_seconds),
+        })
     return bouts
 
 
@@ -201,7 +194,10 @@ def export_to_nwb(
             cname = cluster_names.get(int(cid_str), bs.get("cluster_name", f"cluster_{cid_str}"))
             stat_names.append(cname)
             stat_n_bouts.append(bs.get("n_bouts", 0))
-            stat_freq.append(bs.get("frequency", 0.0))
+            # Use the valid-only frequency (cluster frames / non-gap frames; sums
+            # to 1) to match the comparison fingerprints; fall back to the
+            # deprecated all-frames frequency only for older bout_stats dicts.
+            stat_freq.append(bs.get("frequency_valid_only", bs.get("frequency", 0.0)))
             stat_mean_dur.append(bs.get("mean_duration_s", 0.0))
             stat_median_dur.append(bs.get("median_duration_s", 0.0))
             stat_cv.append(bs.get("cv_duration", 0.0))
@@ -212,7 +208,7 @@ def export_to_nwb(
             columns=[
                 VectorData(name="cluster_name", description="Cluster name", data=stat_names),
                 VectorData(name="n_bouts", description="Number of bouts", data=stat_n_bouts),
-                VectorData(name="frequency", description="Fraction of total time", data=stat_freq),
+                VectorData(name="frequency", description="Fraction of valid (non-gap) frames", data=stat_freq),
                 VectorData(name="mean_duration_s", description="Mean bout duration (seconds)", data=stat_mean_dur),
                 VectorData(name="median_duration_s", description="Median bout duration (seconds)", data=stat_median_dur),
                 VectorData(name="cv_duration", description="Coefficient of variation of bout durations", data=stat_cv),

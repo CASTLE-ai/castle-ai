@@ -111,7 +111,10 @@ def filter_by_reference(
         best_area = -1
         for i in range(1, num_labels):
             area = stats[i, cv2.CC_STAT_AREA]
-            if area > threshold and area > best_area:
+            # Inclusive `>=` to match the single-component fast path (line ~105)
+            # and filter_largest_component, so a component exactly at threshold is
+            # kept regardless of whether smaller fragments coexist.
+            if area >= threshold and area > best_area:
                 best_area = area
                 best_label = i
 

@@ -177,7 +177,7 @@ def build_prepare(
 
     pid = compute_prepare_id(
         specs, downsample=downsample, target_fps_cap=target_fps_cap, normalize=normalize,
-        pca=pca, K=K, fit_fraction=fit_fraction, model_name=model_name,
+        pca=pca, K=K, fit_fraction=fit_fraction, model_name=model_name, seed=seed,
     )
     root = _prepared_root(storage_path, project_name)
     final_dir = os.path.join(root, pid)

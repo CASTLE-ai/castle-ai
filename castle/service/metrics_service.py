@@ -155,4 +155,11 @@ def evaluate_project_clustering(
     result = asdict(report)
     result["n_frames"] = int(len(labels))
     result["n_time_series_files"] = len(ts_files)
+    # Expose the 2-D embedding + aligned labels for the optional report scatter
+    # (report._try_render_quality_plot reads these; absent before, so it never drew).
+    if embedding is not None and labels_for_emb is not None:
+        emb_arr = np.asarray(embedding)
+        if emb_arr.ndim == 2 and emb_arr.shape[1] >= 2:
+            result["embedding_2d"] = emb_arr[:, :2].tolist()
+            result["labels"] = np.asarray(labels_for_emb).tolist()
     return result

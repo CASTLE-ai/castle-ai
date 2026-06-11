@@ -422,11 +422,15 @@ class ReportGenerator:
 
         parts.append("<table><tr><th>Metric</th><th>Value</th><th>Notes</th></tr>")
 
+        # Keys must match metrics_service's asdict(ClusterQualityReport): the
+        # fields are silhouette_sample / calinski_harabasz / davies_bouldin (no
+        # "_score" suffix) and there is no "inertia" (DBSCAN, not KMeans). The old
+        # *_score / inertia keys rendered every row as N/A.
         metric_rows = [
-            ("silhouette_score", "Silhouette Score", True, "Higher is better (range −1 to 1)"),
-            ("calinski_harabasz_score", "Calinski-Harabász", True, "Higher is better"),
-            ("davies_bouldin_score", "Davies-Bouldin", False, "Lower is better"),
-            ("inertia", "Inertia", False, "Sum of squared distances to centroids"),
+            ("silhouette_sample", "Silhouette (sampled)", True, "Higher is better (range −1 to 1)"),
+            ("calinski_harabasz", "Calinski-Harabász", True, "Higher is better"),
+            ("davies_bouldin", "Davies-Bouldin", False, "Lower is better"),
+            ("temporal_coherence", "Temporal coherence", True, "Frame-to-frame label continuity (0–1)"),
         ]
 
         for key, label, high_good, note in metric_rows:

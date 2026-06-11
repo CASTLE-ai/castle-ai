@@ -158,15 +158,19 @@ def export_nwb(
 
     from castle.service.nwb_service import export_project_nwb
 
-    project_path = os.path.join(storage, project) if storage else project
+    storage = get_storage(storage)
+    project_path = os.path.join(storage, project)
 
     try:
-        nwb_path = export_project_nwb(
+        nwb_paths = export_project_nwb(
             project_path,
             output_path=output,
             session_description=description,
         )
-        typer.echo(f"Exported NWB file to {nwb_path}")
+        if isinstance(nwb_paths, str):
+            nwb_paths = [nwb_paths]
+        for p in nwb_paths:
+            typer.echo(f"Exported NWB file to {p}")
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

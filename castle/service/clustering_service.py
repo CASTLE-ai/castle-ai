@@ -594,21 +594,40 @@ def find_cluster_npz_for_parent(
     return best
 
 
+# ``cluster_*.npz`` files that are NOT per-session embedding exports (they lack
+# the emb/cls keys). They must be excluded from any embedding-file glob, else a
+# max-mtime pick after "Save Cluster Model" selects cluster_model.npz and reading
+# ["emb"] raises KeyError.
+_NON_EMBEDDING_NPZ = frozenset({"cluster_model.npz", "cluster_data.npz"})
+
+
+def _embedding_npz_files(cluster_path: str) -> List[str]:
+    """Per-session embedding ``cluster_*.npz`` files, newest first.
+
+    Excludes non-embedding artefacts (cluster_model.npz / cluster_data.npz) that
+    share the ``cluster_*`` prefix but have no emb/cls keys.
+    """
+    files = [
+        f for f in glob.glob(os.path.join(cluster_path, "cluster_*.npz"))
+        if os.path.basename(f) not in _NON_EMBEDDING_NPZ
+    ]
+    files.sort(key=os.path.getmtime, reverse=True)
+    return files
+
+
 def find_latest_cluster_npz(cluster_path: str) -> Optional[str]:
-    """Return the most recently modified ``cluster_*.npz`` in ``cluster_path``.
+    """Return the most recently modified embedding ``cluster_*.npz`` in ``cluster_path``.
 
     Args:
         cluster_path: Directory typically ``<project>/cluster/``.
 
     Returns:
-        Absolute path to the newest matching file, or ``None`` if no
-        ``cluster_*.npz`` exists.
+        Absolute path to the newest matching embedding file, or ``None`` if none
+        exists. Non-embedding artefacts (cluster_model.npz / cluster_data.npz)
+        are skipped.
     """
-    npz_files = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
-    if not npz_files:
-        return None
-    npz_files.sort(key=os.path.getmtime, reverse=True)
-    return npz_files[0]
+    files = _embedding_npz_files(cluster_path)
+    return files[0] if files else None
 
 
 def _extract_child_names_from_filename(
@@ -826,10 +845,10 @@ def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_
         raise FileNotFoundError(f"No id.csv found: {id_csv_path}")
     id_df = pd.read_csv(id_csv_path)
     cluster_names = {int(r["Id"]): r["Name"] for _, r in id_df.iterrows()}
-    emb_files = glob.glob(os.path.join(cluster_dir, "cluster_*.npz"))
+    emb_files = _embedding_npz_files(cluster_dir)
     if not emb_files:
         raise FileNotFoundError(f"No embedding .npz found in {cluster_dir}")
-    emb_data = np.load(max(emb_files, key=os.path.getmtime), allow_pickle=True)
+    emb_data = np.load(emb_files[0], allow_pickle=True)
     emb_full = emb_data["emb"].astype(np.float64)   # (n_windows, 2)
     cls_full = emb_data["cls"].astype(np.int32)     # (n_windows,)
     # Only TRUE DBSCAN members may train the transfer model — k-NN-propagated
@@ -878,6 +897,7 @@ def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_
         "normalize": pd_obj.meta.get("normalize", "l2"),
         "k_prime": kp,
         "raw_feature_dim": int(pd_obj.meta.get("n_features", pd_obj.pca_components.shape[1])),
+        "scales": pd_obj.meta.get("scales"),  # SPP scale provenance (see ClusterModel.scales)
     }
     fps = float(pd_obj.index_map.raw_fps[0]) if pd_obj.index_map.n_videos else 30.0
     if output_path is None:
@@ -953,10 +973,10 @@ def save_project_cluster_model(
     cluster_names = {int(row["Id"]): row["Name"] for _, row in id_df.iterrows()}
 
     # --- Load embedding .npz (most recently modified, not arbitrary glob order) ---
-    emb_files = glob.glob(os.path.join(cluster_dir, "cluster_*.npz"))
+    emb_files = _embedding_npz_files(cluster_dir)
     if not emb_files:
         raise FileNotFoundError(f"No embedding .npz found in {cluster_dir}")
-    emb_path = max(emb_files, key=os.path.getmtime)
+    emb_path = emb_files[0]
     emb_data = np.load(emb_path, allow_pickle=True)
     emb_full = emb_data["emb"]        # (N, 2) with NaN for masked-out points
     cls_full = emb_data["cls"]        # (N,) with -1 for masked-out points
@@ -1095,12 +1115,17 @@ def apply_cluster_model_to_project(
     cluster_dir = os.path.join(project_path, "cluster")
     os.makedirs(cluster_dir, exist_ok=True)
 
-    # id.csv (from model cluster names)
+    # transferred_id.csv (from the model's cluster names). Deliberately NOT the
+    # project's own cluster/id.csv: overwriting it would destroy the native
+    # clustering's names/colors that ethogram/export/restore read back, and
+    # silently re-pair the project's existing time_series labels with the
+    # transferred names. The transfer output is a self-contained pair
+    # (transferred_id.csv + transferred_labels.csv).
     id_rows = sorted(result["cluster_names"].items())
     id_df = pd.DataFrame(
         [{"Id": cid, "Name": cname, "Color": "grey"} for cid, cname in id_rows]
     )
-    id_csv_path = os.path.join(cluster_dir, "id.csv")
+    id_csv_path = os.path.join(cluster_dir, "transferred_id.csv")
     id_df.to_csv(id_csv_path, index=False)
 
     # transferred_labels.csv

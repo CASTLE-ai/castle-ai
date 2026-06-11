@@ -448,10 +448,34 @@ def generate_grid_video(
         n=n_cells,
     )
 
-    # --- Padding in bins ---
+    # --- Padding in bins (windows) ---
+    # Target 0.5 s of buffer on each side. One window spans `window` DECIMATED
+    # frames; for a decimated prepared cache that is window/target_fps seconds,
+    # NOT window/raw_fps — using raw fps over-pads by raw_fps/target_fps. Recover
+    # seconds-per-window from the FrameIndexMap's decimated stride; the legacy
+    # (window=1, stride=bin_size) case reduces to the original 0.5*fps/bin_size.
     fps = annotator_data.fps if annotator_data.fps > 0 else 30.0
     bin_size = annotator_data.bin_size if annotator_data.bin_size > 0 else 1
-    pad_bins = max(1, int(0.5 * fps / bin_size))
+    _pad_fim = getattr(annotator_data, "frame_index_map", None)
+    sec_per_window = bin_size / fps  # fallback (no FIM): legacy semantics
+    if _pad_fim is not None:
+        try:
+            base = _pad_fim.base
+            ofi = np.asarray(base.orig_frame_idx)
+            dpo = np.asarray(base.dp_offsets)
+            strides = []
+            for v in range(len(dpo) - 1):
+                seg = ofi[int(dpo[v]):int(dpo[v + 1])]
+                if seg.size > 1:
+                    strides.append(float(np.median(np.diff(seg))))
+            raw_fps_v = float(base.raw_fps[0]) if len(base.raw_fps) else fps
+            window = int(getattr(_pad_fim, "window", bin_size)) or bin_size
+            if strides and raw_fps_v > 0:
+                sec_per_window = window * float(np.median(strides)) / raw_fps_v
+        except Exception:  # noqa: BLE001
+            sec_per_window = bin_size / fps
+    pad_bins = max(1, int(round(0.5 / sec_per_window))) if sec_per_window > 0 \
+        else max(1, int(0.5 * fps / bin_size))
 
     total_bins = len(annotator_data.cluster)
     half_len = _compute_aligned_range(selected, pad_bins, total_bins)
@@ -493,6 +517,21 @@ def generate_grid_video(
     _mask_cache: Dict[str, Any] = {}
     _track_dir = os.path.join(annotator_data.project_path, "track")
 
+    # Per-cell window range of the bout's OWN video, so the pre/post padding
+    # sweep never crosses a video boundary into a neighbour's frames (which
+    # dp_to_orig_frame would otherwise resolve to silently).
+    cell_ranges: List[Tuple[int, int]] = []
+    for (b_s, b_e) in selected:
+        c = (b_s + b_e) // 2
+        rng = (0, total_bins)
+        if _fim is not None:
+            try:
+                v0, _, _ = _fim.dp_to_orig_span(int(c))
+                rng = _fim.windowed_row_range(v0)
+            except Exception:  # noqa: BLE001
+                rng = (0, total_bins)
+        cell_ranges.append(rng)
+
     for frame_offset in range(n_frames):
         grid_rows_imgs = []
         for row in range(grid_cols):
@@ -503,7 +542,8 @@ def generate_grid_video(
                     bout_start, bout_end = selected[cell_idx]
                     centre = (bout_start + bout_end) // 2
                     bin_idx = centre - half_len + frame_offset
-                    if 0 <= bin_idx < total_bins:
+                    cell_lo, cell_hi = cell_ranges[cell_idx]
+                    if cell_lo <= bin_idx < cell_hi:
                         frame = get_annotator_frame(annotator_data, int(bin_idx))
                     else:
                         frame = None

@@ -109,7 +109,7 @@ def on_load_cluster_data(storage_path, project_name, session_id):
             "No project selected. Please create or open a project in the "
             "'Project' tab first."
         )
-        return None, gr.update(choices=[], value=None), "**Status:** No project selected"
+        return None, gr.update(choices=[], value=None), "**Status:** No project selected", {}
 
     sid = session_id if session_id else None
     logger.info("on_load_cluster_data: storage=%s project=%s session_id=%r", storage_path, project_name, sid)
@@ -121,14 +121,14 @@ def on_load_cluster_data(storage_path, project_name, session_id):
             "Cluster data not found. Please complete the clustering step (Step 3) "
             "and generate at least one session before annotating."
         )
-        return None, gr.update(choices=[], value=None), f"**Error:** {exc}"
+        return None, gr.update(choices=[], value=None), f"**Error:** {exc}", {}
     except Exception as exc:
         logger.exception("Failed to load cluster data")
         gr.Warning(
             "Failed to load cluster data. Check that the clustering session exists "
             "and try refreshing the session dropdown."
         )
-        return None, gr.update(choices=[], value=None), f"**Error:** {exc}"
+        return None, gr.update(choices=[], value=None), f"**Error:** {exc}", {}
 
     # Load annotations scoped to this session
     annotations = load_annotations(storage_path, project_name, session_id=sid)
@@ -140,24 +140,29 @@ def on_load_cluster_data(storage_path, project_name, session_id):
         f"(bin_size={annotator_data.bin_size}, fps={annotator_data.fps:.1f})"
     )
     gr.Info(f"Loaded {n_clusters} clusters from {project_name}")
-    return annotator_data, gr.update(choices=choices, value=None), status_msg
+    # Seed annotations_state with the on-disk annotations so a subsequent save
+    # merges with (rather than overwrites) the existing annotations.csv. Without
+    # this the state stays {} and the first save wipes every prior annotation.
+    return annotator_data, gr.update(choices=choices, value=None), status_msg, annotations
 
 
-def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice, grid_cols):
+def on_cluster_select(storage_path, project_name, annotator_data, annotations_state,
+                      cluster_choice, grid_cols):
     """When user selects a cluster, generate a grid video and return its path.
 
     Returns:
-        (stripped_cluster_name, video_path, info_text) — the first element
-        is stored in ``selected_cluster_name`` state to avoid ✅-prefix
-        validation issues with the Radio component.
+        (stripped_cluster_name, video_path, info_text, behavior_radio_update,
+        comment_update) — the first element is stored in
+        ``selected_cluster_name`` state to avoid ✅-prefix validation issues with
+        the Radio component; the last re-displays the cluster's saved comment.
     """
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or annotator_data is None:
-        return "", None, "**Selected:** None", gr.update()
+        return "", None, "**Selected:** None", gr.update(), gr.update(value="")
 
     cluster_id = _find_cluster_id_by_name(annotator_data, cluster_name)
     if cluster_id is None:
-        return cluster_name, None, f"**Error:** Cluster '{cluster_name}' not found", gr.update()
+        return cluster_name, None, f"**Error:** Cluster '{cluster_name}' not found", gr.update(), gr.update()
 
     n_bins_in_cluster = int(np.sum(annotator_data.cluster == cluster_id))
     cols = int(grid_cols) if grid_cols else 3
@@ -184,8 +189,12 @@ def on_cluster_select(storage_path, project_name, annotator_data, cluster_choice
         f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
     )
     # Reset behavior_radio to None so selecting the same label on a new cluster
-    # always triggers .change() and auto-saves correctly.
-    return cluster_name, video_path, info_text, gr.update(value=None)
+    # always triggers .change() and auto-saves correctly. Re-display the saved
+    # comment (if any) so a reloaded annotation's note is visible, not blank.
+    saved_comment = ""
+    if annotations_state:
+        saved_comment = (annotations_state.get(cluster_name) or {}).get("comment", "")
+    return cluster_name, video_path, info_text, gr.update(value=None), gr.update(value=saved_comment)
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
@@ -435,7 +444,7 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
     ).then(
         fn=on_load_cluster_data,
         inputs=[storage_path, project_name, ui["session_dropdown"]],
-        outputs=[annotator_data, ui["cluster_radio"], ui["load_status"]],
+        outputs=[annotator_data, ui["cluster_radio"], ui["load_status"], annotations_state],
     ).then(
         fn=_restore_scheme,
         inputs=[storage_path, project_name],
@@ -447,10 +456,12 @@ def create_annotator_ui(storage_path, project_name, annotator_tab=None):
         storage_path,
         project_name,
         annotator_data,
+        annotations_state,
         ui["cluster_radio"],
         ui["grid_cols"],
     ]
-    _video_outputs = [selected_cluster_name, ui["grid_video"], ui["cluster_info"], ui["behavior_radio"]]
+    _video_outputs = [selected_cluster_name, ui["grid_video"], ui["cluster_info"],
+                      ui["behavior_radio"], ui["comment_box"]]
 
     # Select cluster → update state + generate grid video
     ui["cluster_radio"].change(

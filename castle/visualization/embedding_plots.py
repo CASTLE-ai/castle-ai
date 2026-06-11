@@ -105,14 +105,31 @@ def plot_named_embedding(embedding: np.ndarray,
                 c = export[cid]['color'] or palette_fn(cid)
                 label = export[cid]['name']
             else:
-                c = palette_fn(-1)
-                label = cid
+                # A real (cid >= 0) but not-yet-named cluster: use its own
+                # distinct colour, NOT palette_fn(-1) (the noise grey), so it
+                # does not read as noise in the named view.
+                c = palette_fn(cid)
+                label = str(cid)
             plt.scatter(
                 x=embedding[mask, dims[0]],
                 y=embedding[mask, dims[1]],
                 c=c,
                 label=label,
                 alpha=0.7,
+                zorder=2,
+            )
+        if -1 in cluster:
+            # Draw noise UNDERNEATH the clusters (zorder=1), matching
+            # plot_embedding. Without this the named view silently drops every
+            # noise/unclustered point and looks denser/cleaner than the data is.
+            mask = cluster == -1
+            plt.scatter(
+                x=embedding[mask, dims[0]],
+                y=embedding[mask, dims[1]],
+                c='grey',
+                label='-1',
+                alpha=0.7,
+                zorder=1,
             )
         if legend:
             plt.legend()

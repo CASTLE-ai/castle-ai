@@ -213,6 +213,16 @@ class TestExtractBouts:
         assert len(bouts) == 1
         assert bouts[0]["cluster_id"] == 5
 
+    def test_noise_minus_one_not_emitted_as_bout(self):
+        """-1 (noise/gap) must NOT become a bout but must still split neighbours."""
+        from castle.core.nwb_export import _extract_bouts
+
+        bouts = _extract_bouts(np.array([0, 0, -1, -1, 1, 1]), fps=10.0)
+        assert [b["cluster_id"] for b in bouts] == [0, 1]
+        # The two real bouts stay separate (the -1 gap is not merged into them).
+        assert bouts[0]["start_frame"] == 0 and bouts[0]["stop_frame"] == 1
+        assert bouts[1]["start_frame"] == 4 and bouts[1]["stop_frame"] == 5
+
 
 # ---------------------------------------------------------------------------
 # CLI help works even without full pipeline

@@ -34,6 +34,11 @@ class ClusterModel:
     normalize: str = ""                          # "l2" | "none" | "" (legacy)
     k_prime: int = 0                             # slice width into PCA dims (0 = none)
     raw_feature_dim: int = 0                     # expected RAW input dim for apply
+    # SPP scales the prepared cache was built on (provenance). None = full set /
+    # weighted_average. apply() does NOT yet auto-slice to these (it dim-checks
+    # raw_feature_dim); a scale-SUBSET model can only be applied to a new project
+    # whose latents already match that subset's width.
+    scales: Optional[list] = None
 
     @property
     def has_transform(self) -> bool:
@@ -67,6 +72,8 @@ def save_cluster_model(output_path, umap_embedding, training_features, cluster_l
         meta["normalize"] = str(transform.get("normalize", "l2"))
         meta["k_prime"] = int(transform.get("k_prime", 0))
         meta["raw_feature_dim"] = int(transform.get("raw_feature_dim", 0))
+        # SPP scale provenance: which scales the source cache was built on.
+        meta["scales"] = transform.get("scales")
     arrays["metadata"] = np.array([json.dumps(meta)])
     np.savez_compressed(output_path, **arrays)
     return output_path
@@ -88,6 +95,7 @@ def load_cluster_model(model_path) -> ClusterModel:
         normalize=meta.get("normalize", ""),
         k_prime=meta.get("k_prime", 0),
         raw_feature_dim=meta.get("raw_feature_dim", 0),
+        scales=meta.get("scales"),
     )
 
 def _majority_vote_excluding_noise(neighbor_labels: np.ndarray) -> tuple[int, float]:

@@ -143,10 +143,16 @@ def load_annotator_data(
         }
 
     # --- Load embedding from cluster_{emb_name}.npz (kept for visualization) ---
-    npz_candidates = [
-        f for f in glob.glob(os.path.join(cluster_path, "cluster_*.npz"))
-        if not f.endswith("cluster_data.npz")
-    ]
+    # Deterministic: pick the most-recently-modified export (glob order is
+    # filesystem-dependent). On the no-session "load from disk" path the cluster
+    # root is never cleared, so several stale exports can coexist; newest-by-mtime
+    # matches the codebase's find_latest_cluster_npz convention.
+    npz_candidates = sorted(
+        (f for f in glob.glob(os.path.join(cluster_path, "cluster_*.npz"))
+         if not f.endswith("cluster_data.npz") and not f.endswith("cluster_model.npz")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
     if not npz_candidates:
         raise FileNotFoundError(f"cluster_*.npz not found: {cluster_path}")
     npz_path = npz_candidates[0]

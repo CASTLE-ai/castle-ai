@@ -434,12 +434,18 @@ def compute_prepare_id(
     K: int,
     fit_fraction: float,
     model_name: str,
+    seed: int = 0,
 ) -> str:
     """Deterministic 8-char id from the selection + every toggle/param.
 
     Includes each source's mtime+size so editing/re-extracting a latent
     invalidates the cache. Excludes ``castle_version`` (use
     ``prepare_schema_version`` for format bumps).
+
+    ``seed`` is folded in **only** when ``fit_fraction < 1.0`` — that is the only
+    case where the seed changes the output (it drives which rows are subsampled
+    into the PCA fit, hence a different basis). At ``fit_fraction == 1.0`` the
+    fit is seed-independent, so the id stays stable across seeds (no cache churn).
     """
     parts: List[str] = [
         f"schema={PREPARE_SCHEMA_VERSION}",
@@ -451,6 +457,8 @@ def compute_prepare_id(
         f"K={int(K)}",
         f"fit_fraction={_round6(fit_fraction)}",
     ]
+    if fit_fraction < 1.0:
+        parts.append(f"seed={int(seed)}")
     for s in sorted(sources, key=lambda x: x.key):
         # Hash the source file + the requested scale subset, so different scale
         # combos / edited files map to different caches. ``req_scales is None``
@@ -517,10 +525,17 @@ def _max_concurrent_loads(sources: Sequence[SourceSpec], avail_ram_bytes: Option
     max_raw = 1
     for s in sources:
         try:
-            # One combined file resident per loader during inflate (a scale-subset
-            # source slices in place, so its footprint is still one file's bytes).
             n0, nf, isz = _peek_header(s.npz_path)
-            max_raw = max(max_raw, n0 * nf * isz)
+            raw = n0 * nf * isz
+            # A scale-subset source holds the WHOLE file AND the hstacked subset
+            # at the same time inside _load_scale_combined_latent, so its transient
+            # peak is full + subset bytes — not one file's bytes. Budget both.
+            if s.req_scales and s.file_scales:
+                total_units = sum(int(x) * int(x) for x in s.file_scales)
+                sub_units = sum(int(x) * int(x) for x in s.req_scales)
+                if total_units > 0:
+                    raw += int(raw * sub_units / total_units)
+            max_raw = max(max_raw, raw)
         except Exception:  # noqa: BLE001
             pass
     usable = max(0, avail - margin)

@@ -309,6 +309,17 @@ def compare_projects_paired(
 
     cluster_names = {**data_before["cluster_names"], **data_after["cluster_names"]}
 
+    # GLOBAL cluster-id union over BOTH timepoints (named + present-in-labels), so
+    # every fingerprint shares one dimension and the i-th feature means the same
+    # behavior for every animal. Without this, animals exhibiting different cluster
+    # sets yield ragged vectors and compare_paired raises a numpy inhomogeneous-
+    # shape ValueError — the common case, since animals rarely show identical sets.
+    all_ids = {int(c) for c in cluster_names.keys()}
+    for vid in (*data_before["videos"], *data_after["videos"]):
+        lbl = np.asarray(vid["labels"])
+        all_ids.update(int(x) for x in np.unique(lbl) if int(x) != -1)
+    all_cluster_ids = sorted(all_ids)
+
     fps_before = []
     for vid in data_before["videos"]:
         fp = compute_fingerprint(
@@ -317,6 +328,7 @@ def compare_projects_paired(
             cluster_labels=vid["labels"],
             fps=fps,
             cluster_names=cluster_names,
+            all_cluster_ids=all_cluster_ids,
         )
         fps_before.append(fp)
 
@@ -328,6 +340,7 @@ def compare_projects_paired(
             cluster_labels=vid["labels"],
             fps=fps,
             cluster_names=cluster_names,
+            all_cluster_ids=all_cluster_ids,
         )
         fps_after.append(fp)
 

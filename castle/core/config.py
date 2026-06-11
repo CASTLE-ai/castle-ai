@@ -38,7 +38,9 @@ SUPPORTED_MODELS: List[str] = [
     'dinov2_vitb14_reg4_pretrain',
     'dinov3_vitb16',
     'dinov3_vitl16',
-    'dinov3_vits16',
+    # 'dinov3_vits16' removed: no checkpoint id / filename / num_layers entry
+    # (selecting it crashed at load) AND DINOv3Encoder mis-sized it to 768-d
+    # while output_dim_for computes 384-d. Re-add only with all four wired up.
 ]
 
 # DINOv3 Constants

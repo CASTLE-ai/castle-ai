@@ -225,6 +225,7 @@ def load_annotations(
                 'scheme': row.get('scheme', ''),
                 'annotator': row.get('annotator', ''),
                 'timestamp': row.get('timestamp', ''),
+                'comment': row.get('comment', ''),
             }
         return annotations
     except Exception as e:
@@ -260,6 +261,7 @@ def save_annotations(
             'scheme': ann.get('scheme', ''),
             'annotator': ann.get('annotator', ''),
             'timestamp': ann.get('timestamp', ''),
+            'comment': ann.get('comment', ''),
         })
 
     df = pd.DataFrame(rows)

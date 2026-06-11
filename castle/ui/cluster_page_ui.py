@@ -595,7 +595,7 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         outputs=[mulvideo, latents, ui['syllables_plot'],
                  ui['cluster_tree_html'], ui['cluster_tree_select'],
                  ui['behavior_id_csv'], ui['behavior_time_series_csv'],
-                 local_embedding_plot, ui['embedding_plot']],
+                 local_embedding_plot, ui['embedding_plot'], local_latents],
     ).then(
         # Only claim success when restore_session actually produced latents.
         # On failure it returns Nones (and already showed a gr.Warning); keep the
@@ -631,7 +631,9 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ui['delete_confirm_btn'].click(
         fn=confirm_delete_session,
         inputs=[storage_path, project_name, ui['session_dropdown']],
-        outputs=[session_info, ui['delete_warning_md'], ui['delete_confirm_btn']],
+        outputs=[session_info, ui['delete_warning_md'], ui['delete_confirm_btn'],
+                 latents, mulvideo, local_latents, local_embedding_plot,
+                 ui['cluster_tree_html'], ui['cluster_tree_select']],
     ).then(
         fn=_format_session_status,
         inputs=[session_info],

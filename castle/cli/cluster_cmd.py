@@ -108,6 +108,11 @@ def export(
     format: str = typer.Option("csv", "--format", "-f", help="Export format (csv)"),
 ):
     """Export clustering results (restore + show info)."""
+    if format != "csv":
+        raise typer.BadParameter(
+            f"Unsupported export format '{format}'. Only 'csv' is supported.",
+            param_hint="--format",
+        )
     storage = get_storage(storage)
     def notify(msg, level="info"):
         if level == "error":

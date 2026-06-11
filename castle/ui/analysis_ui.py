@@ -14,6 +14,7 @@ using the same session-selector pattern as ``annotator_ui.py``.
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 from typing import Optional, Tuple
@@ -153,6 +154,7 @@ def generate_ethogram_video(
     try:
         import av as _av
     except ImportError:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         gr.Warning("PyAV is required for video generation but is not installed.")
         return None, "**❌ PyAV not available.**"
 
@@ -176,6 +178,35 @@ def generate_ethogram_video(
         video_stream = container.streams.video[0]
         video_stream.thread_type = "AUTO"
 
+        # Map each ORIGINAL frame to its cluster label via the FrameIndexMap.
+        # bin_size/n_bins are in DECIMATED frames for a prepared cache and
+        # decimation is non-uniform, so the legacy `frame_idx // bin_size` is
+        # wrong there (it saturates and paints most of the video with the last
+        # window's label). expand_labels_to_orig handles both: for a legacy
+        # (window=1) map it reproduces the np.repeat(bin_size) behaviour exactly.
+        per_frame_labels = None
+        fim = getattr(analysis_data, "frame_index_map", None)
+        if fim is not None:
+            try:
+                names = [str(x) for x in fim.base.video_names]
+                if video_name in names:
+                    vidx = names.index(video_name)
+                else:
+                    bn = os.path.basename(video_name)
+                    vidx = next(
+                        (i for i, nm in enumerate(names) if os.path.basename(nm) == bn),
+                        None,
+                    )
+                if vidx is not None:
+                    win_labels = cluster_arr[global_bin_offset:global_bin_offset + n_bins]
+                    per_frame_labels = fim.expand_labels_to_orig(win_labels, vidx)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "FrameIndexMap expand failed for %s: %s; falling back to bin arithmetic",
+                    video_name, exc,
+                )
+                per_frame_labels = None
+
         frame_idx = 0
         try:
             for av_frame in container.decode(video_stream):
@@ -195,9 +226,15 @@ def generate_ethogram_video(
                 # Convert to BGR once — all subsequent drawing uses BGR colour tuples
                 canvas_bgr = cv2.cvtColor(canvas_rgb, cv2.COLOR_RGB2BGR)
 
-                local_bin = min(frame_idx // bin_size, n_bins - 1)
-                abs_bin = global_bin_offset + local_bin
-                cluster_id = int(cluster_arr[abs_bin]) if abs_bin < len(cluster_arr) else -1
+                if per_frame_labels is not None:
+                    cluster_id = (
+                        int(per_frame_labels[frame_idx])
+                        if frame_idx < len(per_frame_labels) else -1
+                    )
+                else:
+                    local_bin = min(frame_idx // bin_size, n_bins - 1)
+                    abs_bin = global_bin_offset + local_bin
+                    cluster_id = int(cluster_arr[abs_bin]) if abs_bin < len(cluster_arr) else -1
 
                 meta = analysis_data.cluster_meta.get(cluster_id, {})
                 color_bgr = _hex_to_bgr(meta.get("color", "#808080"))
@@ -244,9 +281,12 @@ def generate_ethogram_video(
     if writer is not None:
         writer.release()
     else:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return None, "**❌ Could not open any video file.**"
 
     # Re-encode to H.264 for browser playback
+    chosen = None
+    status = "**❌ Video generation failed.**"
     try:
         ret = subprocess.run(
             ["ffmpeg", "-y", "-i", raw_path,
@@ -254,17 +294,30 @@ def generate_ethogram_video(
             capture_output=True, timeout=600,
         )
         if ret.returncode == 0 and os.path.exists(final_path):
-            try:
-                os.remove(raw_path)
-            except OSError:
-                pass
-            return final_path, "**✅ Ethogram video ready for download!**"
+            chosen = final_path
+            status = "**✅ Ethogram video ready for download!**"
     except Exception as exc:
         logger.warning("ffmpeg re-encode failed: %s", exc)
+    if chosen is None and os.path.exists(raw_path):
+        chosen = raw_path
+        status = "**✅ Ethogram video ready (mp4v fallback).**"
 
-    if os.path.exists(raw_path):
-        return raw_path, "**✅ Ethogram video ready (mp4v fallback).**"
-    return None, "**❌ Video generation failed.**"
+    if chosen is None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None, status
+
+    # Move the chosen artifact into a stable project-scoped dir, then remove the
+    # temp dir — otherwise every click leaks a full re-encoded MP4 in system temp.
+    out_dir = os.path.join(analysis_data.project_path, "analysis", "ethogram_video")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"{safe_name}{os.path.splitext(chosen)[1]}")
+        shutil.move(chosen, out_path)
+    except OSError as exc:
+        logger.warning("Could not relocate ethogram video out of temp dir: %s", exc)
+        return chosen, status  # leave tmp_dir so the returned path stays valid
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    return out_path, status
 
 
 # ---------------------------------------------------------------------------

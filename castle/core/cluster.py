@@ -108,56 +108,11 @@ def find_nearest_embedding(embedding_data: np.ndarray, x: float, y: float, tree=
     distance, index = tree.query((x, y))
     return int(index), float(distance)
 
-def assert_ram_for(need_bytes: float, what: str, hint: str, fraction: float = 0.6) -> None:
-    """Pre-flight RAM guard: refuse with :class:`CastleDataError` if *need_bytes*
-    exceeds *fraction* of currently-free system RAM.
-
-    Turns an OS-killing OOM (the clustering path used to just allocate and let
-    the kernel thrash/kill) into a clean, actionable refusal. *fraction* (<1)
-    leaves headroom for the rest of the app + downstream copies. No-op when free
-    RAM can't be determined.
-    """
-    try:
-        avail = runtime_env.available_ram_bytes()
-    except Exception:  # noqa: BLE001
-        avail = None
-    if avail and need_bytes > fraction * float(avail):
-        raise CastleDataError(
-            f"{what} would need ~{need_bytes / 1e9:.1f} GB RAM but only "
-            f"~{avail / 1e9:.1f} GB is free (safe limit {fraction:.0%}). {hint}"
-        )
-
-
-def assert_vram_for(
-    need_bytes: float,
-    free_bytes: Optional[int],
-    what: str,
-    hint: str,
-    fraction: float = 0.7,
-) -> None:
-    """Pre-flight **VRAM** guard: refuse with :class:`CastleDataError` if
-    *need_bytes* exceeds *fraction* of *free_bytes* on the GPU the op will use.
-
-    The GPU sibling of :func:`assert_ram_for`. cuML's CUDA OOM is a raw
-    ``std::bad_alloc`` with no usable traceback and leaves the GPU busy (the app
-    looks hung), so estimating the peak and refusing up-front is the only clean
-    signal the user gets. *fraction* (<1) leaves headroom for cuML's own scratch
-    + the resident input. No-op when free VRAM can't be determined (CPU backend
-    or no NVML) — the host-RAM guard still covers the CPU path. Override the
-    fraction with ``CASTLE_UMAP_VRAM_FRACTION``.
-    """
-    try:
-        env = os.environ.get("CASTLE_UMAP_VRAM_FRACTION")
-        if env:
-            fraction = float(env)
-    except ValueError:
-        pass
-    if free_bytes and need_bytes > fraction * float(free_bytes):
-        raise CastleDataError(
-            f"{what} would need ~{need_bytes / 1e9:.1f} GB GPU memory but only "
-            f"~{free_bytes / 1e9:.1f} GB is free on the GPU (safe limit "
-            f"{fraction:.0%}). {hint}"
-        )
+# NOTE: the former assert_ram_for / assert_vram_for pre-flight guards were
+# removed as dead code — they had no callers; the live UMAP pre-flight guard is
+# implemented inline in clustering_service.run_umap_on_cluster (which does both a
+# VRAM-peak check and a host-RAM floor, richer than these did). Re-introduce a
+# shared helper there if consolidation is ever wanted.
 
 
 def _memmap_threshold_bytes() -> int:

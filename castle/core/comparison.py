@@ -762,34 +762,48 @@ def paired_permutation_test(
     bfa_pvalue = float(np.mean(null_bfa >= observed_bfa))
     bfa_pvalue = max(bfa_pvalue, 1.0 / (n_permutations + 1))
 
-    # --- Per-feature paired permutation test ---
-    vecs_before = np.array([fp.to_feature_vector() for fp in fingerprints_before])
-    vecs_after = np.array([fp.to_feature_vector() for fp in fingerprints_after])
-    diffs = vecs_after - vecs_before  # (n, n_features)
+    # --- Per-feature paired permutation test (NaN-aware, contract C-6) ---
+    # Build vectors WITHOUT 0-filling so an absent behaviour's duration/IBI stays
+    # NaN ("undefined", not 0 seconds). 0-filling would treat "behaviour absent at
+    # one timepoint" as a 0-second observation and bias the paired mean-difference,
+    # the sign-flip null, and paired Hedges' g — matching the unpaired path which
+    # already keeps NaN. A pair is dropped per-feature when either side is NaN.
+    vecs_before = np.array([fp.to_feature_vector(fill_nan=False) for fp in fingerprints_before])
+    vecs_after = np.array([fp.to_feature_vector(fill_nan=False) for fp in fingerprints_after])
+    diffs = vecs_after - vecs_before  # (n, n_features); NaN where either side absent
     n_features = diffs.shape[1]
     feature_names = fingerprints_before[0].feature_names()
 
-    observed_mean_abs = np.abs(np.mean(diffs, axis=0))
+    finite = np.isfinite(diffs)            # valid-pair mask per (animal, feature)
+    n_valid = finite.sum(axis=0)           # valid pairs per feature
+    testable = n_valid >= 2                # need >= 2 valid pairs to test
+    denom = np.maximum(n_valid, 1)         # avoid /0 for untestable features
+
+    # Mean over valid pairs only (NaN contributes 0 to the sum, excluded from count).
+    mean_diffs = np.where(finite, diffs, 0.0).sum(axis=0) / denom
+    observed_mean_abs = np.abs(mean_diffs)
 
     count_ge = np.zeros(n_features, dtype=np.float64)
     for _ in range(n_permutations):
         signs = rng.choice([-1, 1], size=n)
-        flipped = diffs * signs[:, None]
-        perm_mean_abs = np.abs(np.mean(flipped, axis=0))
+        flipped = np.where(finite, diffs * signs[:, None], 0.0)
+        perm_mean_abs = np.abs(flipped.sum(axis=0) / denom)
         count_ge += (perm_mean_abs >= observed_mean_abs).astype(np.float64)
 
     pvalues = count_ge / n_permutations
     pvalues = np.maximum(pvalues, 1.0 / (n_permutations + 1))
+    pvalues = np.where(testable, pvalues, 1.0)  # untestable features → p = 1.0
 
     # BH-FDR correction
     pvalues_adj = benjamini_hochberg(pvalues, alpha=alpha)
 
-    # Paired Hedges' g per feature
+    # Paired Hedges' g per feature, over that feature's valid pairs only.
     effect_sizes = np.zeros(n_features, dtype=np.float64)
     for j in range(n_features):
-        effect_sizes[j] = paired_hedges_g(diffs[:, j])
+        col = diffs[:, j][finite[:, j]]
+        effect_sizes[j] = paired_hedges_g(col) if col.size >= 2 else 0.0
 
-    mean_diffs = np.mean(diffs, axis=0)
+    mean_diffs = np.where(testable, mean_diffs, 0.0)
 
     return {
         "paired_bfa_distance": observed_bfa,
@@ -834,6 +848,19 @@ def compare_paired(
         )
     if n == 0:
         raise ValueError("Need at least one pair of fingerprints.")
+
+    # Fail loud with a clear message if fingerprints are not dimension-aligned
+    # (build them with a shared all_cluster_ids — contract C-6). Without this the
+    # downstream np.array(...) over ragged vectors/matrices raises an opaque numpy
+    # "inhomogeneous shape" ValueError.
+    lengths = {len(fp.to_feature_vector()) for fp in (*fingerprints_before, *fingerprints_after)}
+    if len(lengths) > 1:
+        from castle.core.types import CastleDataError
+        raise CastleDataError(
+            "Fingerprints have mismatched feature-vector lengths "
+            f"({sorted(lengths)}); build every animal's fingerprint with the "
+            "same all_cluster_ids so features align (contract C-6)."
+        )
 
     group_before_name = fingerprints_before[0].group
     group_after_name = fingerprints_after[0].group

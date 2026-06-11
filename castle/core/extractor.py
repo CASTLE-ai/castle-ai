@@ -1282,6 +1282,7 @@ def extract_roi_latent_from_video_2gpu(
             source_video_path=source_video_path, mask_path_override=mask_path_override,
             session_id=session_id, on_frame_error=on_frame_error,
             max_batch_failure_rate=max_batch_failure_rate,
+            latent_dtype=latent_dtype, cancel_event=cancel_event,
         )
 
     # Contiguous frame ranges, one per device.

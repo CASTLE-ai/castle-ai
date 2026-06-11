@@ -461,17 +461,22 @@ def preprocess_center_crop(
         project_name, video_name, session_id, n_frames,
     )
 
-    in_container = av.open(source_path)
-    in_stream = in_container.streams.video[0]
-    try:
-        in_stream.thread_type = "AUTO"  # multi-threaded libav decode
-    except Exception:  # noqa: BLE001
-        pass
-    out_container, out_stream, _codec = _open_encoder(
-        str(out_video_path), fps, int(crop_width), int(crop_height))
-
+    # Open both AV containers INSIDE the try so the finally always closes them,
+    # even if h5py.File(mask_h5_path) below raises (missing/corrupt/locked mask) —
+    # otherwise the input demuxer + output muxer/encoder session leak per failure.
+    in_container = None
+    out_container = None
     encode_failed = False
     try:
+        in_container = av.open(source_path)
+        in_stream = in_container.streams.video[0]
+        try:
+            in_stream.thread_type = "AUTO"  # multi-threaded libav decode
+        except Exception:  # noqa: BLE001
+            pass
+        out_container, out_stream, _codec = _open_encoder(
+            str(out_video_path), fps, int(crop_width), int(crop_height))
+
         with h5py.File(mask_h5_path, "r") as f_in, H5IO(str(out_mask_path)) as h5_out:
             def _produce():
                 # Decode + read source mask + center-crop transform on a
@@ -501,28 +506,28 @@ def preprocess_center_crop(
                         continue
                     yield frame_idx, cropped_frame, cropped_mask
 
-            try:
-                for frame_idx, cropped_frame, cropped_mask in _threaded_iter(_produce):
-                    if cancel_event is not None and cancel_event.is_set() and frame_idx % 30 == 0:
-                        raise PreprocessCancelled()
-                    out_frame = av.VideoFrame.from_ndarray(cropped_frame, format="bgr24")
-                    for packet in out_stream.encode(out_frame):
-                        out_container.mux(packet)
-
-                    h5_out.write_mask(frame_idx, cropped_mask)
-
-                    if progress_callback and frame_idx % 30 == 0:
-                        progress_callback(frame_idx / n_frames, f"Frame {frame_idx}/{n_frames}")
-
-                for packet in out_stream.encode():
+            for frame_idx, cropped_frame, cropped_mask in _threaded_iter(_produce):
+                if cancel_event is not None and cancel_event.is_set() and frame_idx % 30 == 0:
+                    raise PreprocessCancelled()
+                out_frame = av.VideoFrame.from_ndarray(cropped_frame, format="bgr24")
+                for packet in out_stream.encode(out_frame):
                     out_container.mux(packet)
-            finally:
-                out_container.close()
-                in_container.close()
+
+                h5_out.write_mask(frame_idx, cropped_mask)
+
+                if progress_callback and frame_idx % 30 == 0:
+                    progress_callback(frame_idx / n_frames, f"Frame {frame_idx}/{n_frames}")
+
+            for packet in out_stream.encode():
+                out_container.mux(packet)
     except BaseException:
         encode_failed = True
         raise
     finally:
+        if out_container is not None:
+            out_container.close()
+        if in_container is not None:
+            in_container.close()
         if encode_failed:
             for p in (out_video_path, out_mask_path):
                 try:

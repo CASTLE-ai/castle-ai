@@ -29,6 +29,8 @@ from castle.ui.cluster_handlers import (
     check_session_exists,
     show_delete_confirmation,
     confirm_delete_session,
+    show_delete_cache_confirmation,
+    confirm_delete_cache,
     save_cluster_model,
     apply_cluster_model,
     export_representatives,
@@ -337,6 +339,15 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                     interactive=True,
                     info="Pick a prepared cache (built in the Prepare tab), or legacy raw (no cache).",
                 )
+                # Delete the prepared cache currently selected above (no-op for
+                # legacy raw). Two-step confirm, mirroring session deletion.
+                ui['prep_delete_btn'] = gr.Button(
+                    "🗑 Delete selected cache", variant="secondary", interactive=True,
+                )
+                ui['prep_delete_warning_md'] = gr.Markdown("", visible=False)
+                ui['prep_delete_confirm_btn'] = gr.Button(
+                    "⚠️ Confirm delete cache", variant="stop", visible=False,
+                )
                 ui['variance_pct'] = gr.Number(
                     label="Explained variance % (PCA → UMAP)",
                     value=95,
@@ -557,6 +568,18 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
         fn=_toggle_source_fields,
         inputs=[ui['data_source']],
         outputs=[ui['select_model'], ui['pooling'], ui['select_roi_id']],
+    )
+
+    # Prepared-cache deletion (two-step confirm; operates on the data_source pick).
+    ui['prep_delete_btn'].click(
+        fn=show_delete_cache_confirmation,
+        inputs=[storage_path, project_name, ui['data_source']],
+        outputs=[ui['prep_delete_warning_md'], ui['prep_delete_confirm_btn']],
+    )
+    ui['prep_delete_confirm_btn'].click(
+        fn=confirm_delete_cache,
+        inputs=[storage_path, project_name, ui['data_source']],
+        outputs=[ui['data_source'], ui['prep_delete_warning_md'], ui['prep_delete_confirm_btn']],
     )
 
     # Initialize: create aggregator + check for previous session.

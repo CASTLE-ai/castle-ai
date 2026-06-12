@@ -255,8 +255,47 @@ def list_prepared(storage_path: str, project_name: str) -> Dict[str, Any]:
     return dict(config.get("prepare", {}))
 
 
+def backfill_prepared_scales(storage_path: str, project_name: str) -> Dict[str, Any]:
+    """One-time repair for caches built before SPP ``scales`` was recorded:
+    derive the scales from each cache's source keys and write them into its
+    on-disk ``meta.json`` (if absent) and its config-registry entry. New builds
+    already record scales, so this only touches legacy caches. Returns
+    ``{prepare_id: scales}`` for the caches it repaired."""
+    import json
+    repaired: Dict[str, Any] = {}
+    root = _prepared_root(storage_path, project_name)
+    for pid in list(list_prepared(storage_path, project_name).keys()):
+        meta_path = os.path.join(root, pid, _prepare.META_FILENAME)
+        if not os.path.isfile(meta_path):
+            continue
+        with open(meta_path, encoding="utf-8") as f:
+            raw = json.load(f)
+        if "scales" in raw:
+            continue  # already recorded by the build path
+        scales = _prepare._derive_scales_from_sources(raw.get("sources", []))
+        raw["scales"] = scales
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(raw, f, indent=2, ensure_ascii=False)
+        repaired[pid] = scales
+    if repaired:
+        with update_config(storage_path, project_name) as config:
+            reg = config.get("prepare", {})
+            for pid, scales in repaired.items():
+                if pid in reg and reg[pid].get("scales") is None:
+                    reg[pid]["scales"] = scales
+    return repaired
+
+
 def delete_prepared(storage_path: str, project_name: str, prepare_id: str) -> None:
-    """Remove a prepare cache directory + its registry entry."""
-    shutil.rmtree(prepared_dir(storage_path, project_name, prepare_id), ignore_errors=True)
+    """Remove a prepare cache directory, its sibling ``<id>.lock``, and its
+    registry entry. ``ignore_errors`` keeps a partially-removed cache from
+    wedging the call; the lock is best-effort (a stale lock would otherwise
+    survive and confuse a later build that reuses the id)."""
+    pdir = prepared_dir(storage_path, project_name, prepare_id)
+    shutil.rmtree(pdir, ignore_errors=True)
+    try:
+        os.remove(pdir + ".lock")
+    except OSError:
+        pass
     with update_config(storage_path, project_name) as config:
         config.get("prepare", {}).pop(prepare_id, None)

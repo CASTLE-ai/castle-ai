@@ -636,6 +636,64 @@ def confirm_delete_session(storage_path, project_name, session_id):
     return (new_info,) + hide + cleared
 
 
+def show_delete_cache_confirmation(storage_path, project_name, prepare_id):
+    """First click of the prepared-cache delete flow: warn + reveal confirm.
+
+    ``prepare_id`` is the Data-source dropdown value — a real id for a cache, or
+    the legacy sentinel label (which is not in the registry, so we reject it).
+    Names any sessions built on this cache, since deleting it orphans them.
+    """
+    import gradio as gr
+    from castle.service import prepare_service
+    if not project_name or not prepare_id:
+        return gr.update(visible=False, value=""), gr.update(visible=False)
+    reg = prepare_service.list_prepared(storage_path, project_name)
+    if prepare_id not in reg:
+        gr.Warning("Select a prepared cache (not legacy raw) to delete.")
+        return gr.update(visible=False, value=""), gr.update(visible=False)
+    dependents = []
+    try:
+        for s in SessionManager(storage_path, project_name).list_sessions():
+            if getattr(s, 'prepare_id', None) == prepare_id:
+                dependents.append(getattr(s, 'session_id', '?'))
+    except Exception:  # noqa: BLE001 — a bad manifest must not block the warning
+        pass
+    warn = (
+        f"⚠️ **Permanently delete prepared cache `{prepare_id}`?**  \n"
+        "The reduced-latent cache is removed and **cannot be recovered** — you would "
+        "rebuild it from the Prepare tab."
+    )
+    if dependents:
+        warn += (
+            f"  \n🔗 **{len(dependents)} session(s) were built on this cache and will "
+            f"no longer restore:** {', '.join(dependents)}."
+        )
+    return gr.update(visible=True, value=warn), gr.update(visible=True)
+
+
+def confirm_delete_cache(storage_path, project_name, prepare_id):
+    """Second click: delete the prepared cache, then refresh + reset the
+    Data-source dropdown (back to legacy) and hide the confirm controls."""
+    import gradio as gr
+    from castle.service import prepare_service
+    hide = (gr.update(visible=False, value=""), gr.update(visible=False))
+    if not project_name or not prepare_id:
+        return (gr.update(),) + hide
+    reg = prepare_service.list_prepared(storage_path, project_name)
+    if prepare_id not in reg:
+        gr.Warning(f"Prepared cache '{prepare_id}' not found or already deleted.")
+        choices = list_prepare_choices(storage_path, project_name)
+        return (gr.update(choices=choices, value=choices[0] if choices else None),) + hide
+    try:
+        prepare_service.delete_prepared(storage_path, project_name, prepare_id)
+    except Exception as exc:  # noqa: BLE001
+        gr.Warning(f"Failed to delete cache '{prepare_id}': {exc}")
+        return (gr.update(),) + hide
+    gr.Info(f"Prepared cache '{prepare_id}' deleted.")
+    choices = list_prepare_choices(storage_path, project_name)
+    return (gr.update(choices=choices, value=choices[0] if choices else None),) + hide
+
+
 def _find_latest_npz(cluster_path):
     """Wrapper kept for back-compat with existing handler call sites."""
     from castle.service.clustering_service import find_latest_cluster_npz

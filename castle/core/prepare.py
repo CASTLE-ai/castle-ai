@@ -1127,10 +1127,32 @@ def run_prepare(
 # --------------------------------------------------------------------------- #
 # Load / staleness / k'                                                       #
 # --------------------------------------------------------------------------- #
+def _derive_scales_from_sources(sources: Any) -> Optional[List[int]]:
+    """Best-effort SPP scales from a meta's ``sources`` keys (e.g. ``spp1x2x4``
+    → ``[1,2,4]``). Used to backfill caches built before ``scales`` was recorded:
+    such a cache predates the scale-SUBSET feature, so it was a full build and the
+    file's scales ARE its scales. weighted_average sources have no spp tag → None."""
+    from castle.core.latent_scales import _spp_scales_of
+    for s in sources or []:
+        key = s.get("key", "") if isinstance(s, dict) else ""
+        try:
+            sc = _spp_scales_of(key)
+        except Exception:  # noqa: BLE001 — a bad key must not break loading
+            sc = None
+        if sc:
+            return sorted(int(x) for x in sc)
+    return None
+
+
 def load_meta(prepare_dir: str) -> Dict[str, Any]:
     with open(os.path.join(prepare_dir, META_FILENAME), encoding="utf-8") as f:
         data: Dict[str, Any] = json.load(f)
-        return data
+    # Backfill SPP-scale provenance for caches built before it was recorded
+    # (in-memory only — keeps load pure; on-disk files are repaired by the
+    # explicit backfill below). None for legacy weighted_average caches.
+    if "scales" not in data:
+        data["scales"] = _derive_scales_from_sources(data.get("sources", []))
+    return data
 
 
 def load_prepare(prepare_dir: str) -> PreparedData:

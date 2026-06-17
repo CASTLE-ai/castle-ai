@@ -96,6 +96,7 @@ def _populate_etho_videos(analysis_data) -> dict:
 def generate_ethogram_video(
     analysis_data,
     selected_video: str,
+    view_mode: str = "DBSCAN clusters",
     progress=gr.Progress(),
 ) -> Tuple[Optional[str], str]:
     """Render an annotated ethogram video with cluster overlay and label.
@@ -104,6 +105,11 @@ def generate_ethogram_video(
     a. Original video frame
     b. ROI mask contour in the cluster's assigned colour (requires mask_list.h5)
     c. Behaviour label badge (top-left corner)
+
+    Args:
+        view_mode: ``"DBSCAN clusters"`` uses the original per-cluster colour
+            and name; ``"Annotation labels"`` uses the merged palette colour and
+            the human behavior label (or "Unannotated").
 
     Returns:
         (output_file_path_or_None, status_markdown)
@@ -135,17 +141,21 @@ def generate_ethogram_video(
 
     # Load human-annotated behavior labels (name → behavior_label)
     behavior_labels: dict = {}
-    try:
-        from castle.service.annotation_service import load_annotations as _load_ann
-        project_path = analysis_data.project_path
-        storage_path = os.path.dirname(project_path)
-        project_name = os.path.basename(project_path)
-        ann = _load_ann(storage_path, project_name, session_id=analysis_data.session_id)
-        for bm_name, info in ann.items():
-            if info.get("behavior_label"):
-                behavior_labels[bm_name] = info["behavior_label"]
-    except Exception as exc:
-        logger.debug("Could not load behavior annotations: %s", exc)
+    annotations = _load_annotations_for(analysis_data)
+    for bm_name, info in annotations.items():
+        if info.get("behavior_label"):
+            behavior_labels[bm_name] = info["behavior_label"]
+
+    # In merged mode build per-cluster-ID colour and label overrides.
+    merged_color_map: dict = {}   # old cluster_id → hex color
+    merged_label_map: dict = {}   # old cluster_id → display label
+    if view_mode == "Annotation labels":
+        label_remap, merged_names, merged_colors = _build_annotation_remap(
+            analysis_data, annotations
+        )
+        for cid, synth_id in label_remap.items():
+            merged_color_map[cid] = merged_colors[synth_id]
+            merged_label_map[cid] = merged_names[synth_id]
 
     writer: Optional[cv2.VideoWriter] = None
     out_w = out_h = None
@@ -237,10 +247,13 @@ def generate_ethogram_video(
                     cluster_id = int(cluster_arr[abs_bin]) if abs_bin < len(cluster_arr) else -1
 
                 meta = analysis_data.cluster_meta.get(cluster_id, {})
-                color_bgr = _hex_to_bgr(meta.get("color", "#808080"))
-                # Fix 3: use human behavior label when annotated, else cluster path name
-                bm_name = meta.get("name", "")
-                label = behavior_labels.get(bm_name) or bm_name or f"cluster {cluster_id}"
+                if merged_color_map:
+                    color_bgr = _hex_to_bgr(merged_color_map.get(cluster_id, "#808080"))
+                    label = merged_label_map.get(cluster_id, f"cluster {cluster_id}")
+                else:
+                    color_bgr = _hex_to_bgr(meta.get("color", "#808080"))
+                    bm_name = meta.get("name", "")
+                    label = behavior_labels.get(bm_name) or bm_name or f"cluster {cluster_id}"
 
                 # Fix 2: track contour bounding box to anchor label near ROI
                 label_x, label_y = 6, 6  # fallback: top-left
@@ -387,6 +400,66 @@ def _load_data(storage_path: str, project_name: str, session_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Annotation-merge helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_annotations_for(annotator_data) -> dict:
+    """Load annotations dict for the given AnnotatorData. Returns {} on failure."""
+    try:
+        from castle.service.annotation_service import load_annotations as _load_ann
+        project_path = annotator_data.project_path
+        storage_path = os.path.dirname(project_path)
+        project_name = os.path.basename(project_path)
+        return _load_ann(storage_path, project_name, session_id=annotator_data.session_id)
+    except Exception as exc:
+        logger.debug("Could not load annotations: %s", exc)
+        return {}
+
+
+def _build_annotation_remap(annotator_data, annotations: dict):
+    """Build cluster-ID remapping for annotation-merged view mode.
+
+    Clusters sharing the same human behavior_label are collapsed to a single
+    synthetic ID.  Clusters without a label are grouped as "Unannotated".
+
+    Returns:
+        label_remap   – Dict[int, int] mapping original cluster_id → synthetic_id
+        merged_names  – Dict[int, str] synthetic_id → display name
+        merged_colors – Dict[int, str] synthetic_id → hex color (#rrggbb)
+    """
+    from castle.core.config import PALETTE_HEX
+
+    cid_to_label: dict = {}
+    for cid, meta in (annotator_data.cluster_meta or {}).items():
+        bm_name = meta.get("name", "")
+        ann = annotations.get(bm_name)
+        label = (ann.get("behavior_label") if ann else None) or "Unannotated"
+        cid_to_label[int(cid)] = label
+
+    # Deterministic ordering: annotated labels alphabetically, "Unannotated" last
+    annotated = sorted({lbl for lbl in cid_to_label.values() if lbl != "Unannotated"})
+    has_unannotated = "Unannotated" in cid_to_label.values()
+    unique_labels = annotated + (["Unannotated"] if has_unannotated else [])
+
+    label_to_synth = {lbl: i for i, lbl in enumerate(unique_labels)}
+    label_remap = {cid: label_to_synth[lbl] for cid, lbl in cid_to_label.items()}
+    merged_names = {sid: lbl for lbl, sid in label_to_synth.items()}
+
+    palette = PALETTE_HEX
+    merged_colors: dict = {}
+    palette_idx = 0
+    for lbl, sid in label_to_synth.items():
+        if lbl == "Unannotated":
+            merged_colors[sid] = "#aaaaaa"
+        else:
+            merged_colors[sid] = palette[palette_idx % len(palette)]
+            palette_idx += 1
+
+    return label_remap, merged_names, merged_colors
+
+
+# ---------------------------------------------------------------------------
 # Section A: Ethogram
 # ---------------------------------------------------------------------------
 
@@ -449,14 +522,22 @@ def export_ethogram_csv_handler(storage_path: str, project_name: str, session_id
     )
 
 
-def generate_ethogram(annotator_data, selected_video):
+def generate_ethogram(annotator_data, selected_video, view_mode="DBSCAN clusters"):
     """Compute a per-video ethogram; return (heatmap fig, stats df, raster fig).
 
     Per-subject: computes for ``selected_video`` only, from that video's
     per-frame time_series and its own fps — no cross-video bout merging and no
     mixed-fps duration errors.
+
+    Args:
+        view_mode: ``"DBSCAN clusters"`` (default) uses raw cluster IDs;
+            ``"Annotation labels"`` merges clusters sharing the same human
+            behavior label into a single category, with colours reassigned from
+            the global palette.  Unannotated clusters are grouped as
+            "Unannotated".  Within-label transitions become self-transitions
+            and are excluded from the transition matrix (only state *changes*
+            are counted, same rule as DBSCAN mode).
     """
-    import os
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -468,31 +549,28 @@ def generate_ethogram(annotator_data, selected_video):
         gr.Warning("Please select a video to analyse.")
         return None, None, None
 
-    # Bug 11 fix: load annotations and format cluster names as
-    # "human_label — bm_name" when a human annotation exists, otherwise
-    # fall back to the BM clustering name.
-    annotations: dict = {}
-    try:
-        from castle.service.annotation_service import load_annotations as _load_ann
-        project_path = annotator_data.project_path
-        storage_path = os.path.dirname(project_path)
-        project_name = os.path.basename(project_path)
-        annotations = _load_ann(storage_path, project_name, session_id=annotator_data.session_id)
-    except Exception as _exc:
-        logger.warning("Could not load annotations for ethogram cluster names: %s", _exc)
+    annotations = _load_annotations_for(annotator_data)
 
-    def _display_name(bm_name: str) -> str:
-        """Return annotated display name or raw BM name."""
-        ann = annotations.get(bm_name)
-        if ann and ann.get("behavior_label"):
-            return f"{ann['behavior_label']} \u2014 {bm_name}"
-        return bm_name
+    label_remap = None
+    if view_mode == "Annotation labels":
+        label_remap, merged_names, _ = _build_annotation_remap(annotator_data, annotations)
+        if not merged_names or set(merged_names.values()) == {"Unannotated"}:
+            gr.Warning(
+                "No behavior annotations found. Annotate clusters in the Annotator tab "
+                "first, then switch to 'Annotation labels' view."
+            )
+        cluster_names = merged_names
+    else:
+        def _display_name(bm_name: str) -> str:
+            ann = annotations.get(bm_name)
+            if ann and ann.get("behavior_label"):
+                return f"{ann['behavior_label']} \u2014 {bm_name}"
+            return bm_name
 
-    # Build cluster_names dict from cluster_meta, applying annotation labels
-    cluster_names = {
-        cid: _display_name(meta["name"])
-        for cid, meta in annotator_data.cluster_meta.items()
-    }
+        cluster_names = {
+            cid: _display_name(meta["name"])
+            for cid, meta in annotator_data.cluster_meta.items()
+        }
 
     # Compute per-video ethogram via the service layer (own fps, no cross-video
     # bouts/transitions). Reads the selected video's per-frame time_series.
@@ -500,7 +578,9 @@ def generate_ethogram(annotator_data, selected_video):
 
     try:
         ethogram = compute_video_ethogram(
-            annotator_data.project_path, selected_video, cluster_names=cluster_names,
+            annotator_data.project_path, selected_video,
+            cluster_names=cluster_names,
+            label_remap=label_remap,
         )
     except FileNotFoundError as exc:
         gr.Warning(
@@ -575,15 +655,31 @@ def generate_ethogram(annotator_data, selected_video):
 # ---------------------------------------------------------------------------
 
 
-def compute_quality_metrics(annotator_data):
-    """Compute clustering quality metrics and return a dataframe."""
+def compute_quality_metrics(annotator_data, view_mode="DBSCAN clusters"):
+    """Compute clustering quality metrics and return a dataframe.
+
+    Args:
+        view_mode: ``"DBSCAN clusters"`` (default) evaluates the raw DBSCAN
+            partitioning; ``"Annotation labels"`` first merges clusters that
+            share the same human behavior label before computing metrics.
+    """
     import pandas as pd
+    import numpy as np
 
     if annotator_data is None:
         return None
 
     cluster_labels = annotator_data.cluster
     embedding = annotator_data.embedding  # may be None
+
+    if view_mode == "Annotation labels":
+        annotations = _load_annotations_for(annotator_data)
+        label_remap, _, _ = _build_annotation_remap(annotator_data, annotations)
+        cluster_labels = np.array(
+            [label_remap.get(int(lbl), int(lbl)) for lbl in cluster_labels],
+            dtype=np.int32,
+        )
+        # Embedding stays aligned; only labels change.
 
     from castle.core.metrics import evaluate_clustering
 
@@ -684,7 +780,13 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
             )
 
             with gr.Row():
-                ui["ethogram_btn"] = gr.Button("▶ Generate Ethogram", variant="primary", scale=3)
+                ui["view_mode"] = gr.Radio(
+                    choices=["DBSCAN clusters", "Annotation labels"],
+                    value="DBSCAN clusters",
+                    label="View mode",
+                    scale=2,
+                )
+                ui["ethogram_btn"] = gr.Button("▶ Generate Ethogram", variant="primary", scale=2)
                 ui["export_csv_btn"] = gr.Button("📥 Export CSV (all videos)", variant="secondary", scale=1)
 
             with gr.Row():
@@ -739,7 +841,8 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
         with gr.Accordion("📐 Section B: Quality Metrics", open=False):
             gr.Markdown(
                 "Evaluate clustering quality using internal validation metrics. "
-                "Embedding-based metrics (silhouette, CH, DB) require UMAP embeddings."
+                "Embedding-based metrics (silhouette, CH, DB) require UMAP embeddings. "
+                "_View mode (DBSCAN clusters / Annotation labels) is shared with Section A._"
             )
 
             ui["metrics_btn"] = gr.Button("▶ Compute Metrics", variant="primary")
@@ -794,7 +897,7 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
     # Generate Ethogram (per selected video)
     ui["ethogram_btn"].click(
         fn=generate_ethogram,
-        inputs=[analysis_data, ui["etho_video_selector"]],
+        inputs=[analysis_data, ui["etho_video_selector"], ui["view_mode"]],
         outputs=[ui["transition_plot"], ui["bout_stats_df"], ui["raster_plot"]],
     )
 
@@ -808,14 +911,14 @@ def create_analysis_ui(storage_path, project_name, analysis_tab=None):
     # Compute Metrics
     ui["metrics_btn"].click(
         fn=compute_quality_metrics,
-        inputs=[analysis_data],
+        inputs=[analysis_data, ui["view_mode"]],
         outputs=[ui["metrics_df"]],
     )
 
     # Generate Ethogram Video
     ui["ethogram_video_btn"].click(
         fn=generate_ethogram_video,
-        inputs=[analysis_data, ui["ethogram_video_selector"]],
+        inputs=[analysis_data, ui["ethogram_video_selector"], ui["view_mode"]],
         outputs=[ui["ethogram_video_file"], ui["ethogram_video_status"]],
     )
 

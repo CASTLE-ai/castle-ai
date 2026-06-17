@@ -181,6 +181,7 @@ def compute_video_ethogram(
     smooth: bool = False,
     smooth_window: int = 5,
     min_bout_frames: int = 3,
+    label_remap: dict = None,
 ):
     """Compute an :class:`~castle.core.ethogram.Ethogram` for ONE video.
 
@@ -212,6 +213,11 @@ def compute_video_ethogram(
         )
 
     labels, exclude_reason = _read_time_series(ts_path)
+    if label_remap is not None:
+        labels = np.array(
+            [label_remap.get(int(lbl), int(lbl)) for lbl in labels],
+            dtype=np.int32,
+        )
     if smooth:
         from castle.core.temporal_smooth import smooth_labels
         labels = smooth_labels(

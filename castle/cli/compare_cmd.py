@@ -17,10 +17,10 @@ def run(
         ..., "--project-b", "-b", help="Group B project name"
     ),
     storage: str = typer.Option(None, "-s", "--storage", help="Storage directory (or set CASTLE_STORAGE env var)"),
-    group_a_name: str = typer.Option("Control", "--name-a"),
-    group_b_name: str = typer.Option("Treatment", "--name-b"),
-    fps: float = typer.Option(30.0, "--fps"),
-    permutations: int = typer.Option(10000, "--permutations", "-n"),
+    group_a_name: str = typer.Option("Control", "--name-a", help="Display name for group A (default: Control)."),
+    group_b_name: str = typer.Option("Treatment", "--name-b", help="Display name for group B (default: Treatment)."),
+    fps: float = typer.Option(30.0, "--fps", help="Frames per second used to convert bout durations to seconds (default: 30)."),
+    permutations: int = typer.Option(10000, "--permutations", "-n", help="Number of permutations for the statistical test (default: 10000)."),
     output: str = typer.Option(
         None, "--output", "-o", help="Output directory for report"
     ),
@@ -80,7 +80,7 @@ def run(
 def fingerprint(
     project: str = typer.Argument(..., help="Project name"),
     storage: str = typer.Option(None, "-s", "--storage", help="Storage directory (or set CASTLE_STORAGE env var)"),
-    fps: float = typer.Option(30.0, "--fps"),
+    fps: float = typer.Option(30.0, "--fps", help="Frames per second used to convert bout durations to seconds (default: 30)."),
 ):
     """Compute and display behavioral fingerprint for a project."""
     from castle.service.comparison_service import compute_project_fingerprints

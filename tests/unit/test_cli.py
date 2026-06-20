@@ -26,6 +26,24 @@ def test_project_list_empty():
         assert result.exit_code == 0
 
 
+def test_version_flag():
+    """`castle --version` prints the version and exits 0."""
+    from castle import __version__
+
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "castle" in result.stdout.lower()
+    assert __version__ in result.stdout
+
+
+def test_env_command():
+    """`castle env` dumps the runtime provenance (versions, device) as JSON."""
+    result = runner.invoke(app, ["env"])
+    assert result.exit_code == 0
+    assert "castle_version" in result.stdout
+    assert "packages" in result.stdout
+
+
 def test_project_init():
     with tempfile.TemporaryDirectory() as tmp:
         result = runner.invoke(app, ["project", "init", "my-proj", "--storage", tmp])

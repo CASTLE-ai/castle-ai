@@ -11,7 +11,6 @@ import threading
 import time
 
 import gradio as gr
-from tqdm import tqdm
 
 from castle.ui.progress_ui import status_md, init_cancel_event, request_cancel
 from castle.utils.video_io import ReadArray
@@ -876,7 +875,7 @@ def create_extract_ui(storage_path, project_name, extract_tab):
         risky, msg = _check(model_type, batch_size, device, rotate=bool(era_switch))
         if risky:
             return gr.update(
-                value=f'<p style="color:#c05000;background:#fff4e6;padding:6px 10px;border-radius:4px;margin:4px 0">{msg}</p>',
+                value=f'<p style="color:#c05000;background:#fff4e6;padding:6px 10px;border-radius:4px;margin:4px 0"><strong>Warning:</strong> {msg}</p>',
                 visible=True,
             )
         return gr.update(value="", visible=False)

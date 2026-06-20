@@ -5,10 +5,9 @@ import json
 import time
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import gradio as gr
-from tqdm import tqdm
 
 from castle.core.logging_config import setup_logger
 
@@ -16,8 +15,8 @@ logger = setup_logger(__name__)
 
 from ..utils.h5_io import H5IO  # noqa: E402
 from ..utils.plot import generate_mix_image  # noqa: E402
-from ..utils.video_io import ReadArray, WriteArray  # noqa: E402
-from ..utils.tracking_manager import ROITracker, read_roi_labels  # noqa: E402
+from ..utils.video_io import ReadArray  # noqa: E402
+from ..utils.tracking_manager import read_roi_labels  # noqa: E402
 from ..utils.analysis_utils import compute_roi_info, save_kinematic_csv  # noqa: E402
 from ..service.tracking_service import track_videos  # noqa: E402
 from ..core.gpu_pool import available_cuda_devices  # noqa: E402

@@ -79,6 +79,19 @@ def create_ui(OS_SYS, root=''):
     """Create the main Gradio UI with multiple tabs."""
     with gr.Blocks() as app:
 
+        # Persistent orientation for first-time / non-programmer users: the tabs
+        # are a left-to-right pipeline and most stay empty until a project is
+        # open, which otherwise reads as "broken blank tab". This banner states
+        # the order and the Tab-0-first prerequisite up front.
+        gr.Markdown(
+            "## 🏰 CASTLE — Behavior Analysis\n"
+            "**Work the tabs left → right.** Start at **0. Project** (open or create one) — "
+            "the other tabs stay empty until a project is open. Typical flow: "
+            "**0** Project → **1** Upload Videos → **2** Tracking ROIs → "
+            "**3** Pre-process *(optional)* → **4** Extract Latent → "
+            "**5** Behavior Microscope *(cluster)* → **6** Analysis → **7** Export."
+        )
+
         # Project configuration tab
         with gr.Tab(label='0. Project'):
             project_ui = create_project_ui(OS_SYS, root)

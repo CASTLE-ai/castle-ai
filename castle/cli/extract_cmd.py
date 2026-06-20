@@ -43,8 +43,18 @@ def extract(
         return
 
     # A-06: Parse advanced extraction options
-    parsed_scales = [int(s.strip()) for s in scales.split(',') if s.strip()] if scales else None
-    parsed_layers = [int(lay.strip()) for lay in layers.split(',') if lay.strip()] if layers else None
+    def _parse_int_csv(raw: str, flag: str):
+        if not raw:
+            return None
+        try:
+            return [int(tok.strip()) for tok in raw.split(',') if tok.strip()]
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"{flag} expects a comma-separated list of integers (e.g. '1,2,4'); got {raw!r}."
+            ) from exc
+
+    parsed_scales = _parse_int_csv(scales, "--scales")
+    parsed_layers = _parse_int_csv(layers, "--layers")
 
     if latent_dtype not in ("float32", "float16"):
         console.print(f"[red]✗[/red] --latent-dtype must be float32 or float16, got '{latent_dtype}'")

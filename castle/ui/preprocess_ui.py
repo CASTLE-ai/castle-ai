@@ -75,7 +75,7 @@ def _list_videos(storage_path: str, project_name: str) -> gr.update:
 def _populate_roi_dropdowns(
     storage_path: str, project_name: str, video_name: str
 ) -> tuple:
-    """Return updated choices for Anterior/Posterior ROI dropdowns from mask data."""
+    """Return updated choices for the Body/Head ROI dropdowns from mask data."""
     # When 'All' is selected, use the first available video for sampling
     actual_video = video_name
     if video_name == "All":
@@ -92,9 +92,9 @@ def _populate_roi_dropdowns(
     default_post = roi_ids[1] if len(roi_ids) >= 2 else roi_ids[0]
     return (
         gr.update(choices=roi_ids, value=default_ant,
-                  info="ROI used as body centroid and orientation reference (anterior end)."),
+                  info="Body centroid + orientation reference (matches CLI --body-roi)."),
         gr.update(choices=roi_ids, value=default_post,
-                  info="ROI used to compute body axis angle (posterior end)."),
+                  info="Used to compute the body-axis angle (matches CLI --head-roi)."),
     )
 
 
@@ -123,7 +123,7 @@ def _compute_session_name(
             # Don't fabricate a name from defaulted ROIs — mirror the run-path
             # validation so the preview reflects what will actually run.
             if not ant_roi or not post_roi:
-                return "(select Anterior + Posterior ROI IDs)"
+                return "(select Body + Head ROI IDs)"
             params = {
                 "anterior_roi_id": int(ant_roi),
                 "posterior_roi_id": int(post_roi),
@@ -420,7 +420,7 @@ def _get_preview_frame(
 
         if method == "KIT":
             if not ant_roi or not post_roi:
-                gr.Warning("Please select both Anterior and Posterior ROI IDs before previewing.")
+                gr.Warning("Please select both Body and Head ROI IDs before previewing.")
                 return None
 
             body_roi_id = int(ant_roi)
@@ -570,9 +570,9 @@ def _run_preprocess(
             abort = "None of the selected videos are in this project."
         elif method == "KIT":
             if not ant_roi or not post_roi:
-                abort = "Please select both Anterior and Posterior ROI IDs."
+                abort = "Please select both Body and Head ROI IDs."
             elif int(ant_roi) == int(post_roi):
-                abort = "Anterior and Posterior ROI IDs must be different."
+                abort = "Body and Head ROI IDs must be different."
         elif not center_roi_id:
             abort = "Please select a ROI ID."
 
@@ -777,18 +777,18 @@ def create_preprocess_ui(
                 gr.Markdown("### KIT Parameters")
                 with gr.Row():
                     ui["anterior_roi_id"] = gr.Dropdown(
-                        label="Anterior ROI ID",
+                        label="Body ROI ID",
                         choices=[],
                         value=None,
                         interactive=True,
-                        info="Body centroid + orientation reference (anterior end).",
+                        info="Body centroid + orientation reference (matches CLI --body-roi).",
                     )
                     ui["posterior_roi_id"] = gr.Dropdown(
-                        label="Posterior ROI ID",
+                        label="Head ROI ID",
                         choices=[],
                         value=None,
                         interactive=True,
-                        info="Used to compute body axis angle (posterior end).",
+                        info="Used to compute the body-axis angle (matches CLI --head-roi).",
                     )
 
                 with gr.Accordion("⚙ Advanced KIT Parameters", open=False):

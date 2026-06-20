@@ -84,7 +84,7 @@ def cross_gpu_deterministic():
     physical GPUs*: DINO extraction runs under ``torch.autocast(float16)`` and the
     two dies round fp16 reductions slightly differently (a reproducible ~1e-2
     delta that cuDNN flags cannot remove). We accept that as fp16-level noise
-    (single-GPU also runs fp16; downstream UMAP standardizes). For exact cross-GPU
+    (single-GPU also runs fp16; this delta is negligible for downstream UMAP). For exact cross-GPU
     bit-identity you would have to drop the fp16 autocast (fp32) — slower + more
     VRAM. Uses cuDNN flags only (not ``torch.use_deterministic_algorithms``) to
     avoid raising on ops that lack a deterministic kernel.

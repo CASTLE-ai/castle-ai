@@ -46,7 +46,7 @@ def create_new_project_wrapper(storage_path, project_name):
         gr.Warning(str(e))
     except Exception as e:
         logger.exception("Failed to create project %r", project_name)
-        gr.Error(f"Failed to create project: {str(e)}")
+        raise gr.Error(f"Failed to create project: {str(e)}")
 
 
 def default_new_project_name_ui(new_project_name):

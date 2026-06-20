@@ -18,6 +18,15 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    """Print the installed CASTLE version and exit (eager --version handler)."""
+    if value:
+        from castle import __version__
+
+        typer.echo(f"castle {__version__}")
+        raise typer.Exit()
+
+
 def _load_config_file(path: Path) -> dict:
     """Read a JSON or YAML config file into a plain dict.
 
@@ -78,6 +87,13 @@ def _apply_device_override(device: str) -> str:
 @app.callback()
 def main_callback(
     ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the CASTLE version and exit.",
+    ),
     seed: int = typer.Option(
         42,
         "--seed",
@@ -94,7 +110,7 @@ def main_callback(
         envvar="CASTLE_STRICT_CUDA",
         help=(
             "Force bit-identical CUDA output (cudnn.deterministic + "
-            "use_deterministic_algorithms). ~10%% slower; use for paper-grade runs."
+            "use_deterministic_algorithms). ~10% slower; use for paper-grade runs."
         ),
     ),
     device: str = typer.Option(
@@ -156,6 +172,17 @@ def info_alias(
     """Show project info (alias for 'project info')."""
     storage = get_storage(storage)
     project_cmd.info(project, storage)
+
+
+@app.command("env")
+def env_info():
+    """Print CASTLE's runtime environment (CASTLE + library versions, device,
+    GPUs). Paste this into bug reports, or save it alongside results for
+    reproducibility — it is the same provenance stamped into saved artifacts.
+    """
+    from castle.core.environment import collect_run_environment
+
+    typer.echo(json.dumps(collect_run_environment(), indent=2))
 
 
 if __name__ == "__main__":

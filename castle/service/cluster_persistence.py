@@ -114,6 +114,7 @@ def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_
         fps=fps,
         k=k,
         transform=transform,
+        bin_size=W,
     )
 
 
@@ -258,6 +259,7 @@ def save_project_cluster_model(
         model_name=model_name,
         fps=fps,
         k=k,
+        bin_size=bin_size,
     )
 
 
@@ -285,6 +287,20 @@ def apply_cluster_model_to_project(
     import glob
 
     model = load_cluster_model(model_path)
+
+    # Transfer probe: the model was trained on bin_size-aggregated features, but
+    # apply runs on the target's PER-FRAME latents. A bin_size>1 model applied
+    # per-frame is a feature-distribution mismatch — warn so a degraded transfer
+    # is not silently accepted as a valid result (scientific-output correctness).
+    model_bin = int(getattr(model, "bin_size", 1) or 1)
+    if model_bin > 1:
+        logger.warning(
+            "Transfer probe: this model was trained with bin_size=%d "
+            "(bin-aggregated features) but is being applied to per-frame latents. "
+            "Cross-bin transfer can degrade accuracy; prefer a bin_size=1 model, "
+            "or interpret the transferred labels with this in mind.",
+            model_bin,
+        )
 
     # --- Load latent features from target project ---
     latent_dir = os.path.join(project_path, "latent")

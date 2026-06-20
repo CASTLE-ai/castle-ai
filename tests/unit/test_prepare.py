@@ -500,13 +500,16 @@ def test_prepared_transfer_model_roundtrip(tmp_path):
     out = str(tmp_path / "model.npz")
     save_cluster_model(
         out, emb, training, labels, cluster_names={0: "a", 1: "b", 2: "c"},
-        model_name="m", fps=30.0, k=5,
+        model_name="m", fps=30.0, k=5, bin_size=4,
         transform={"components": comp, "mean": mean, "normalize": "l2",
                    "k_prime": kp, "raw_feature_dim": D_raw},
     )
     model = load_cluster_model(out)
     assert model.has_transform and model.k_prime == kp and model.raw_feature_dim == D_raw
     assert model.training_features.shape == (N, kp)
+    # bin_size is persisted for the apply-time transfer probe (default 1 if absent)
+    assert model.bin_size == 4
+    assert load_cluster_model(out).bin_size == 4
 
     # apply to NEW raw features (D_raw): must transform to kp then classify
     new_raw = rng.standard_normal((10, D_raw)).astype(np.float32)

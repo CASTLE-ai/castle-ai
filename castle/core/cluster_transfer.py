@@ -28,6 +28,11 @@ class ClusterModel:
     fps: float = 30.0
     feature_dim: int = 768         # dim of training_features (the k-NN space)
     n_clusters: int = 0
+    # Temporal bin/window size the model was TRAINED on. A model trained on
+    # bin_size>1 (bin-aggregated) features applied to per-frame features is a
+    # silent distribution mismatch — apply() warns when this is >1 so the
+    # transfer is not silently misinterpreted. 0/1 = per-frame (no warning).
+    bin_size: int = 1
     # --- Prepare transform (prepared sessions only; all None for legacy) ---
     pca_components: Optional[np.ndarray] = None  # (K_full, D_raw)
     pca_mean: Optional[np.ndarray] = None        # (D_raw,)
@@ -47,12 +52,14 @@ class ClusterModel:
 
 def save_cluster_model(output_path, umap_embedding, training_features, cluster_labels,
                        cluster_names=None, model_name="", fps=30.0, k=5,
-                       transform=None) -> str:
+                       transform=None, bin_size=1) -> str:
     """Save as .npz with metadata JSON.
 
     ``transform`` (prepared sessions): dict with ``components`` (K_full, D_raw),
     ``mean`` (D_raw,), ``normalize`` ("l2"/"none"), ``k_prime`` (int),
     ``raw_feature_dim`` (int). Omitted for legacy raw-feature models.
+    ``bin_size`` records the temporal window the model was trained on (for the
+    apply-time mismatch probe).
     """
     arrays = dict(
         umap_embedding=umap_embedding,
@@ -65,6 +72,7 @@ def save_cluster_model(output_path, umap_embedding, training_features, cluster_l
         "feature_dim": int(training_features.shape[1]),
         "n_clusters": int(len(set(cluster_labels[cluster_labels >= 0]))),
         "has_transform": bool(transform),
+        "bin_size": int(bin_size or 1),
     }
     if transform:
         arrays["pca_components"] = np.asarray(transform["components"], dtype=np.float32)
@@ -96,6 +104,7 @@ def load_cluster_model(model_path) -> ClusterModel:
         k_prime=meta.get("k_prime", 0),
         raw_feature_dim=meta.get("raw_feature_dim", 0),
         scales=meta.get("scales"),
+        bin_size=meta.get("bin_size", 1),
     )
 
 def _majority_vote_excluding_noise(neighbor_labels: np.ndarray) -> tuple[int, float]:

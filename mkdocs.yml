@@ -77,6 +77,7 @@ nav:
     - Configuration: technical/configuration.md
     - Environment Variables: technical/environment-variables.md
     - Reproducibility: technical/reproducibility.md
+    - Benchmarking: technical/benchmarking.md
   - API Reference: reference/api.md
   - FAQ: faq.md
   - Citation: citation.md

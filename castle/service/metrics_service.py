@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from castle.core.metrics import evaluate_clustering
+from castle.core.metrics import compute_external_metrics, evaluate_clustering
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,20 @@ def evaluate_project_clustering(
     result = asdict(report)
     result["n_frames"] = int(len(labels))
     result["n_time_series_files"] = len(ts_files)
+
+    # Accuracy (external) metrics must compare PER-FRAME labels to PER-FRAME
+    # ground truth. The embedding branch above scores per-DATAPOINT labels
+    # (sampled/windowed), which are NOT frame-aligned to the ground truth — so it
+    # silently reports ~0 NMI even for a perfect match. Recompute the external
+    # metrics on the frame-aligned arrays and override.
+    if (
+        ground_truth is not None
+        and len(labels_for_gt) == len(ground_truth)
+        and len(ground_truth) > 0
+    ):
+        result.update(
+            compute_external_metrics(np.asarray(labels_for_gt), np.asarray(ground_truth))
+        )
     # Expose the 2-D embedding + aligned labels for the optional report scatter
     # (report._try_render_quality_plot reads these; absent before, so it never drew).
     if embedding is not None and labels_for_emb is not None:

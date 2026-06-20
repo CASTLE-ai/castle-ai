@@ -3,6 +3,8 @@ castle/core/models.py
 Unified Visual Encoder Interface.
 """
 
+import hashlib
+import os
 import threading
 
 import torch
@@ -14,12 +16,54 @@ from torchvision import transforms
 from PIL import Image
 import torchvision.transforms.functional as TF
 
-from castle.core.config import CKPT_DINO_IDS, DINOV3_CONSTANTS, DEFAULT_CKPT_DIR
+from castle.core.config import (
+    CKPT_DINO_IDS, DINOV3_CONSTANTS, DEFAULT_CKPT_DIR, TORCH_HUB_REFS,
+)
 from castle.core.environment import get_device
 from castle.core.logging_config import setup_logger
 from castle.utils.download import download_with_gdown
 
 logger = setup_logger(__name__)
+
+
+def _hub_repo(name: str) -> str:
+    """``'facebookresearch/<name>'`` pinned to the configured commit.
+
+    Pinning the repo to an explicit commit makes a re-run pull the same backbone
+    code (and, for DINOv2, the same pretrained-weight URLs) instead of a moving
+    ``main``. Env ``CASTLE_DINOV2_REF`` / ``CASTLE_DINOV3_REF`` overrides the pin;
+    set it empty to track ``main``.
+    """
+    env = os.environ.get(f'CASTLE_{name.upper()}_REF')
+    ref = env if env is not None else TORCH_HUB_REFS.get(name, '')
+    base = f'facebookresearch/{name}'
+    return f'{base}:{ref}' if ref else base
+
+
+def _verify_ckpt_sha256(path, expected: str) -> None:
+    """Raise if the checkpoint at *path* does not match *expected* SHA-256.
+
+    Guards reproducibility: a corrupted or substituted weight file silently
+    produces different latents. Bypass with ``CASTLE_ALLOW_UNVERIFIED_CKPT=1``
+    (e.g. when intentionally using a custom checkpoint).
+    """
+    if os.environ.get('CASTLE_ALLOW_UNVERIFIED_CKPT'):
+        logger.warning("CASTLE_ALLOW_UNVERIFIED_CKPT set — skipping weight-hash check for %s", path)
+        return
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8 * 1024 * 1024), b''):
+            h.update(chunk)
+    actual = h.hexdigest()
+    if actual != expected:
+        raise RuntimeError(
+            f"Checkpoint hash mismatch for {path}\n"
+            f"  expected SHA-256: {expected}\n"
+            f"  actual   SHA-256: {actual}\n"
+            "The weight file is corrupted or not the pinned release. Re-download "
+            "it, or set CASTLE_ALLOW_UNVERIFIED_CKPT=1 to use a custom checkpoint."
+        )
+    logger.info("Checkpoint SHA-256 verified: %s", os.path.basename(str(path)))
 
 class VisualEncoder(ABC):
     """Base class for all visual encoders (DINOv2, DINOv3)."""
@@ -242,8 +286,9 @@ class DINOv2Encoder(VisualEncoder):
 
 
     def load_model(self):
-        logger.info(f"Loading DINOv2: {self.model_name}")
-        self.model = torch.hub.load('facebookresearch/dinov2', self.model_name)
+        repo = _hub_repo('dinov2')
+        logger.info(f"Loading DINOv2: {self.model_name} from {repo}")
+        self.model = torch.hub.load(repo, self.model_name, trust_repo=True)
         self.model.eval().to(self.device)
 
     def preprocess_batch(self, frame_batch, mask_batch, roi_id):
@@ -354,11 +399,17 @@ class DINOv3Encoder(VisualEncoder):
                 raise ValueError(f"No Google Drive ID for {self.model_type}")
             download_with_gdown(file_id, str(ckpt_path))
 
-        # 2. Create Model Architecture (Hub)
+        # 1b. Verify the weight file matches the pinned release (reproducibility).
+        expected_sha = DINOV3_CONSTANTS.get('MODEL_TO_SHA256', {}).get(self.model_type)
+        if expected_sha:
+            _verify_ckpt_sha256(ckpt_path, expected_sha)
+
+        # 2. Create Model Architecture (Hub, pinned commit)
+        repo = _hub_repo('dinov3')
         try:
-            self.model = torch.hub.load('facebookresearch/dinov3', self.model_type, pretrained=False)
-        except Exception:
-            raise RuntimeError("Failed to load DINOv3 from torch.hub")
+            self.model = torch.hub.load(repo, self.model_type, pretrained=False, trust_repo=True)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load DINOv3 from torch.hub ({repo})") from e
 
         # 3. Load Weights
         logger.info(f"Loading weights from {ckpt_path}")

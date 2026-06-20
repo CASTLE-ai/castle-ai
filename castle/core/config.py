@@ -59,6 +59,27 @@ DINOV3_CONSTANTS = {
         "dinov3_vitb16": 12,
         "dinov3_vitl16": 24,
     },
+    # Expected SHA-256 of each pretrained checkpoint. Verified after download /
+    # before load so a corrupted or substituted weight file is caught instead of
+    # silently producing different latents (reproducibility). The filename's
+    # trailing hex (…-73cec8be) is the first 8 chars of these digests.
+    "MODEL_TO_SHA256": {
+        "dinov3_vitb16": "73cec8be7427c8655ceced13ce62f6e20a1fa90d1b4d4a550df17a1144081a7c",
+        "dinov3_vitl16": "8aa4cbddda325040fc78db2c272754af6ebe8ff2c55f6ec4f1964d8890f66035",
+    },
+}
+
+
+# --- Backbone version pinning (reproducibility) -------------------------------
+# Pin the torch.hub backbone repos to explicit commits so a re-run pulls the
+# SAME backbone code — and, for DINOv2, the same pretrained-weight URLs baked
+# into that commit — rather than a moving ``main`` that can change results
+# between runs. Captured 2026-06-20 from each repo's upstream ``main`` HEAD.
+# Override per repo with env CASTLE_DINOV2_REF / CASTLE_DINOV3_REF (set empty to
+# fall back to ``main``).
+TORCH_HUB_REFS: Dict[str, str] = {
+    'dinov2': '7764ea0f912e53c92e82eb78a2a1631e92725fc8',
+    'dinov3': '346f38fee679c56a6888f91c51670fae61d364e0',
 }
 
 

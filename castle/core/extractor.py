@@ -20,7 +20,7 @@ from castle.core.auto_batch import auto_retry_on_oom
 from castle.core.environment import get_device, get_num_workers
 from castle.core.logging_config import setup_logger
 from castle.core.models import get_visual_encoder
-from castle.core.project import get_project_config, save_project_config
+from castle.core.project import get_project_config
 from castle.core.seed import make_torch_generator, seed_worker
 from castle.core.types import (
     ExtractionError,

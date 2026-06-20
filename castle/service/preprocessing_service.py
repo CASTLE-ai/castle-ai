@@ -8,7 +8,6 @@ Session management is delegated to castle.core.preprocess_session.
 
 from __future__ import annotations
 
-import logging
 import os
 import queue
 import threading

@@ -7,8 +7,6 @@ No gradio imports.
 """
 
 import logging
-import os
-from pathlib import Path
 from typing import Callable, Optional
 
 from castle.core.data import Preprocess
@@ -18,7 +16,7 @@ from castle.core.extractor import (
     extract_roi_crop_video,
     extract_roi_rotation_latent_from_video,
 )
-from castle.core.project import get_project_config, save_project_config
+from castle.core.project import get_project_config
 from castle.defaults import EXTRACTION_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
@@ -141,7 +139,7 @@ def extract_latent(
     # the sequential path below, where `_auto` still applies the within-video
     # 2-GPU split when multi-GPU is on. Per-video outputs are independent; they
     # match sequential exactly except for fp16-autocast rounding (~1e-2) on videos
-    # that run on the second GPU (accepted as negligible; UMAP standardizes).
+    # that run on the second GPU (accepted as negligible for downstream UMAP).
     from castle.core.gpu_pool import (
         resolve_device_ids, run_on_device_pool, deterministic_ctx_if_enabled,
         host_ram_available_bytes,

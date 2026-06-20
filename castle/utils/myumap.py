@@ -8,7 +8,6 @@ try:
     from cuml.manifold.umap_utils import find_ab_params
     from cuml.decomposition import PCA
     import cupy as cp
-    import numpy as np
 
     class UMAP:
         """GPU-accelerated UMAP using RAPIDS cuML with spectral initialization.

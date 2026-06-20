@@ -27,7 +27,6 @@ DINOv3
 
 from __future__ import annotations
 
-import logging
 import math
 import multiprocessing
 import os

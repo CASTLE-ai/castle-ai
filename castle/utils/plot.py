@@ -2,7 +2,6 @@
 
 import cv2
 import numpy as np
-from PIL import Image
 
 from castle.core.config import PALETTE_HEX as _palette_hex
 

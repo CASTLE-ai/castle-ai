@@ -1,26 +1,21 @@
-matplotlib
-tqdm
-av
-numpy
-opencv-python-headless
-umap-learn
-plotly
-gradio
-h5py
-natsort
-pytest
-gdown
-termcolor
-xFormers
+# Local development environment (GPU workstation).
+#
+# Pulls the full runtime stack from requirements.txt — including the GPU-only
+# packages cuml-cu12 / xformers via the NVIDIA & PyTorch extra-indexes declared
+# there — then adds the test / lint / type-check / optional-feature tooling that
+# CASTLE's QC gate relies on. Previously this file drifted from requirements.txt
+# (it omitted ruff and several runtime deps such as transformers/typer/rich),
+# so a fresh `pip install -r requirements-dev.txt` could not build a working env.
+#
+# CPU-only or CI install (no NVIDIA index needed):
+#     pip install -e ".[dev,nwb,hdbscan]"
+-r requirements.txt
+
+# Test / lint / type
+pytest>=7.0
+ruff>=0.5
 mypy>=1.10
 
-
-# NVIDIA packages
---extra-index-url https://pypi.nvidia.com
-cuml-cu12
-
-# PyTorch packages (使用 --extra-index-url 而不是 --index-url)
---extra-index-url https://download.pytorch.org/whl/cu126
-torch 
-torchvision
-torchmetrics
+# Optional-feature deps so the advertised commands are testable
+pynwb>=2.5        # castle ethogram export-nwb
+hdbscan>=0.8.33   # HDBSCAN clustering backend

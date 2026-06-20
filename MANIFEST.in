@@ -1,0 +1,12 @@
+include LICENSE.txt
+include README.md
+include requirements.txt
+include requirements-colab.txt
+
+# Vendored third-party license notices (must ship for redistribution):
+#   castle/aot  → DeAOT, BSD-3-Clause
+#   castle/sam  → Segment Anything, Apache-2.0
+recursive-include castle/aot LICENSE MODEL_ZOO.md README.md
+recursive-include castle/sam LICENSE
+
+global-exclude *.py[cod] __pycache__/* .DS_Store

@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, dev]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint + unit tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install CPU PyTorch (avoid the large CUDA wheels on CI)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install CASTLE (CPU core + dev tooling)
+        # cuml/xformers live in the [gpu] extra and are intentionally NOT
+        # installed here — the clustering backend falls back to sklearn/umap-learn
+        # on CPU, which is what the unit suite exercises.
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff — CASTLE QC rule set, non-vendored)
+        # F821 (undefined name) added to the historic QC set: it statically
+        # catches missing imports / typo'd names that import-smoke misses when the
+        # bad name is inside a function body (only hit at call time).
+        run: ruff check castle/ --exclude thirdparty,aot,sam,dinov2 --select E722,T201,B006,F401,F841,F821
+
+      - name: Import smoke (non-vendored modules import cleanly)
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil, sys
+          import castle
+          SKIP = ("castle.aot", "castle.sam", "castle.utils.myumap")  # vendored / cuML-only
+          failed = []
+          for mod in pkgutil.walk_packages(castle.__path__, "castle."):
+              name = mod.name
+              if any(name == s or name.startswith(s + ".") for s in SKIP):
+                  continue
+              try:
+                  importlib.import_module(name)
+              except Exception as exc:  # noqa: BLE001
+                  failed.append(f"{name}: {type(exc).__name__}: {exc}")
+          if failed:
+              print("Import failures:\n  " + "\n  ".join(failed))
+              sys.exit(1)
+          print("All non-vendored modules imported cleanly.")
+          PY
+
+      - name: Unit tests (excludes GPU/model integration tests)
+        run: pytest -m "not integration" -q

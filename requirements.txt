@@ -24,7 +24,9 @@ umap-learn>=0.5,<1.0
 # UI
 gradio>=4.0,<7.0
 
-# HuggingFace (DINOv3 loaded from official hub, replaces gdown for that model)
+# transformers / huggingface-hub: pulled in transitively by torch.hub-loaded
+# DINO backbones. DINOv3 *weights* are still fetched via gdown (Google Drive) —
+# see castle/core/models.py:DINOv3Encoder.load_model and config.py CKPT_DINO_IDS.
 transformers>=4.45.0
 huggingface-hub>=0.24
 

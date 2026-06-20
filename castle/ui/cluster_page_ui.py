@@ -38,6 +38,7 @@ from castle.ui.cluster_handlers import (
     build_prepare_handler,
     list_prepare_choices,
 )
+from castle.core.config import get_color_mode, set_color_mode
 from castle.ui.progress_ui import init_cancel_event, request_cancel
 from castle.ui.video_select import build_video_selector, wire_video_selector
 
@@ -450,6 +451,15 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
                         value="<em style='color:#888;font-size:12px'>No clusters yet.</em>",
                         label="Cluster Tree",
                     )
+                    # Colour-vision toggle: flips the unified palette mode for the
+                    # whole tool. The tree recolours immediately; figures/scatter
+                    # recolour on their next render.
+                    ui['color_mode_radio'] = gr.Radio(
+                        choices=[("Colorblind-safe", "colorblind"), ("Vibrant", "normal")],
+                        value=get_color_mode(),
+                        label="Colour vision",
+                        container=True,
+                    )
                     # Hidden textbox — JS onclick on tree nodes writes here via native
                     # value setter + input/change event dispatch (castleTreeClick in
                     # main_ui.py).  We use CSS to hide rather than visible=False
@@ -609,6 +619,20 @@ def create_cluster_page_ui(storage_path, project_name, cluster_page_tab):
     ).then(
         fn=collapse_accordion,
         outputs=ui['cluster_input_accordion']
+    )
+
+    # Colour-vision toggle → set the unified palette mode + re-render the tree.
+    def _on_color_mode_change(mode, lat):
+        try:
+            set_color_mode(mode)
+        except ValueError:
+            pass
+        return update_select_cluster_list(lat)
+
+    ui['color_mode_radio'].change(
+        fn=_on_color_mode_change,
+        inputs=[ui['color_mode_radio'], latents],
+        outputs=[ui['cluster_tree_html'], ui['cluster_tree_select']],
     )
 
     # Restore previous session (B-03: also restores UMAP embedding)

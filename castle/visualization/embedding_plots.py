@@ -102,7 +102,11 @@ def plot_named_embedding(embedding: np.ndarray,
             if not mask.any():
                 continue
             if cid in export:
-                c = export[cid]['color'] or palette_fn(cid)
+                # Named cluster: an empty stored colour resolves live by NAME
+                # (mode-aware, matches the tree/ethogram), not the positional
+                # local-id fallback — so the named view agrees with the figures.
+                from castle.core.config import color_for_name
+                c = export[cid]['color'] or color_for_name(export[cid]['name'])
                 label = export[cid]['name']
             else:
                 # A real (cid >= 0) but not-yet-named cluster: use its own

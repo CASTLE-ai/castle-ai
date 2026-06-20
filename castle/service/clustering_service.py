@@ -579,12 +579,15 @@ class ClusteringSession:
         id_df = pd.read_csv(id_csv_path)
         for _, row in id_df.iterrows():
             cluster_id = int(row['Id'])
-            color = row.get('Color', 'grey')
+            # An engine-default colour is stored as an empty cell, which pandas
+            # reads back as NaN — coerce to '' so it resolves live by name.
+            raw = row.get('Color', '')
+            color = raw if isinstance(raw, str) and raw.strip().lower() != 'nan' else ''
             self.latents.cluster_meta[cluster_id] = {
                 'name': row['Name'], 'color': color
             }
             self.latents.behavior_name2cluster_id[row['Name']] = cluster_id
-            if color != 'grey':
+            if color and color != 'grey':
                 self.latents.used_palette.add(color)
         self.latents.num_cluster = len(id_df)
         
@@ -773,7 +776,7 @@ def restore_local_latent_from_npz(
             for nm, col in name_to_color.items():
                 if nm.startswith(prefix) and col:
                     return col
-            return '#888888'  # neutral grey; plot_named_embedding also guards against ''
+            return ''  # engine default — resolved live by name at render time
 
         # The filename encodes child names in sorted-cluster-ID order (see the
         # submit() writer). Re-pair them to cluster IDs by that order, NOT by
@@ -1358,10 +1361,12 @@ def restore_session_from_disk(
         id_df = pd.read_csv(id_csv_path)
         for _, row in id_df.iterrows():
             cluster_id = int(row['Id'])
-            color = row.get('Color', 'grey')
+            # Empty (engine-default) colour cell reads back as NaN -> coerce to ''.
+            raw = row.get('Color', '')
+            color = raw if isinstance(raw, str) and raw.strip().lower() != 'nan' else ''
             latents.cluster_meta[cluster_id] = {'name': row['Name'], 'color': color}
             latents.behavior_name2cluster_id[row['Name']] = cluster_id
-            if color != 'grey':
+            if color and color != 'grey':
                 latents.used_palette.add(color)
         latents.num_cluster = len(id_df)
 

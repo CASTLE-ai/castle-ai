@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Union
 import numpy as np
 
 from castle.core.environment import get_device
-from castle.core.config import PALETTE_HEX
+from castle.core.config import (
+    PALETTE_HEX, GREY_UNLABELED, palette_color, color_for_name,
+)
 from castle.core.types import CastleDataError, InsufficientDataError
 
 if TYPE_CHECKING:
@@ -115,33 +117,26 @@ _palette = PALETTE_HEX * 5
 
 
 def generate_distinct_color(index, saturation=0.7):
-    """A visually distinct colour for cluster ``index`` via the golden-ratio hue
-    sequence — unlimited non-repeating colours (vs the old fixed 62-colour
-    palette, which repeated and, after ancestor-colour avoidance, collapsed to a
-    few near-identical pales). Lightness cycles over a few levels so even many
-    clusters with near-equal hues stay separable. ``-1`` is handled by callers.
+    """Distinct colour for cluster ``index`` via the unified mode-aware palette.
+
+    Delegates to :func:`castle.core.config.palette_color`, so the live scatter
+    shares the SAME ladder (and normal/colorblind mode) as the publication
+    figures and the cluster tree. ``saturation`` is accepted for backwards
+    compatibility but ignored (the ladder fixes its own colours). ``-1`` is
+    handled by callers.
     """
-    import colorsys
-    i = int(index)
-    hue = (i * 0.618033988749895) % 1.0
-    value = (0.95, 0.75, 0.87, 0.68)[i % 4]   # vary lightness to split near hues
-    rgb = colorsys.hsv_to_rgb(hue, saturation, value)
-    return '#{:02x}{:02x}{:02x}'.format(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+    return palette_color(int(index))
 
 
 def _color_for_name(name: str) -> str:
-    """Stable distinct colour derived from a cluster's NAME.
+    """Stable, mode-aware colour derived from a cluster's NAME.
 
-    Used identically by the live labelling scatter
-    (:meth:`LocalLatent.label_cluster`) and the persisted tree / ethogram
-    (:meth:`Latent.import_local_latent`) so a cluster keeps the SAME colour from
-    the moment it is labelled through Submit. The hierarchical name is unique
-    across the tree, so this also keeps siblings distinct — unlike colouring by
-    the per-node local DBSCAN id (which restarts at 0 under every parent).
+    Thin alias for :func:`castle.core.config.color_for_name` (kept for the many
+    in-module callers). The hierarchical name is unique across the tree, so a
+    cluster keeps the same colour from labelling through Submit and siblings
+    stay distinct.
     """
-    import hashlib
-    idx = int(hashlib.md5(name.encode("utf-8")).hexdigest()[:8], 16)
-    return generate_distinct_color(idx)
+    return color_for_name(name)
 
 
 def generate_palette(avoid):
@@ -299,10 +294,13 @@ class Latent:
         self.need_maintain_key_frames = False
 
     def palette(self, c):
-        if c in self.cluster_meta:
-            return self.cluster_meta[c]['color']
-        else:
-            return 'grey'
+        meta = self.cluster_meta.get(c)
+        if meta is None:
+            return GREY_UNLABELED
+        # An empty stored colour means "engine default" — resolve it live by name
+        # in the active mode so a colour-mode toggle recolours this cluster. A
+        # stored hex is a user override (or a legacy frozen colour) and wins.
+        return meta.get('color') or color_for_name(meta.get('name', ''))
 
     def plot_syllables(self):
         """Plot behavioral syllables timeline. Delegates to castle.visualization."""
@@ -387,15 +385,20 @@ class Latent:
             # user-set custom colour (differing from the name default) is kept;
             # if the name was auto-suffixed to avoid a collision, the new name's
             # colour is used (a genuinely different cluster).
+            # Persist only a GENUINE user override (a colour the user picked,
+            # differing from the name default). Otherwise store '' = "engine
+            # default": the colour is resolved live by name at render time, so a
+            # colour-mode toggle recolours it. (Legacy projects keep their frozen
+            # hex on load; only newly-labelled clusters store '').
             name_default = _color_for_name(it['name'])
-            color = it['color'] if it.get('color') and it['color'] != name_default \
-                else _color_for_name(incoming_name)
+            color = it['color'] if (it.get('color') and it['color'] != name_default) else ''
             self.cluster_meta[cluster_id] = {
                 'name': incoming_name,
                 'color': color,
             }
             self.behavior_name2cluster_id[incoming_name] = cluster_id
-            self.used_palette.add(color)
+            if color:
+                self.used_palette.add(color)
 
         self.cluster[index_mask] = old_cluster
 
@@ -826,12 +829,12 @@ class LocalLatent:
 
 
     def label_cluster(self, cluster_id, cluster_name, cluster_color=''):
-        # Colour by NAME (not local id) so the live scatter matches the colour
-        # the persisted tree/ethogram will use after Submit (import_local_latent
-        # colours by the same name-derived key). A user-set colour wins.
+        # Store only a user-set colour; '' means "engine default", resolved live
+        # by name at render time (so a colour-mode toggle recolours it) and
+        # carried through import_local_latent identically.
         self.export[cluster_id] = {
             'name': cluster_name,
-            'color': cluster_color or _color_for_name(cluster_name),
+            'color': cluster_color or '',
         }
     
     def clean_label(self):

@@ -251,8 +251,11 @@ def generate_ethogram_video(
                     color_bgr = _hex_to_bgr(merged_color_map.get(cluster_id, "#808080"))
                     label = merged_label_map.get(cluster_id, f"cluster {cluster_id}")
                 else:
-                    color_bgr = _hex_to_bgr(meta.get("color", "#808080"))
                     bm_name = meta.get("name", "")
+                    # Resolve an empty (engine-default) colour live by name so the
+                    # overlay video matches the figures' mode-aware palette.
+                    from castle.core.config import color_for_name
+                    color_bgr = _hex_to_bgr(meta.get("color") or color_for_name(bm_name))
                     label = behavior_labels.get(bm_name) or bm_name or f"cluster {cluster_id}"
 
                 # Fix 2: track contour bounding box to anchor label near ROI
@@ -428,8 +431,6 @@ def _build_annotation_remap(annotator_data, annotations: dict):
         merged_names  – Dict[int, str] synthetic_id → display name
         merged_colors – Dict[int, str] synthetic_id → hex color (#rrggbb)
     """
-    from castle.core.config import PALETTE_HEX
-
     cid_to_label: dict = {}
     for cid, meta in (annotator_data.cluster_meta or {}).items():
         bm_name = meta.get("name", "")
@@ -446,14 +447,16 @@ def _build_annotation_remap(annotator_data, annotations: dict):
     label_remap = {cid: label_to_synth[lbl] for cid, lbl in cid_to_label.items()}
     merged_names = {sid: lbl for lbl, sid in label_to_synth.items()}
 
-    palette = PALETTE_HEX
+    # Colour merged annotation labels through the unified mode-aware engine so
+    # this view matches the figures; "Unannotated" stays neutral grey.
+    from castle.core.config import palette_color
     merged_colors: dict = {}
     palette_idx = 0
     for lbl, sid in label_to_synth.items():
         if lbl == "Unannotated":
             merged_colors[sid] = "#aaaaaa"
         else:
-            merged_colors[sid] = palette[palette_idx % len(palette)]
+            merged_colors[sid] = palette_color(palette_idx)
             palette_idx += 1
 
     return label_remap, merged_names, merged_colors

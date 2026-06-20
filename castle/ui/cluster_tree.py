@@ -13,8 +13,24 @@ have been split — they exist only as name prefixes of their children.
 This module synthesises them for display and computes cumulative counts.
 """
 
+import re
 from collections import Counter
 from typing import Dict, Optional
+
+from castle.core.config import color_for_name
+
+# Only #RRGGBB or a short safe CSS keyword may go into an inline style, so a
+# malformed stored colour can't inject markup.
+_HEX_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def _safe_swatch_color(stored: str, name: str) -> str:
+    """Resolve a cluster's display colour: a stored override (validated) else the
+    mode-aware engine colour for its name. Falls back to grey on anything odd."""
+    candidate = stored or color_for_name(name)
+    if candidate == 'grey' or _HEX_RE.match(candidate or ''):
+        return candidate
+    return 'grey'
 
 
 def _infer_all_nodes(real_names: set) -> set:
@@ -184,8 +200,14 @@ def build_cluster_tree_html(cluster_meta: dict, cluster_array) -> str:
         if info['is_container']:
             icon = '📂'
         else:
-            color = (info['meta'] or {}).get('color', 'grey')
-            icon = '🟢' if color != 'grey' else '📁'
+            # Show the cluster's actual (mode-aware) colour as a swatch dot,
+            # resolving an empty stored colour live by name.
+            swatch = _safe_swatch_color((info['meta'] or {}).get('color', ''), name)
+            icon = (
+                f'<span style="display:inline-block;width:11px;height:11px;'
+                f'border-radius:50%;background:{swatch};'
+                f'border:1px solid rgba(0,0,0,0.25)"></span>'
+            )
 
         safe_name = name.replace("'", "\\'")
         rows.append(

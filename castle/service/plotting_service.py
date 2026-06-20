@@ -95,9 +95,12 @@ def plot_syllables_per_video(latents: Any, aggregator: Any):
     axes = axes.flatten()
 
     def palette(c):
-        if c in cluster_meta:
-            return cluster_meta[c]['color']
-        return 'grey'
+        meta = cluster_meta.get(c)
+        if meta is None:
+            return 'grey'
+        # Empty (engine-default) colour resolves live by name in the active mode.
+        from castle.core.config import color_for_name
+        return meta.get('color') or color_for_name(meta.get('name', ''))
 
     # Expand per-datapoint labels to ORIGINAL frames via the FrameIndexMap so the
     # seconds-axis is correct for both legacy (bin) and prepared (decimated)

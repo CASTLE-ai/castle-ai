@@ -20,6 +20,8 @@ from typing import Any, Tuple
 
 import numpy as np
 
+from castle.visualization.embedding_scatter import EmbeddingScatterPlot
+
 __all__ = [
     "build_scatter_plot",
     "build_named_scatter_plot",
@@ -41,8 +43,6 @@ def build_scatter_plot(local_latents: Any) -> Tuple[Any, np.ndarray]:
         ``np.ndarray`` ready to hand to Gradio's :class:`~gradio.Image`
         component.
     """
-    from castle.ui.embedding_scatter import EmbeddingScatterPlot
-
     plot = EmbeddingScatterPlot(local_latents)
     return plot, plot.plot()
 
@@ -58,8 +58,6 @@ def build_named_scatter_plot(local_latents: Any) -> Tuple[Any, np.ndarray]:
     Returns:
         ``(scatter_plot, image)``.
     """
-    from castle.ui.embedding_scatter import EmbeddingScatterPlot
-
     plot = EmbeddingScatterPlot(local_latents)
     return plot, plot.plot_named_embedding()
 

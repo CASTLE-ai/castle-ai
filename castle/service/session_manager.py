@@ -170,7 +170,7 @@ class SessionManager:
         return os.path.join(self.sessions_path, session_id)
     
     # Files that belong to a session and must be synced on snapshot / activate.
-    _SESSION_PATTERNS = ['cluster_*.npz', 'time_series_*.csv', 'node_*_meta.json']
+    _SESSION_PATTERNS = ['cluster_*.npz', 'time_series_*.csv', 'time_series_*.meta.json', 'node_*_meta.json']
     _SESSION_FILES    = ['id.csv']
 
     def _clear_cluster_root(self) -> None:

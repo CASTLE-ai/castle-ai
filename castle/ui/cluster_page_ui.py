@@ -3,7 +3,7 @@ castle/ui/cluster_page_ui.py
 UI Layer for Clustering — layout construction and event binding only.
 
 Heavy logic has been extracted to:
-  - castle.ui.embedding_scatter   (EmbeddingScatterPlot)
+  - castle.visualization.embedding_scatter (EmbeddingScatterPlot)
   - castle.ui.cluster_handlers    (event handler functions)
   - castle.ui.cluster_tree        (build_cluster_tree_html, build_cluster_tree_choices)
 """

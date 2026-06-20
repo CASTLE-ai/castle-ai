@@ -50,6 +50,11 @@ def run(
         notify=notify,
     )
 
+    # Start a fresh, UI-restorable session (clears stale cluster/ files + writes
+    # a manifest) so this run shows up in the Behavior Microscope UI.
+    session_id = session.start_new_session()
+    console.print(f"  Session: {session_id}")
+
     # Parse UMAP config
     try:
         cfg = json.loads(umap_config)
@@ -78,8 +83,11 @@ def run(
         f"{dbscan_result['noise_count']} noise points"
     )
 
-    # Auto-label all
-    count = session.auto_label_all("root")
+    # Auto-label all. Parent defaults to the clustered node ('init'), so children
+    # are named 'init_a0', 'init_a1', … — identical to the UI's hierarchy (the UI
+    # uses the selected node's name as the parent), which keeps node_*_meta.json
+    # and cluster_*.npz names consistent across CLI and UI for restore.
+    count = session.auto_label_all()
     console.print(f"  Auto-labeled {count} clusters")
 
     # Submit
@@ -95,6 +103,11 @@ def run(
     for p in submit_result.get('srt_paths', []):
         console.print(f"[green]✓[/green] Subtitle: {p}")
     console.print(f"[green]✓[/green] Embedding: {submit_result['embedding_path']}")
+    if submit_result.get('session_id'):
+        console.print(
+            f"[green]✓[/green] Session: {submit_result['session_id']} "
+            "(restorable in the Behavior Microscope UI)"
+        )
     console.print("\n[green bold]Clustering complete![/green bold]")
 
 
@@ -312,7 +325,7 @@ def suggest(
     """Heuristic HDBSCAN / DBSCAN starting parameters for first-time users.
 
     The suggestion follows B-SOiD / MoSeq conventions (smallest cluster ≥
-    ~0.5%% of samples). Sweep ``eps_range`` interactively in the Behavior
+    ~0.5% of samples). Sweep ``eps_range`` interactively in the Behavior
     Microscope before exporting — these are anchors, not paper-grade
     defaults.
     """

@@ -1,7 +1,8 @@
 """
-castle/ui/embedding_scatter.py
+castle/visualization/embedding_scatter.py
 EmbeddingScatterPlot — pure data/plotting class for embedding visualization.
-No Gradio dependency.
+No Gradio dependency (lives under castle.visualization so the service layer can
+import it without reaching up into castle.ui).
 """
 
 import io
@@ -118,8 +119,14 @@ class EmbeddingScatterPlot:
         is_sampled = np.zeros(n_samples, dtype=bool)
         is_sampled[index_mask] = local_sampled
 
-        np.savez_compressed(save_path, emb=emb, cls=cls, config=config,
-                            is_sampled=is_sampled)
+        # Provenance: record the resolved software/hardware stack so the cluster
+        # artifact is self-describing and matches the CLI submit path's npz.
+        import json
+        from castle.core.environment import collect_run_environment
+        np.savez_compressed(
+            save_path, emb=emb, cls=cls, config=config, is_sampled=is_sampled,
+            run_environment=np.array([json.dumps(collect_run_environment())]),
+        )
     
     def click(self, x, y):
         x, y = self.pixel_2_embedding(x, y)

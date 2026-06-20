@@ -480,7 +480,7 @@ def label_all_and_submit(
     """
     from castle.core.types import InsufficientDataError
     from castle.service.clustering_service import (
-        auto_label_local_clusters, load_node_meta,
+        auto_label_local_clusters,
     )
 
     # No-op for the 9 display outputs (syllables, tree_html, tree_select, csvs,
@@ -507,7 +507,6 @@ def label_all_and_submit(
     # or created before the sidecar feature has children but no sidecar, and the
     # old sidecar-gated check skipped overwrite for it — re-submitting then piled
     # up _N-suffixed duplicate children instead of replacing them.
-    cluster_path = os.path.join(storage_path or '', project_name or '', 'cluster')
     prefix = parent_name + '_'
     children_to_delete = sorted([
         n for n in latents.behavior_name2cluster_id

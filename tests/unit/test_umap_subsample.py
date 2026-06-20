@@ -23,7 +23,7 @@ from castle.utils.latent_explorer import (
     _knn_sampled,
 )
 from castle.service.clustering_service import run_umap_on_cluster, run_dbscan_on_local
-from castle.ui.embedding_scatter import EmbeddingScatterPlot
+from castle.visualization.embedding_scatter import EmbeddingScatterPlot
 
 
 def _two_blobs(n: int, width: int = 8, sep: float = 8.0, seed: int = 0) -> np.ndarray:
@@ -276,6 +276,8 @@ def test_saved_npz_is_sampled_marks_only_sampled_rows():
         assert z["is_sampled"].dtype == bool
         assert int(z["is_sampled"].sum()) == 200   # only the sampled rows
         assert z["emb"].shape == (500, 2) and z["cls"].shape == (500,)
+        # provenance stamped into the cluster npz (matches the CLI submit path)
+        assert "run_environment" in z.files
         # the legacy export filter trains on sampled rows only
         frame_sampled = np.repeat(z["is_sampled"], 1)
         valid = ~np.isnan(z["emb"]).any(axis=1)

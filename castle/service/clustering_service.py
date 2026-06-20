@@ -8,13 +8,12 @@ without depending on Gradio.
 No gradio imports.
 """
 
-import glob
 import os
 import json
 import logging
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Callable, Any, Tuple
 
 import numpy as np
@@ -25,12 +24,146 @@ from castle.core.cluster import LatentAggregator, auto_generate_cluster_name
 from castle.core.logging_config import setup_logger
 from castle.core.types import CastleDataError, InsufficientDataError
 from castle.service.session_manager import SessionManager
+# The cluster_*.npz filename grammar + node-meta sidecar lookup were extracted to
+# castle/service/cluster_npz.py (this module was a 1876-line god-module). Re-export
+# them so internal callers and `from castle.service.clustering_service import ...`
+# keep working unchanged.
+from castle.service.cluster_npz import (  # noqa: F401
+    load_node_meta,
+    _parent_from_cluster_filename,
+    find_cluster_npz_for_parent,
+    _embedding_npz_files,
+    find_latest_cluster_npz,
+    _extract_child_names_from_filename,
+)
+# Heuristic param suggester also extracted; re-exported for the CLI importer.
+from castle.service.cluster_params import (  # noqa: F401
+    ClusteringParamSuggestion,
+    suggest_clustering_params,
+)
+# Cluster-transfer model save/apply extracted to cluster_persistence; re-exported
+# so the UI/CLI/test importers (`from clustering_service import ...`) keep working.
+from castle.service.cluster_persistence import (  # noqa: F401
+    save_project_cluster_model,
+    apply_cluster_model_to_project,
+)
 from castle.utils.latent_explorer import LocalLatent
 
 # setup_logger attaches an INFO StreamHandler (the module previously used a bare
 # getLogger, so its INFO lines — incl. the [UMAP timing] log — were dropped when
 # the app left root logging at the default WARNING).
 logger = setup_logger(__name__)
+
+
+def build_timeseries_meta(fps: float, cluster_id_to_name: dict, n_frames: int) -> dict:
+    """Self-describing sidecar metadata for a per-video ``time_series_*.csv``.
+
+    The CSV has one row per ORIGINAL video frame with columns ``behavior``
+    (per-frame cluster id; ``-1`` = unclustered) and ``exclude_reason`` (a
+    per-frame exclusion-reason code). On its own the CSV has no frame→time
+    mapping and no cluster-id→name lookup, so it isn't usable as a standalone
+    supplementary-data file. This sidecar records fps, the name map, and the
+    CASTLE version so the CSV is interpretable independently.
+    """
+    import castle
+    return {
+        "schema_version": 1,
+        "castle_version": getattr(castle, "__version__", "unknown"),
+        "fps": float(fps),
+        "n_frames": int(n_frames),
+        "time_seconds": "frame_index / fps",
+        "columns": {
+            "behavior": "per-frame cluster id (-1 = unclustered)",
+            "exclude_reason": "per-frame exclusion-reason code",
+        },
+        "cluster_id_to_name": {int(k): str(v) for k, v in cluster_id_to_name.items()},
+    }
+
+
+def _write_id_csv(cluster_meta: dict, cluster_path: str) -> str:
+    """Write the cluster ``id.csv`` (``Id``/``Name``/``Color``) from cluster_meta.
+
+    Shared by both submit paths (CLI ``ClusteringSession.submit`` and UI
+    ``submit_local_to_global``) so the cluster table is identical and cannot
+    diverge. Returns the written path.
+    """
+    df = pd.DataFrame({
+        'Id': [k for k in cluster_meta],
+        'Name': [v['name'] for v in cluster_meta.values()],
+        'Color': [v['color'] for v in cluster_meta.values()],
+    })
+    id_csv_path = os.path.join(cluster_path, 'id.csv')
+    df.to_csv(id_csv_path, index=False)
+    return id_csv_path
+
+
+def _write_timeseries_csvs(latents, aggregator, cluster_path: str) -> list:
+    """Write per-video ``time_series_*.csv`` (``behavior`` + ``exclude_reason``)
+    plus a self-describing ``.meta.json`` sidecar for each video.
+
+    Bins are expanded to original frames via the aggregator's FrameIndexMap (the
+    legacy ``for_window(1)`` map reproduces ``np.repeat(., bin_size)``; the
+    prepared map handles decimation + windowing). Shared by BOTH submit paths —
+    ``ClusteringSession.submit`` (CLI) and ``submit_local_to_global`` (UI) — so the
+    two frontends emit byte-identical time_series artifacts and cannot re-diverge.
+
+    Args:
+        latents: global Latent (provides ``cluster``, ``data``, ``cluster_meta``,
+            ``time_window``).
+        aggregator: LatentAggregator (provides ``videos_meta``,
+            ``frame_index_map``, ``fps_per_video``, ``fps``).
+        cluster_path: ``<project>/cluster/`` output directory.
+
+    Returns:
+        List of written ``time_series_*.csv`` paths (one per video).
+    """
+    from castle.core.ethogram import derive_exclude_reason
+    try:
+        reason_bins = derive_exclude_reason(latents.cluster, latents.data)
+    except Exception as exc:  # never block submit; fall back to "not excluded" (0)
+        logger.warning(
+            "submit: could not derive exclude_reason (%s); defaulting to 0.", exc
+        )
+        reason_bins = np.zeros(len(latents.cluster), dtype=np.int8)
+
+    fim = aggregator.frame_index_map
+    ts_paths: list = []
+    cum = 0
+    for video_idx, (vn, v) in enumerate(aggregator.videos_meta):
+        video_cluster = latents.cluster[cum:cum + vn]
+        video_reason = reason_bins[cum:cum + vn]
+        if fim is not None:
+            video_frames = fim.expand_labels_to_orig(video_cluster, video_idx)
+            video_reason_frames = fim.expand_labels_to_orig(video_reason, video_idx)
+        else:
+            video_frames = np.repeat(video_cluster, latents.time_window)
+            video_reason_frames = np.repeat(video_reason, latents.time_window)
+        df2 = pd.DataFrame({
+            'behavior': video_frames,
+            'exclude_reason': video_reason_frames,
+        })
+        video_basename = os.path.splitext(os.path.basename(v))[0]
+        ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
+        df2.to_csv(ts_path, index=False)
+        ts_paths.append(ts_path)
+        # Self-describing sidecar (fps/units/cluster-name map). Best-effort.
+        try:
+            video_fps = aggregator.fps_per_video.get(v, aggregator.fps)
+            meta = build_timeseries_meta(
+                video_fps,
+                {cid: m.get('name', f'cluster_{cid}')
+                 for cid, m in latents.cluster_meta.items()},
+                len(video_frames),
+            )
+            meta_path = os.path.join(
+                cluster_path, f'time_series_{video_basename}.meta.json'
+            )
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+        except (OSError, AttributeError) as exc:
+            logger.warning("Could not write time_series meta sidecar: %s", exc)
+        cum += vn
+    return ts_paths
 
 
 class ClusteringSession:
@@ -70,9 +203,13 @@ class ClusteringSession:
         self.roi = roi
         self.bin_size = bin_size
         self.model = model
+        # Prepared-cache provenance — persisted into the session manifest so a
+        # CLI run restores in the UI with the identical PCA slice (see submit()).
+        self._prepare_id = prepare_id
+        self._k_prime = k_prime
         self._notify = notify or (lambda msg, level='info': logger.log(
             logging.WARNING if level == 'error' else logging.INFO, msg))
-        
+
         # Initialize aggregator (prepared cache when prepare_id is given)
         self.aggregator = LatentAggregator(
             storage_path, project_name, roi, bin_size,
@@ -81,13 +218,18 @@ class ClusteringSession:
             prepare_id=prepare_id,
             k_prime=k_prime,
         )
-        
+
         # Create Latent explorer object
         self.latents = self.aggregator.get_latent_object()
-        
+
         # Working state
         self.local_latents: Optional[LocalLatent] = None
         self._current_cluster_name: Optional[str] = None
+        # Run parameters captured so submit() can write the same node_*_meta.json
+        # sidecar the UI writes (lets the UI restore umap_config/eps/seed).
+        self._last_umap_config: Any = None
+        self._last_umap_seeds: List[int] = []
+        self._last_eps: Optional[float] = None
     
     @property
     def cluster_names(self) -> List[str]:
@@ -135,6 +277,7 @@ class ClusteringSession:
             umap_config = json.loads(umap_config)
 
         self._current_cluster_name = cluster_name
+        self._last_umap_config = umap_config
         self.local_latents = self.latents.select(selected_cluster=cluster_name)
 
         if len(self.local_latents.data) == 0:
@@ -145,6 +288,7 @@ class ClusteringSession:
         resolved_seeds = self.local_latents.build_embedding(
             umap_config, base_seed=base_seed, log_path=log_path,
         )
+        self._last_umap_seeds = list(resolved_seeds)
 
         return {
             'n_points': len(self.local_latents.data),
@@ -169,7 +313,8 @@ class ClusteringSession:
         """
         if self.local_latents is None or not hasattr(self.local_latents, 'embedding'):
             return {'success': False, 'error': 'Run UMAP first'}
-        
+
+        self._last_eps = eps
         self.local_latents.build_cluster(method='dbscan', configs={'eps': eps})
         
         unique = np.unique(self.local_latents.cluster)
@@ -223,7 +368,104 @@ class ClusteringSession:
             count += 1
         
         return count
-    
+
+    def start_new_session(self, *, variance_pct: Optional[float] = None,
+                          name: str = "") -> str:
+        """Begin a fresh, UI-restorable clustering session.
+
+        Mirrors the UI's ``init_aggregator``: clears the ``cluster/`` root of any
+        stale session files, then registers a :class:`SessionManager` session +
+        ``manifest.json`` so a completed CLI run appears in — and can be restored
+        from — the Behavior Microscope UI. Call once before ``run_umap``.
+
+        Returns:
+            The new ``session_id`` (e.g. ``"session_003"``).
+        """
+        mgr = SessionManager(self.storage_path, self.project_name)
+        mgr._clear_cluster_root()
+        total_frames = (
+            len(self.aggregator.latents)
+            if self.aggregator.latents is not None else 0
+        )
+        info = mgr.create_session(
+            model=self.model,
+            roi_id=int(self.roi) if self.roi else 1,
+            bin_size=int(self.bin_size),
+            total_frames=total_frames,
+            name=name,
+            prepare_id=self._prepare_id,
+            k_prime=self._k_prime,
+            variance_pct=variance_pct,
+        )
+        return info.session_id
+
+    def _write_node_meta(self, cluster_path: str, embedding_path: str) -> None:
+        """Write the ``node_{parent}_meta.json`` sidecar the UI uses on restore.
+
+        Payload is byte-for-byte the shape produced by the UI submit path
+        (:func:`submit_local_to_global`) so a CLI-produced node restores its
+        umap_config / eps / seed when reclicked in the Behavior Microscope.
+        """
+        parent = self._current_cluster_name
+        if not parent:
+            return
+        umap_config_str = (
+            json.dumps(self._last_umap_config)
+            if self._last_umap_config is not None else None
+        )
+        meta_path = os.path.join(cluster_path, f'node_{parent}_meta.json')
+        meta_payload = {
+            'parent_cluster_name': parent,
+            'umap_config': umap_config_str,
+            'eps': self._last_eps,
+            'min_samples': None,  # CLI run_dbscan uses eps only
+            'preset': None,
+            'umap_seed': self._last_umap_seeds[0] if self._last_umap_seeds else None,
+            'embedding_npz': (
+                os.path.basename(embedding_path) if embedding_path else None
+            ),
+        }
+        try:
+            with open(meta_path, 'w') as f:
+                json.dump(meta_payload, f, indent=2)
+        except OSError as e:
+            logger.warning("Failed to persist node meta sidecar %s: %s",
+                           meta_path, e)
+
+    def _snapshot_to_session(self) -> Optional[str]:
+        """Snapshot the current ``cluster/`` artifacts into the active session.
+
+        If no session is active (e.g. ``submit`` was called via the service API
+        without :meth:`start_new_session`), one is created on the fly so the run
+        is still UI-restorable. Returns the session id used, or ``None`` on error.
+        """
+        try:
+            mgr = SessionManager(self.storage_path, self.project_name)
+            active_id = mgr.get_active_session_id()
+            if not active_id:
+                total_frames = (
+                    len(self.aggregator.latents)
+                    if self.aggregator.latents is not None else 0
+                )
+                active_id = mgr.create_session(
+                    model=self.model,
+                    roi_id=int(self.roi) if self.roi else 1,
+                    bin_size=int(self.bin_size),
+                    total_frames=total_frames,
+                    prepare_id=self._prepare_id,
+                    k_prime=self._k_prime,
+                ).session_id
+            mgr.snapshot_to_session(active_id)
+            n_clusters = len([
+                k for k in self.latents.cluster_meta
+                if self.latents.cluster_meta[k].get('name') != 'init'
+            ])
+            mgr.save_session_state(active_id, n_clusters)
+            return active_id
+        except Exception as e:  # noqa: BLE001 — snapshot is best-effort, never fail submit
+            logger.warning("Failed to snapshot CLI session: %s", e)
+            return None
+
     def submit(self) -> dict:
         """
         Import labeled local clusters into the global latent and export results.
@@ -246,46 +488,12 @@ class ClusteringSession:
         cluster_path = os.path.join(self.storage_path, self.project_name, 'cluster')
         os.makedirs(cluster_path, exist_ok=True)
         
-        df1 = pd.DataFrame({
-            'Id': [k for k in self.latents.cluster_meta],
-            'Name': [v['name'] for v in self.latents.cluster_meta.values()],
-            'Color': [v['color'] for v in self.latents.cluster_meta.values()],
-        })
-        id_csv_path = os.path.join(cluster_path, 'id.csv')
-        df1.to_csv(id_csv_path, index=False)
+        id_csv_path = _write_id_csv(self.latents.cluster_meta, cluster_path)
         
         # Generate per-video time_series CSVs at ORIGINAL-frame resolution.
-        # Expansion goes through the aggregator's FrameIndexMap, which maps each
-        # datapoint (legacy bin OR prepared decimated-window) back to the
-        # original frames it covers. The legacy map (for_window(1)) reproduces
-        # np.repeat(., bin_size) exactly; the prepared map handles decimation +
-        # windowing. Both cover [0, n_orig) with no gaps, so this replaces the
-        # old time_window==bin_size invariant guard.
-        from castle.core.ethogram import derive_exclude_reason
-        reason_bins = derive_exclude_reason(self.latents.cluster, self.latents.data)
-
-        fim = self.aggregator.frame_index_map
-        ts_paths = []
-        cum = 0
-        for video_idx, (vn, v) in enumerate(self.aggregator.videos_meta):
-            video_cluster = self.latents.cluster[cum:cum + vn]
-            video_reason = reason_bins[cum:cum + vn]
-            if fim is not None:
-                video_frames = fim.expand_labels_to_orig(video_cluster, video_idx)
-                video_reason_frames = fim.expand_labels_to_orig(video_reason, video_idx)
-            else:
-                video_frames = np.repeat(video_cluster, self.latents.time_window)
-                video_reason_frames = np.repeat(video_reason, self.latents.time_window)
-            df2 = pd.DataFrame({
-                'behavior': video_frames,
-                'exclude_reason': video_reason_frames,
-            })
-
-            video_basename = os.path.splitext(os.path.basename(v))[0]
-            ts_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
-            df2.to_csv(ts_path, index=False)
-            ts_paths.append(ts_path)
-            cum += vn
+        # Per-video time_series_*.csv (+ self-describing meta sidecar), via the
+        # shared writer used by the UI path too (keeps the two paths identical).
+        ts_paths = _write_timeseries_csvs(self.latents, self.aggregator, cluster_path)
         
         # Generate subtitles
         srt_paths = self.aggregator.generate_subtitles(
@@ -323,14 +531,30 @@ class ClusteringSession:
         is_sampled = np.zeros(n_samples, dtype=bool)
         is_sampled[index_mask] = local_sampled
 
-        np.savez_compressed(emb_path, emb=emb_full, cls=cls_full, config=config,
-                            is_sampled=is_sampled)
-        
+        # Record the resolved software/hardware stack (device, cuML vs CPU, lib
+        # versions) into the artifact so a non-reproduction can be told apart
+        # from a backend mismatch (cuML-GPU and CPU UMAP give different
+        # embeddings). Additive key — existing loaders read emb/cls/config only.
+        from castle.core.environment import collect_run_environment
+        np.savez_compressed(
+            emb_path, emb=emb_full, cls=cls_full, config=config,
+            is_sampled=is_sampled,
+            run_environment=np.array([json.dumps(collect_run_environment())]),
+        )
+
+        # #5: node-meta sidecar (parent = the clustered node, e.g. 'init') so the
+        # UI restores umap_config/eps/seed when the node is reclicked. #4: snapshot
+        # the cluster/ artifacts into a SessionManager session so this CLI run is
+        # listed in and restorable from the Behavior Microscope UI.
+        self._write_node_meta(cluster_path, emb_path)
+        session_id = self._snapshot_to_session()
+
         return {
             'id_csv_path': id_csv_path,
             'time_series_paths': ts_paths,
             'srt_paths': srt_paths,
             'embedding_path': emb_path,
+            'session_id': session_id,
             'success': True,
         }
     
@@ -430,239 +654,20 @@ class ClusteringSession:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ClusteringParamSuggestion:
-    """Heuristic clustering parameters for first-time users.
-
-    Attributes:
-        n_samples: Sample count the suggestion was computed for.
-        min_cluster_size: HDBSCAN ``min_cluster_size`` suggestion. Sized
-            so the smallest accepted cluster represents ~0.5% of the
-            data (a B-SOiD / MoSeq convention).
-        min_samples: HDBSCAN ``min_samples`` suggestion. Always smaller
-            than ``min_cluster_size``.
-        eps_range: DBSCAN ``eps`` values worth sweeping interactively.
-    """
-
-    n_samples: int
-    min_cluster_size: int
-    min_samples: int
-    eps_range: List[float] = field(default_factory=list)
-
-
-def suggest_clustering_params(n_samples: int) -> ClusteringParamSuggestion:
-    """Suggest HDBSCAN/DBSCAN starting parameters for ``n_samples`` bins.
-
-    Args:
-        n_samples: Total number of latent samples (bins) the user is
-            about to cluster.
-
-    Returns:
-        :class:`ClusteringParamSuggestion`. Values are heuristics —
-        researchers should sweep ``eps_range`` interactively in the
-        Behavior Microscope rather than trust the suggestion blindly.
-
-    Notes:
-        Rationale: ``min_cluster_size = max(10, n//200)`` keeps the
-        smallest cluster ≥ 0.5% of the data. ``min_samples = max(5,
-        n//500)`` keeps DBSCAN's k-neighbour requirement lower than
-        ``min_cluster_size`` (HDBSCAN expects this). The eps sweep is
-        anchored at 1.0 (the global default, see
-        :data:`castle.defaults.DBSCAN_EPS`) and brackets two octaves on
-        each side.
-    """
-    if n_samples <= 0:
-        raise ValueError(f"n_samples must be positive, got {n_samples}.")
-    return ClusteringParamSuggestion(
-        n_samples=int(n_samples),
-        min_cluster_size=max(10, n_samples // 200),
-        min_samples=max(5, n_samples // 500),
-        eps_range=[0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0],
-    )
+# (ClusteringParamSuggestion + suggest_clustering_params — the heuristic
+# param suggester — now live in castle/service/cluster_params.py and are
+# imported at the top of this module.)
 
 
 # ---------------------------------------------------------------------------
 # Session restore helpers (ARCH-01 / P2-D)
 # ---------------------------------------------------------------------------
 
-def load_node_meta(cluster_path: str, parent_cluster_name: str) -> Optional[dict]:
-    """Return the persisted sidecar metadata for a parent cluster node, or None.
-
-    The sidecar is written by :func:`submit_local_to_global` when the UI
-    submits a fresh round of clustering against a parent node. It holds the
-    UMAP config string and DBSCAN eps used at that submission, plus the
-    basename of the associated ``cluster_*.npz``.
-
-    Args:
-        cluster_path: Directory typically ``<project>/cluster/``.
-        parent_cluster_name: Name of the parent cluster (e.g. ``'init_a0'``).
-
-    Returns:
-        Parsed dict, or ``None`` if the file is missing or malformed.
-    """
-    if not parent_cluster_name:
-        return None
-    meta_path = os.path.join(
-        cluster_path, f'node_{parent_cluster_name}_meta.json'
-    )
-    if not os.path.exists(meta_path):
-        return None
-    try:
-        with open(meta_path, 'r') as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning("Could not read node meta %s: %s", meta_path, e)
-        return None
-
-
-def _parent_from_cluster_filename(
-    basename: str,
-    parent_cluster_name: str,
-) -> bool:
-    """Return True iff ``basename`` is the embedding npz for the supplied
-    parent node.
-
-    The filename is built in :func:`submit_local_to_global` as
-    ``cluster_{c1}_{c2}_..._{ck}_.npz`` where every ``c_i`` is an immediate
-    child of the parent and therefore has ``parent_depth + 1``
-    underscore-segments. Parsing the filename works even after deeper
-    splits have evicted intermediate nodes from ``cluster_meta`` (which
-    is why an export-name based check breaks for non-deepest parents).
-    """
-    if not basename.startswith('cluster_') or not basename.endswith('.npz'):
-        return False
-    if basename == 'cluster_model.npz':
-        return False
-    core = basename[len('cluster_'):-len('.npz')]
-    if not core.endswith('_'):
-        return False
-    segments = core.rstrip('_').split('_')
-    parent_depth = len(parent_cluster_name.split('_'))
-    seg_per_child = parent_depth + 1
-    if seg_per_child <= 0 or len(segments) % seg_per_child != 0:
-        return False
-    child_count = len(segments) // seg_per_child
-    if child_count < 1:
-        return False
-    parent_segs = parent_cluster_name.split('_')
-    for i in range(child_count):
-        chunk = segments[i * seg_per_child:(i + 1) * seg_per_child]
-        if chunk[:parent_depth] != parent_segs:
-            return False
-    return True
-
-
-def find_cluster_npz_for_parent(
-    cluster_path: str,
-    parent_cluster_name: str,
-    latents: Any,
-) -> Optional[str]:
-    """Fallback locator: pick the ``cluster_*.npz`` produced when
-    ``parent_cluster_name`` was last submitted.
-
-    Used when a node has no ``node_{parent}_meta.json`` sidecar (e.g.
-    submissions made before the sidecar feature landed) or when the
-    sidecar points at a missing file. The parent is identified by parsing
-    the canonical filename ``cluster_{c1}_..._{ck}_.npz`` — see
-    :func:`_parent_from_cluster_filename`. When several files match we
-    return the most recently modified one.
-
-    Args:
-        cluster_path: Directory typically ``<project>/cluster/``.
-        parent_cluster_name: Parent node name (e.g. ``'init'``).
-        latents: Unused; kept for backwards-compatible call sites.
-
-    Returns:
-        Absolute path to the best-matching npz, or ``None``.
-    """
-    del latents  # filename-only matching no longer needs cluster_meta
-    if not parent_cluster_name:
-        return None
-
-    candidates = glob.glob(os.path.join(cluster_path, 'cluster_*.npz'))
-    best: Optional[str] = None
-    best_mtime = -1.0
-    for npz in candidates:
-        if not _parent_from_cluster_filename(
-            os.path.basename(npz), parent_cluster_name,
-        ):
-            continue
-        mt = os.path.getmtime(npz)
-        if mt > best_mtime:
-            best = npz
-            best_mtime = mt
-    return best
-
-
-# ``cluster_*.npz`` files that are NOT per-session embedding exports (they lack
-# the emb/cls keys). They must be excluded from any embedding-file glob, else a
-# max-mtime pick after "Save Cluster Model" selects cluster_model.npz and reading
-# ["emb"] raises KeyError.
-_NON_EMBEDDING_NPZ = frozenset({"cluster_model.npz", "cluster_data.npz"})
-
-
-def _embedding_npz_files(cluster_path: str) -> List[str]:
-    """Per-session embedding ``cluster_*.npz`` files, newest first.
-
-    Excludes non-embedding artefacts (cluster_model.npz / cluster_data.npz) that
-    share the ``cluster_*`` prefix but have no emb/cls keys.
-    """
-    files = [
-        f for f in glob.glob(os.path.join(cluster_path, "cluster_*.npz"))
-        if os.path.basename(f) not in _NON_EMBEDDING_NPZ
-    ]
-    files.sort(key=os.path.getmtime, reverse=True)
-    return files
-
-
-def find_latest_cluster_npz(cluster_path: str) -> Optional[str]:
-    """Return the most recently modified embedding ``cluster_*.npz`` in ``cluster_path``.
-
-    Args:
-        cluster_path: Directory typically ``<project>/cluster/``.
-
-    Returns:
-        Absolute path to the newest matching embedding file, or ``None`` if none
-        exists. Non-embedding artefacts (cluster_model.npz / cluster_data.npz)
-        are skipped.
-    """
-    files = _embedding_npz_files(cluster_path)
-    return files[0] if files else None
-
-
-def _extract_child_names_from_filename(
-    basename: str,
-    parent_cluster_name: str,
-) -> List[str]:
-    """Parse child cluster names from a ``cluster_*.npz`` filename.
-
-    The file is named ``cluster_{c1}_{c2}_..._{ck}_.npz`` where each ``c_i``
-    is an immediate child of ``parent_cluster_name``.  Because children have
-    exactly ``parent_depth + 1`` underscore-segments we can recover the
-    ordered list without touching ``cluster_meta``.
-
-    Args:
-        basename: Filename (no directory), e.g. ``cluster_init_a0_init_a1_.npz``.
-        parent_cluster_name: Parent node name, e.g. ``'init'``.
-
-    Returns:
-        Ordered list of child names (empty list on parse failure).
-    """
-    if not basename.startswith('cluster_') or not basename.endswith('.npz'):
-        return []
-    core = basename[len('cluster_'):-len('.npz')]
-    if not core.endswith('_'):
-        return []
-    segments = core.rstrip('_').split('_')
-    parent_depth = len(parent_cluster_name.split('_'))
-    seg_per_child = parent_depth + 1
-    if seg_per_child <= 0 or len(segments) % seg_per_child != 0:
-        return []
-    child_count = len(segments) // seg_per_child
-    return [
-        '_'.join(segments[i * seg_per_child:(i + 1) * seg_per_child])
-        for i in range(child_count)
-    ]
+# (The cluster_*.npz filename grammar + node-meta sidecar lookup —
+# load_node_meta / _parent_from_cluster_filename / find_cluster_npz_for_parent /
+# _embedding_npz_files / find_latest_cluster_npz / _extract_child_names_from_filename —
+# now live in castle/service/cluster_npz.py and are imported at the top of this
+# module.)
 
 
 def restore_local_latent_from_npz(
@@ -818,340 +823,9 @@ def restore_local_latent_from_npz(
 # Cluster-transfer helpers (project-level)
 # ---------------------------------------------------------------------------
 
-def _save_prepared_cluster_model(project_path, cluster_dir, prepare_id, session_info,
-                                 output_path, model_name, k) -> str:
-    """Export a transfer model for a prepared (PCA-reduced) session.
-
-    training_features are the per-decimated-frame reduced vectors (k' dims);
-    each frame inherits its window's cluster label/embedding. The Prepare
-    transform (L2 + PCA basis + k') is bundled so apply() can map a new
-    project's RAW latents into the same space. See cluster_transfer.ClusterModel.
-
-    NOTE (scale provenance): the bundled ``raw_feature_dim`` is the *combined*
-    width of the SPP scales this cache was built on, but the scale identity is
-    NOT carried into the transfer model. apply() only dim-checks. So a model
-    built from a SCALE-SUBSET cache (e.g. only 2×2 → 3072-d) cannot be applied to
-    a fresh project's full combined latent (16128-d) — it raises on the dim
-    mismatch, and there is no scale info to auto-slice. Build transfer-export
-    caches on the full scale set (or match the subset width on the new project).
-    """
-    import glob
-    from castle.core.cluster_transfer import save_cluster_model
-    from castle.core.prepare import load_prepare, k_prime_for_variance
-
-    # --- cluster names (id.csv) + per-window emb/cls (most recent npz) ---
-    id_csv_path = os.path.join(cluster_dir, "id.csv")
-    if not os.path.exists(id_csv_path):
-        raise FileNotFoundError(f"No id.csv found: {id_csv_path}")
-    id_df = pd.read_csv(id_csv_path)
-    cluster_names = {int(r["Id"]): r["Name"] for _, r in id_df.iterrows()}
-    emb_files = _embedding_npz_files(cluster_dir)
-    if not emb_files:
-        raise FileNotFoundError(f"No embedding .npz found in {cluster_dir}")
-    emb_data = np.load(emb_files[0], allow_pickle=True)
-    emb_full = emb_data["emb"].astype(np.float64)   # (n_windows, 2)
-    cls_full = emb_data["cls"].astype(np.int32)     # (n_windows,)
-    # Only TRUE DBSCAN members may train the transfer model — k-NN-propagated
-    # rows (UMAP subsample) are interpolations, not density memberships, and
-    # would make apply() a k-NN over k-NN-smoothed labels. Missing key => all
-    # rows are real (legacy / non-subsampled), preserving prior behaviour.
-    win_sampled = (emb_data["is_sampled"].astype(bool)
-                   if "is_sampled" in emb_data.files else None)
-
-    # --- prepared cache: reduced features + PCA basis ---
-    prep_dir = os.path.join(cluster_dir, "prepared", prepare_id)
-    pd_obj = load_prepare(prep_dir)
-    if pd_obj.pca_components is None:
-        raise CastleDataError(
-            f"Prepared cache {prepare_id} has no PCA basis (PCA was off, or it "
-            f"predates basis persistence). Rebuild the cache with PCA enabled to "
-            f"export a transfer model."
-        )
-    W = int(getattr(session_info, "bin_size", 1) or 1)
-    kp = int(getattr(session_info, "k_prime", 0) or 0) or k_prime_for_variance(pd_obj.meta, 0.95)
-    kp = max(1, min(kp, pd_obj.width))
-
-    wmap = pd_obj.index_map.for_window(W)
-    if wmap.n_windows != len(cls_full):
-        raise CastleDataError(
-            f"Window count mismatch: cache has {wmap.n_windows} windows but the "
-            f"saved embedding has {len(cls_full)}. Re-run clustering on this cache."
-        )
-    dp_win = wmap.datapoint_window_ids()            # (N_dp,) global window id or -1
-    n_dp = int(pd_obj.reduced.shape[0])
-    feats = np.asarray(pd_obj.reduced[:, :kp], dtype=np.float32)
-    labels = np.full(n_dp, -1, dtype=np.int32)
-    emb2 = np.full((n_dp, 2), np.nan, dtype=np.float64)
-    valid = dp_win >= 0
-    labels[valid] = cls_full[dp_win[valid]]
-    emb2[valid] = emb_full[dp_win[valid]]
-    keep = valid & np.isfinite(feats).all(axis=1) & np.isfinite(emb2).all(axis=1)
-    if win_sampled is not None:
-        dp_sampled = np.zeros(n_dp, dtype=bool)
-        dp_sampled[valid] = win_sampled[dp_win[valid]]
-        keep &= dp_sampled
-
-    transform = {
-        "components": pd_obj.pca_components,        # (K_full, D_raw)
-        "mean": pd_obj.pca_mean,                    # (D_raw,)
-        "normalize": pd_obj.meta.get("normalize", "l2"),
-        "k_prime": kp,
-        "raw_feature_dim": int(pd_obj.meta.get("n_features", pd_obj.pca_components.shape[1])),
-        "scales": pd_obj.meta.get("scales"),  # SPP scale provenance (see ClusterModel.scales)
-    }
-    fps = float(pd_obj.index_map.raw_fps[0]) if pd_obj.index_map.n_videos else 30.0
-    if output_path is None:
-        output_path = os.path.join(cluster_dir, "cluster_model.npz")
-    return save_cluster_model(
-        output_path=output_path,
-        umap_embedding=emb2[keep],
-        training_features=feats[keep],
-        cluster_labels=labels[keep],
-        cluster_names=cluster_names,
-        model_name=model_name,
-        fps=fps,
-        k=k,
-        transform=transform,
-    )
-
-
-def save_project_cluster_model(
-    project_path: str,
-    output_path: Optional[str] = None,
-    model_name: str = "",
-    k: int = 5,
-) -> str:
-    """Save a project's clustering model for transfer.
-
-    Loads the UMAP embedding, cluster labels, and original latent features
-    from the project's ``cluster/`` directory, then persists them as a
-    ``.npz`` file that can be applied to new data.
-
-    Args:
-        project_path: Absolute path to the project directory.
-        output_path: Where to write the model file.  Defaults to
-            ``<project_path>/cluster/cluster_model.npz``.
-        model_name: Descriptive name saved in the metadata.
-        k: Number of neighbours for k-NN at apply time.
-
-    Returns:
-        Absolute path to the saved model file.
-
-    Raises:
-        FileNotFoundError: If required cluster/embedding files are missing.
-    """
-    from castle.core.cluster_transfer import save_cluster_model
-    import glob
-
-    cluster_dir = os.path.join(project_path, "cluster")
-    if not os.path.isdir(cluster_dir):
-        raise FileNotFoundError(f"No cluster directory found: {cluster_dir}")
-
-    # Prepared (PCA-reduced) sessions take a dedicated export path: the transfer
-    # model bundles the Prepare transform (raw -> L2 -> PCA -> k') so a new
-    # project's raw latents can be mapped into the same reduced space at apply
-    # time (per-frame; the source's temporal windowing is not re-applied).
-    try:
-        from castle.service.session_manager import SessionManager
-        _mgr = SessionManager(os.path.dirname(project_path), os.path.basename(project_path))
-        _sid = _mgr.get_active_session_id()
-        _sinfo = _mgr.get_session(_sid) if _sid else None
-        _prepare_id = getattr(_sinfo, "prepare_id", None) if _sinfo else None
-    except Exception:  # noqa: BLE001 — never block legacy export on a probe error
-        _sinfo, _prepare_id = None, None
-    if _prepare_id:
-        return _save_prepared_cluster_model(
-            project_path, cluster_dir, _prepare_id, _sinfo, output_path, model_name, k,
-        )
-
-    # --- Load id.csv for cluster names ---
-    id_csv_path = os.path.join(cluster_dir, "id.csv")
-    if not os.path.exists(id_csv_path):
-        raise FileNotFoundError(f"No id.csv found: {id_csv_path}")
-
-    id_df = pd.read_csv(id_csv_path)
-    cluster_names = {int(row["Id"]): row["Name"] for _, row in id_df.iterrows()}
-
-    # --- Load embedding .npz (most recently modified, not arbitrary glob order) ---
-    emb_files = _embedding_npz_files(cluster_dir)
-    if not emb_files:
-        raise FileNotFoundError(f"No embedding .npz found in {cluster_dir}")
-    emb_path = emb_files[0]
-    emb_data = np.load(emb_path, allow_pickle=True)
-    emb_full = emb_data["emb"]        # (N, 2) with NaN for masked-out points
-    cls_full = emb_data["cls"]        # (N,) with -1 for masked-out points
-    # Train the transfer model only on TRUE DBSCAN members; exclude k-NN-
-    # propagated rows (UMAP subsample). Missing key => all real (legacy).
-    bin_sampled = (emb_data["is_sampled"].astype(bool)
-                   if "is_sampled" in emb_data.files else None)
-
-    # --- Load latent features from latent/ directory ---
-    latent_dir = os.path.join(project_path, "latent")
-    if not os.path.isdir(latent_dir):
-        raise FileNotFoundError(f"No latent directory found: {latent_dir}")
-
-    # Pick most-recently-modified model sub-directory (matches user's latest extraction).
-    model_dirs = [
-        os.path.join(latent_dir, d) for d in os.listdir(latent_dir)
-        if os.path.isdir(os.path.join(latent_dir, d))
-    ]
-    if not model_dirs:
-        raise FileNotFoundError(f"No model sub-directories in {latent_dir}")
-    model_subdir = max(model_dirs, key=os.path.getmtime)
-
-    # Concatenate latent files in the same order as the project config
-    latent_files = sorted(glob.glob(os.path.join(model_subdir, "*.npz")))
-    if not latent_files:
-        raise FileNotFoundError(f"No latent .npz files in {model_subdir}")
-
-    latent_chunks = []
-    for lf in latent_files:
-        loaded = np.load(lf)
-        latent_chunks.append(loaded["latent"])
-    all_features = np.concatenate(latent_chunks, axis=0)
-
-    # The latent .npz rows are per-FRAME, but emb_full / cls_full are per-BIN
-    # (the embedding was built from Latent's time_window binning). Naively
-    # pairing the i-th FRAME's features with the i-th BIN's label mis-aligns
-    # every training example whenever bin_size > 1 (the common case). Instead,
-    # label each frame by the bin it belongs to (frame f -> bin f // bin_size)
-    # and keep features at frame resolution, so the per-frame apply path matches
-    # without a dimension change.
-    n_bins = len(emb_full)
-    bin_size = max(1, len(all_features) // n_bins) if n_bins > 0 else 1
-    n_keep = n_bins * bin_size
-    all_features = all_features[:n_keep]
-    frame_emb = np.repeat(emb_full, bin_size, axis=0)[:n_keep]
-    frame_cls = np.repeat(cls_full, bin_size)[:n_keep]
-
-    # --- Build valid mask (non-NaN embedding rows), at frame resolution ---
-    valid_mask = ~np.isnan(frame_emb).any(axis=1)
-    if bin_sampled is not None:
-        frame_sampled = np.repeat(bin_sampled, bin_size)[:n_keep]
-        valid_mask &= frame_sampled
-    umap_embedding = frame_emb[valid_mask]
-    cluster_labels = frame_cls[valid_mask]
-    training_features = all_features[valid_mask]
-
-    if output_path is None:
-        output_path = os.path.join(cluster_dir, "cluster_model.npz")
-
-    # Determine fps from project config if available
-    fps = 30.0
-    config_path = os.path.join(project_path, "castle_config.json")
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                cfg = json.load(f)
-            fps = cfg.get("fps", fps)
-        except Exception:
-            pass
-
-    return save_cluster_model(
-        output_path=output_path,
-        umap_embedding=umap_embedding,
-        training_features=training_features,
-        cluster_labels=cluster_labels,
-        cluster_names=cluster_names,
-        model_name=model_name,
-        fps=fps,
-        k=k,
-    )
-
-
-def apply_cluster_model_to_project(
-    model_path: str,
-    project_path: str,
-    method: str = "knn_feature",
-) -> dict:
-    """Apply a saved cluster model to a new project's latent features.
-
-    Loads latent features from *project_path*, classifies them with the
-    saved model, and writes ``transferred_labels.csv`` + ``id.csv`` into
-    the project's ``cluster/`` directory.
-
-    Args:
-        model_path: Path to the saved model ``.npz``.
-        project_path: Absolute path to the target project directory.
-        method: ``"knn_feature"`` or ``"knn_umap"``.
-
-    Returns:
-        A dict with ``labels``, ``confidence``, ``cluster_names``,
-        ``output_csv``, and ``n_frames``.
-    """
-    from castle.core.cluster_transfer import load_cluster_model, apply_cluster_model
-    import glob
-
-    model = load_cluster_model(model_path)
-
-    # --- Load latent features from target project ---
-    latent_dir = os.path.join(project_path, "latent")
-    if not os.path.isdir(latent_dir):
-        raise FileNotFoundError(f"No latent directory found: {latent_dir}")
-
-    # Pick most-recently-modified model sub-directory (matches user's latest extraction).
-    model_dirs = [
-        os.path.join(latent_dir, d) for d in os.listdir(latent_dir)
-        if os.path.isdir(os.path.join(latent_dir, d))
-    ]
-    if not model_dirs:
-        raise FileNotFoundError(f"No model sub-directories in {latent_dir}")
-    model_subdir = max(model_dirs, key=os.path.getmtime)
-
-    latent_files = sorted(glob.glob(os.path.join(model_subdir, "*.npz")))
-    if not latent_files:
-        raise FileNotFoundError(f"No latent .npz files in {model_subdir}")
-
-    latent_chunks = []
-    for lf in latent_files:
-        loaded = np.load(lf)
-        latent_chunks.append(loaded["latent"])
-    new_features = np.concatenate(latent_chunks, axis=0)
-
-    # --- Apply ---
-    result = apply_cluster_model(model, new_features, method=method)
-
-    # --- Write results ---
-    cluster_dir = os.path.join(project_path, "cluster")
-    os.makedirs(cluster_dir, exist_ok=True)
-
-    # transferred_id.csv (from the model's cluster names). Deliberately NOT the
-    # project's own cluster/id.csv: overwriting it would destroy the native
-    # clustering's names/colors that ethogram/export/restore read back, and
-    # silently re-pair the project's existing time_series labels with the
-    # transferred names. The transfer output is a self-contained pair
-    # (transferred_id.csv + transferred_labels.csv).
-    id_rows = sorted(result["cluster_names"].items())
-    id_df = pd.DataFrame(
-        [{"Id": cid, "Name": cname, "Color": "grey"} for cid, cname in id_rows]
-    )
-    id_csv_path = os.path.join(cluster_dir, "transferred_id.csv")
-    id_df.to_csv(id_csv_path, index=False)
-
-    # transferred_labels.csv
-    labels_df = pd.DataFrame({
-        "behavior": result["labels"],
-        "confidence": result["confidence"],
-    })
-    labels_csv_path = os.path.join(cluster_dir, "transferred_labels.csv")
-    labels_df.to_csv(labels_csv_path, index=False)
-
-    logger.info(
-        "Applied cluster model to %s: %d frames, %d unique labels",
-        project_path,
-        len(result["labels"]),
-        len(np.unique(result["labels"])),
-    )
-
-    return {
-        "labels": result["labels"],
-        "confidence": result["confidence"],
-        "cluster_names": result["cluster_names"],
-        "output_csv": labels_csv_path,
-        "id_csv": id_csv_path,
-        "n_frames": len(result["labels"]),
-        "mean_confidence": float(result["confidence"].mean()) if len(result["confidence"]) else 0.0,
-    }
+# (Prepared-model / cluster-transfer persistence — _save_prepared_cluster_model,
+# save_project_cluster_model, apply_cluster_model_to_project — extracted to
+# castle/service/cluster_persistence.py and re-exported at the top of this module.)
 
 
 # ---------------------------------------------------------------------------
@@ -1487,31 +1161,12 @@ def submit_local_to_global(
     cluster_choices = update_select_cluster_list(latents)
     os.makedirs(cluster_path, exist_ok=True)
 
-    df1 = pd.DataFrame({
-        'Id': [k for k in latents.cluster_meta],
-        'Name': [v['name'] for v in latents.cluster_meta.values()],
-        'Color': [v['color'] for v in latents.cluster_meta.values()],
-    })
-    id_csv_path = os.path.join(cluster_path, 'id.csv')
-    df1.to_csv(id_csv_path, index=False)
+    id_csv_path = _write_id_csv(latents.cluster_meta, cluster_path)
 
-    # Original-frame expansion via the FrameIndexMap (see submit()); replaces
-    # the old time_window==bin_size guard (the map handles legacy + prepared).
-    fim = aggregator.frame_index_map
-    df2_paths: List[str] = []
-    cum = 0
-    for video_idx, (vn, v) in enumerate(aggregator.videos_meta):
-        video_cluster = latents.cluster[cum:cum + vn]
-        if fim is not None:
-            video_frames = fim.expand_labels_to_orig(video_cluster, video_idx)
-        else:
-            video_frames = np.repeat(video_cluster, latents.time_window)
-        df2 = pd.DataFrame({'behavior': video_frames})
-        video_basename = os.path.splitext(os.path.basename(v))[0]
-        df2_path = os.path.join(cluster_path, f'time_series_{video_basename}.csv')
-        df2.to_csv(df2_path, index=False)
-        df2_paths.append(df2_path)
-        cum += vn
+    # Per-video time_series_*.csv (+ self-describing meta sidecar) via the shared
+    # writer (same as the CLI submit() path, so both frontends emit identical
+    # artifacts and the two paths cannot re-diverge).
+    df2_paths = _write_timeseries_csvs(latents, aggregator, cluster_path)
 
     subtitle_paths = aggregator.generate_subtitles(
         latents.cluster, latents.cluster_meta,
@@ -1521,7 +1176,7 @@ def submit_local_to_global(
     if (local_latents is not None
             and hasattr(local_latents, 'embedding')
             and local_latents.embedding is not None):
-        from castle.ui.embedding_scatter import EmbeddingScatterPlot
+        from castle.visualization.embedding_scatter import EmbeddingScatterPlot
 
         Z_plt = EmbeddingScatterPlot(local_latents)
         cluster_name = ''

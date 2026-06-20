@@ -157,11 +157,7 @@ data['config']  # UMAP configuration used (includes the resolved random seed)
     files — one JSON line per UMAP stage recording the resolved random seed and
     the config for that stage. Re-running with the logged seed reproduces the
     embedding (use the CPU/deterministic path for bit-identical results). Note
-    that per-feature z-score **standardization is ON by default** for the first
-    (raw-feature) UMAP stage (`"standardize": true`), which improves cluster
-    separation but changes coordinates versus older runs, so the DBSCAN `eps`
-    may need re-tuning. Set `"standardize": false` in the stage-0 UMAP config to
-    disable it.
+    that per-feature z-score standardization is **not** applied to the UMAP input — it was intentionally removed. A legacy `"standardize"` key in a saved config is ignored (dropped before UMAP is constructed), so it has no effect on the embedding.
 
 ---
 

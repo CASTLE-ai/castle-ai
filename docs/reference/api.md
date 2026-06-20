@@ -400,46 +400,29 @@ stats = registry.get_memory_stats()
 
 ### Auto Batch Size
 
-VRAM-aware batch size recommendation and automatic OOM retry.
+Automatic OOM retry with halved batch size.
 
 ::: castle.core.auto_batch
     options:
       show_root_heading: true
       show_source: true
       members:
-        - compute_optimal_batch_size
         - auto_retry_on_oom
 
 Quick reference:
 
 ```python
-from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
-
-# Query free VRAM and return a safe batch size
-batch = compute_optimal_batch_size(
-    model_name="dinov3_vitb16",
-    frame_size=(592, 592, 3),   # (H, W, C)
-    device="auto",              # auto-detect cuda/cpu
-)
+from castle.core.auto_batch import auto_retry_on_oom
 
 # Wrap any callable; halves batch_size on OOM and retries
 result = auto_retry_on_oom(
     extract_fn,
     frames,
-    initial_batch=batch,       # override starting batch
+    initial_batch=batch,       # starting batch size
     batch_kwarg="batch_size",  # kwarg name passed to extract_fn
     min_batch=1,               # give up below this value
 )
 ```
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `model_name` | — | Model name; used to look up weight reservation and input resolution |
-| `frame_size` | — | `(H, W)` or `(H, W, C)` of source frames |
-| `device` | `"auto"` | Target device string or `"auto"` |
-| `dtype_bytes` | `4` | Bytes per element (4 = float32, 2 = float16) |
-
-Falls back to batch size **4** on CPU or when VRAM info is unavailable.
 
 ---
 
@@ -773,104 +756,26 @@ cd2.save("/data/projects/my_project/cluster", session_id="session_002")
 
 ---
 
-### DeviceFactory
+### Environment / Device Detection
 
-`DeviceFactory` centralises device detection and provides ML algorithm factory methods that automatically choose GPU-accelerated or CPU implementations.
+`get_device()` is the single canonical device detector (MPS > CUDA > CPU), computed once in the module-level `env` singleton. Algorithm-class dispatch lives in `castle.core.clustering_backends`.
 
-::: castle.core.device_factory
+::: castle.core.environment
     options:
       show_root_heading: true
       show_source: true
       members:
-        - DeviceFactory
-        - DeviceFactory.get_device
-        - DeviceFactory.set_device
-        - DeviceFactory.reset
-        - DeviceFactory.get_torch_device
-        - DeviceFactory.to_tensor
-        - DeviceFactory.get_umap
-        - DeviceFactory.get_dbscan
-        - DeviceFactory.get_hdbscan
+        - get_device
+        - get_num_workers
 
 Quick reference:
 
 ```python
-from castle.core.device_factory import DeviceFactory
+from castle.core.environment import get_device
 
-# Device detection — cached on first call (CUDA > MPS > CPU)
-device = DeviceFactory.get_device()     # → 'cuda' | 'mps' | 'cpu'
-t_device = DeviceFactory.get_torch_device()  # → torch.device(...)
-
-# Override (useful in tests or when user picks a device)
-DeviceFactory.set_device("cpu")
-DeviceFactory.reset()   # clear cache, re-detect on next call
-
-# Algorithm factories — GPU (cuml) on CUDA, sklearn/umap-learn elsewhere
-umap   = DeviceFactory.get_umap(n_neighbors=300, min_dist=0.0, n_components=2)
-dbscan = DeviceFactory.get_dbscan(eps=0.5, min_samples=5)
-hdbscan = DeviceFactory.get_hdbscan(min_cluster_size=10)
-
-# NumPy → Tensor on current device
-tensor = DeviceFactory.to_tensor(my_array)                 # float32
-tensor = DeviceFactory.to_tensor(my_array, dtype=torch.float16)
+# Canonical device detection (MPS > CUDA > CPU)
+device = get_device()     # → 'cuda' | 'mps' | 'cpu'
 ```
-
-| Method | GPU (CUDA) | CPU / MPS |
-|--------|-----------|-----------|
-| `get_umap(**kw)` | `cuml.manifold.UMAP` | `umap.UMAP` |
-| `get_dbscan(**kw)` | `cuml.cluster.DBSCAN` | `sklearn.cluster.DBSCAN` |
-| `get_hdbscan(**kw)` | `cuml.cluster.HDBSCAN` | `sklearn.cluster.HDBSCAN` or `hdbscan` pkg |
-
----
-
-### SimpleVideoReader
-
-`SimpleVideoReader` provides a clean, dependency-minimal PyAV-based video reader for the common case: open a file, read metadata, fetch frames.
-
-::: castle.utils.video_reader_simple
-    options:
-      show_root_heading: true
-      show_source: true
-      members:
-        - SimpleVideoReader
-        - SimpleVideoReader.get_frame
-        - SimpleVideoReader.iter_frames
-        - SimpleVideoReader.close
-
-Quick reference:
-
-```python
-from castle.utils.video_reader_simple import SimpleVideoReader
-
-with SimpleVideoReader("video.mp4") as r:
-    print(r.fps, r.width, r.height, len(r))  # metadata
-
-    # Random access
-    frame = r.get_frame(42)          # (H, W, 3) BGR uint8
-
-    # Sequential iteration (no per-frame seek — most efficient)
-    for idx, frame in r.iter_frames():
-        process(frame)
-
-    # Range + step
-    for idx, frame in r.iter_frames(start=100, end=500, step=5):
-        process(frame)
-```
-
-**Constructor raises:**
-
-* `FileNotFoundError` — if *path* does not exist
-* `RuntimeError` — if no video stream is found in the container
-
-**`get_frame(index)` raises:**
-
-* `IndexError` — if *index* is out of `[0, n_frames)`
-* `RuntimeError` — if the frame cannot be decoded
-
-**`iter_frames(start, end, step)` notes:**
-
-* `step=1` uses fully sequential decoding (no seek per frame)
-* `step>1` seeks to each frame individually via `get_frame()`
 
 ---
 

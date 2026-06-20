@@ -4,6 +4,24 @@ All configurable parameters in CASTLE, consolidated in one place.
 
 ---
 
+## Configuration layers at a glance
+
+CASTLE has several distinct "config" surfaces with similar names — this map says
+which to edit for what:
+
+| Layer | File | Role — edit this when… |
+|-------|------|------------------------|
+| **Global constants** | `castle/core/config.py` | ckpt directory / model IDs, `DINOV3_CONSTANTS`, the cluster `PALETTE_HEX`, error-message templates. Rarely edited. |
+| **Numeric defaults** | `castle/defaults.py` | the single source of truth for a tunable default value (batch size, eps, …) shared across CLI / service / MCP. Change a default here, not at call sites. |
+| **Typed processing params** | `castle/core/project_config.py` → `ProjectConfig` | the typed schema for a run's parameters; serialized per project as `castle_config.json`. |
+| **Per-project inventory** | `<project>/config.json` | runtime bookkeeping of the project's source videos / latent files. Managed by CASTLE, not hand-edited. |
+| **Environment overrides** | `CASTLE_*` env vars | per-invocation tuning of device / workers / memory / storage — see [Environment Variables](environment-variables.md). |
+
+> The model/checkpoint reference template `castle/configs/model_config.json` is a
+> documented data file, not auto-loaded by the pipeline.
+
+---
+
 ## Launch Options
 
 ### Gradio Web UI (`app.py`)
@@ -140,8 +158,7 @@ JSON array of UMAP stages:
     {
         "n_neighbors": 100,
         "min_dist": 0.0,
-        "n_components": 2,
-        "standardize": true
+        "n_components": 2
     }
 ]
 ```
@@ -151,12 +168,11 @@ JSON array of UMAP stages:
 | `n_neighbors` | Nearest neighbors (local vs global structure) | 25–1000 |
 | `min_dist` | Minimum distance in embedding | 0.0 (for clustering) |
 | `n_components` | Output dimensions per stage | 2, 5, or 10 |
-| `standardize` | Per-feature z-score of the raw features before stage 0 (first stage only). Default `true`. | `true` / `false` |
 
 **Internal parameter** (in `myumap.py`): `n_epochs = 20000` — number of optimization epochs. Not exposed in the UI.
 
-!!! note "Input standardization is on by default"
-    The first (raw-feature) UMAP stage now z-scores each feature before fitting (`"standardize": true` in the default preset). This improves cluster separation but **changes embeddings versus older runs**, so the DBSCAN `eps` may need re-tuning. Set `"standardize": false` in the stage-0 config to reproduce a pre-standardization layout. Later stages run on low-dim UMAP output and are not standardized.
+!!! note "No input standardization"
+    CASTLE does **not** z-score the raw features before UMAP — per-feature standardization was intentionally removed (it amplified low-variance / noise dimensions for distance-based UMAP/DBSCAN). A legacy `"standardize"` key in a stage config is ignored: it is dropped before UMAP is constructed and has no effect.
 
 !!! tip "Reproducible UMAP runs"
     Every UMAP run records its resolved random seed, and each clustering session writes a `umap_log.jsonl` file — one JSON line per UMAP stage capturing the seed and resolved config. To reproduce an embedding exactly, reuse the logged seed (set `random_state` in the stage config) and run the CPU/deterministic path for bit-identical results.
@@ -238,7 +254,7 @@ below; set them in the shell **before** launching CASTLE.
     - **Batches** (track-all / extract-`All`, the CLI, `castle batch`) run **whole videos across GPUs** — one video per GPU concurrently (DeAOT tracking is sequential *within* a video, so this is the only way to parallelise it). Tracking is ~3× faster on two GPUs; extraction scales with batch size.
     - A **single** video's extraction still uses the within-video frame-range split across GPUs.
 
-    The default uses fast cuDNN autotuning + fp16, exactly like single-GPU — so a video processed on the second GPU can differ from the single-GPU result by **fp16-rounding noise (~1e-2)**, which is negligible for downstream clustering (UMAP standardises it). For **exact per-GPU reproducibility** set `CASTLE_MULTI_GPU_DETERMINISTIC=1` (pins cuDNN deterministic; slower). Tracking masks are near-identical (mean-IoU ≈ 0.9999) either way.
+    The default uses fast cuDNN autotuning + fp16, exactly like single-GPU — so a video processed on the second GPU can differ from the single-GPU result by **fp16-rounding noise (~1e-2)**, which is negligible for downstream clustering. For **exact per-GPU reproducibility** set `CASTLE_MULTI_GPU_DETERMINISTIC=1` (pins cuDNN deterministic; slower). Tracking masks are near-identical (mean-IoU ≈ 0.9999) either way.
 
     !!! warning
         A large multi-GPU batch is memory-heavy. **Stop the Gradio app first** if you launch one from the CLI — both competing for GPU + host RAM can exhaust memory.
@@ -299,9 +315,9 @@ cfg.save('castle_config.json')           # to file
 |-------|------|---------|-------------|
 | `clustering.method` | `str` | `'dbscan'` | Clustering algorithm |
 | `clustering.eps` | `float` | `1.0` | DBSCAN epsilon |
-| `clustering.umap_stages` | `List[UMAPConfig]` | `[{n_neighbors:100, ..., standardize:true}]` | Multi-stage UMAP configs |
+| `clustering.umap_stages` | `List[UMAPConfig]` | `[{n_neighbors:100, min_dist:0.0, n_components:2}]` | Multi-stage UMAP configs |
 
-The stage-0 `UMAPConfig` defaults to `standardize: true` (per-feature z-score of the raw features). The top-level `master_seed` field (default `42`) seeds every stochastic component; resolved per-stage UMAP seeds are recorded in the session's `umap_log.jsonl` for reproducibility (see [UMAP Parameters](#umap-parameters)).
+CASTLE does not standardize the raw features (any `standardize` key is ignored). The top-level `master_seed` field (default `42`) seeds every stochastic component; resolved per-stage UMAP seeds are recorded in the session's `umap_log.jsonl` for reproducibility (see [UMAP Parameters](#umap-parameters)).
 
 ---
 

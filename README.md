@@ -40,8 +40,7 @@
 - **2026-02: Phase 3 — Simplification & Code Clarity**
   - **`ProjectData` + `VideoInfo`** (`castle/core/project_data.py`): Unified project path dataclass — eliminates all scattered `os.path.join(storage_path, project_name, …)` calls. Single `from_path()` constructor computes every standard directory and per-video path.
   - **`ClusterData`** (`castle/core/cluster_data.py`): Typed dataclass that consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, and `annotations.csv` into one container with `load()`, `save()`, `from_arrays()`, `get_cluster_frames()`, and `n_clusters()`.
-  - **`DeviceFactory`** (`castle/core/device_factory.py`): Centralised device detection (CUDA > MPS > CPU) with cached result. Factory methods `get_umap()`, `get_dbscan()`, `get_hdbscan()` automatically dispatch to GPU-accelerated cuML on CUDA or sklearn/umap-learn on CPU/MPS — no more scattered `if cuda … elif mps … else` branches.
-  - **`SimpleVideoReader`** (`castle/utils/video_reader_simple.py`): Clean PyAV-based video reader with no cv2 dependency, no LRU cache complexity. Provides `get_frame(index)`, `iter_frames(start, end, step)`, and context-manager support. Sequential iteration uses no per-frame seeks for maximum throughput.
+  - **`get_device()`** (`castle/core/environment.py`): Single canonical device detection (MPS on Apple Silicon > CUDA > CPU), computed once in the module-level `env` singleton. Algorithm dispatch lives in `castle/core/clustering_backends.py` — `resolve_umap_class(device)` / `resolve_dbscan_class(device)` pick GPU-accelerated cuML on CUDA or umap-learn/sklearn on CPU/MPS — so there are no scattered `if cuda … elif mps … else` branches.
   - **UI Handler Pattern Guide** (`castle/ui/HANDLER_GUIDE.md`): Documents the target thin-handler / fat-service convention for all Gradio UI callbacks — handler ≤ 15 lines, zero algorithmic logic, one service call, convert domain exceptions to `gr.Error`.
 
 - **2026-02: Developer Branch - Major Architecture Overhaul**
@@ -60,7 +59,7 @@
 
 - **2025-12: Phase 2 — Performance & GPU Memory Management**
   - **ModelRegistry**: Thread-safe singleton for lazy model loading and explicit VRAM cleanup between pipeline stages (`castle/core/model_registry.py`)
-  - **Auto Batch Size**: VRAM-aware `compute_optimal_batch_size()` + `auto_retry_on_oom()` wrapper that halves batch size on GPU OOM and retries automatically (`castle/core/auto_batch.py`)
+  - **Auto OOM Retry**: `auto_retry_on_oom()` wrapper that halves the batch size on GPU OOM and retries automatically until it fits (`castle/core/auto_batch.py`)
   - **Pipeline Orchestrator**: `Pipeline` class with per-stage GPU memory cleanup — tracking cleanup before extraction, extraction cleanup after (`castle/core/pipeline.py`)
   - **Content-Hash Cache**: `PipelineCache` with SHA-256 keying and atomic JSON manifest — skip already-computed extractions across runs (`castle/core/cache.py`)
   - **Incremental Processing**: `get_unprocessed_videos()` and `cleanup_deleted_videos()` for efficient batch runs and orphan cleanup (`castle/service/incremental_service.py`)
@@ -103,11 +102,13 @@
     castle-ai
     ├── castle
     └── ckpt
-        ├── dinov2_vitb14_reg4_pretrain.pth
+        ├── dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth   # default encoder (DINOv3)
+        ├── dinov2_vitb14_reg4_pretrain.pth                # optional DINOv2 alternative
         ├── R50_DeAOTL_PRE_YTB_DAV.pth
         ├── sam_vit_b_01ec64.pth
         └── SwinB_DeAOTL_PRE_YTB_DAV.pth
     ```
+    > **Note:** The current default encoder is **DINOv3** (`dinov3_vitb16`); its checkpoint is fetched automatically on first use (Google Drive via `gdown`). DINOv2 (`dinov2_vitb14_reg4_pretrain`) remains a selectable alternative.
 
 ### Option 3 (Docker — GPU recommended)
 
@@ -152,7 +153,7 @@ docker build --build-arg DOWNLOAD_CKPT=1 -t castle-ai/castle .
 
 ## Run App
 
-=== "Gradio Web UI"
+#### Gradio Web UI
 
 ```bash
 python app.py
@@ -161,7 +162,7 @@ python app.py
 Opens at [http://localhost:7860](http://localhost:7860) with 8 tabs:
 `0. Project | 1. Upload Videos | 2. Tracking ROIs | 3. Pre-process (Optional) | 4. Extract Latent | 5. Behavior Microscope | 6. Analysis | 7. Export`
 
-=== "CLI"
+#### CLI
 
 ```bash
 castle --help
@@ -180,17 +181,16 @@ castle batch report experiments.yaml -o reports/  # Batch: generate HTML reports
 
 ## Performance Benchmarks
 
-The following benchmarks were measured on a workstation with **Intel i7-12700 + RTX 3060 (12GB)**. Time consumption is expressed as a multiple of the video's actual duration (assuming 30 FPS).
+The following benchmarks were measured on a workstation with **Intel i7-12700 + RTX 3060 (12 GB)**. Time consumption is expressed as a multiple of the video's actual duration (assuming 30 FPS); lower is faster.
 
-| Task / Model | Video Res | Model Res | **Ratio** | Notes |
-| :--- | :--- | :--- | :--- |
-| **GMFlow** | 720x720 | 720x720 | **4.50x** | Essential for fine movement (Residual Motion). |
-| **DINOv2b** (ViT-B/14) | 720x720 | 518x518 | **2.20x** | Standard vision foundation model. |
-| **DeAOT** (Tracking) | 720x720 | 720x720 | **2.11x** | ROI segmentation and tracking. |
-| **DINOv3b** (ViT-B/16) | 720x720 | 592x592 | **0.91x** | **Faster than real-time**. Highly optimized. |
+| Stage / Model           | Video Res | Model Res | Ratio  | Notes                                        |
+| :---------------------- | :-------- | :-------- | :----- | :------------------------------------------- |
+| **DeAOT** (Tracking)    | 720×720   | 720×720   | 2.11×  | ROI segmentation and tracking.               |
+| **DINOv2-B** (ViT-B/14) | 720×720   | 518×518   | 2.20×  | Optional vision foundation model.            |
+| **DINOv3-B** (ViT-B/16) | 720×720   | 592×592   | 0.91×  | Default encoder. **Faster than real-time.**  |
 
 > [!TIP]
-> **Hardware Scaling**: Higher-end GPUs like the **RTX 4090** are estimated to provide approximately **3.5x - 5x** speedup compared to the RTX 3060, enabling real-time processing for most modules.
+> **Hardware scaling**: higher-end GPUs such as the **RTX 4090** are estimated to provide roughly **3.5×–5×** the throughput of the RTX 3060, enabling real-time processing for most stages.
 
 ---
 
@@ -219,16 +219,16 @@ print(stats["free_mb"], "MB free on", stats["device"])
 
 The `Pipeline` class calls `unload_family` automatically between the tracking and extraction stages, ensuring SAM/DeAOT weights are evicted before the DINOv3 encoder is loaded.
 
-### Auto Batch Size & OOM Retry
+### Auto OOM Retry
 
 ```python
-from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
+from castle.core.auto_batch import auto_retry_on_oom
 
-# Queries free VRAM and returns a safe batch size for the given model + frame size
-batch = compute_optimal_batch_size("dinov3_vitb16", frame_size=(592, 592, 3))
-
-# If an OOM error occurs, halves the batch and retries automatically
-result = auto_retry_on_oom(extract_fn, frames, initial_batch=batch)
+# Call any batch function; on GPU OOM the batch size is halved and the call is
+# retried automatically until it fits (or min_batch is reached).
+result = auto_retry_on_oom(
+    extract_fn, frames, initial_batch=32, batch_kwarg="batch_size", min_batch=1,
+)
 ```
 
 ### Content-Hash Cache

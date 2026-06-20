@@ -31,8 +31,8 @@ UMAP (Uniform Manifold Approximation and Projection) is a dimensionality reducti
 - **Dense clumps** = behaviors that the animal performs consistently
 - **Scattered points** = transitional or ambiguous frames
 
-!!! note "Standardization and reproducibility"
-    By default, the first (raw-feature) UMAP stage now **standardizes** its input (per-feature z-score) before projecting, which sharpens cluster separation. This changes the embedding compared to older runs, so your DBSCAN `eps` may need re-tuning. Every UMAP run also records the random seed it resolved, logged one line per stage to a per-session `umap_log.jsonl`; reuse that seed (on the deterministic CPU path) to reproduce an embedding exactly. Both standardization and the seed are configurable in the UMAP config JSON.
+!!! note "Reproducibility"
+    CASTLE does **not** apply per-feature z-score standardization to the UMAP input. (It was removed because it amplified low-variance / noise feature dimensions for distance-based UMAP/DBSCAN.) A legacy `"standardize"` key in a saved UMAP config is ignored — it is silently dropped before UMAP is constructed. Every UMAP run records the random seed it resolved, logged one line per stage to a per-session `umap_log.jsonl`; reuse that seed (on the deterministic CPU path) to reproduce an embedding exactly.
 
 ### Clustering (DBSCAN)
 

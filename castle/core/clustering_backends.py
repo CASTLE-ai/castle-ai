@@ -348,8 +348,8 @@ class UMAPReducer:
             device: Compute device. Resolves which UMAP class to use.
         """
         # Drop keys that are not UMAP constructor kwargs: ``random_state`` is
-        # threaded through ``fit_transform``; ``standardize`` is consumed by
-        # ``LocalLatent.build_embedding`` (applied to the raw features once).
+        # threaded through ``fit_transform``; ``standardize`` is a legacy key
+        # with no effect (input standardization was removed) — it is dropped here.
         self.cfg = {k: v for k, v in cfg.items() if k not in ('random_state', 'standardize')}
         # CPU path: pin n_jobs=1 explicitly. CASTLE always passes a random_state
         # (build_embedding draws a master seed if none is given), and umap-learn

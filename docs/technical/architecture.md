@@ -59,8 +59,8 @@
 │                          (unified path computation)            │
 │  cluster_data.py       — ClusterData dataclass (unified        │
 │                          cluster artefact container)           │
-│  device_factory.py     — DeviceFactory (centralized device     │
-│                          management, UMAP/DBSCAN factories)    │
+│  environment.py        — get_device() (canonical device        │
+│                          detection: MPS > CUDA > CPU)          │
 └──────────────────────────┬─────────────────────────────────────┘
                            │ uses
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -81,7 +81,6 @@
 │  roi_manager.py           — ROI utilities                      │
 │  download.py              — Checkpoint download (gdown)        │
 │  profiler.py              — GPU/CPU performance profiling      │
-│  video_reader_simple.py   — SimpleVideoReader (Phase 3 🔷)     │
 └──────────────────────────┬─────────────────────────────────────┘
                            │
 ┌──────────────────────────▼─────────────────────────────────────┐
@@ -203,12 +202,12 @@ Clean separation between frontends and business logic. Both frontends (CLI, Grad
 | `comparison.py` | Group comparison — BFA test, behavioral fingerprint, energy distance, permutation tests, Hedges' g |
 | `nwb_export.py` | NWB file creation from CASTLE cluster data |
 | `model_registry.py` ⚡ | `ModelRegistry` singleton — lazy load, explicit unload, and CUDA memory accounting for SAM / DeAOT / DINOv2 / DINOv3 |
-| `auto_batch.py` ⚡ | `compute_optimal_batch_size()` — VRAM-aware batch size; `auto_retry_on_oom()` — automatic OOM retry with halved batch |
+| `auto_batch.py` ⚡ | `auto_retry_on_oom()` — automatic OOM retry with halved batch |
 | `pipeline.py` ⚡ | `Pipeline` + `PipelineConfig` — full tracking → extraction orchestrator with per-stage GPU cleanup and VRAM logging |
 | `cache.py` ⚡ | `PipelineCache` — SHA-256 content-addressed cache; manifest persisted as JSON; stale-entry auto-invalidation |
 | `project_data.py` 🔷 | `ProjectData` + `VideoInfo` dataclasses — unified project path computation, eliminating scattered `os.path.join` calls |
 | `cluster_data.py` 🔷 | `ClusterData` dataclass — consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, `annotations.csv` into one typed container |
-| `device_factory.py` 🔷 | `DeviceFactory` — centralised device detection and algorithm factory (UMAP, DBSCAN, HDBSCAN) with GPU/CPU/MPS dispatch |
+| `environment.py` | `get_device()` — canonical device detection (MPS > CUDA > CPU). Algorithm-class dispatch (UMAP/DBSCAN/HDBSCAN, cuML vs umap-learn/sklearn) lives in `clustering_backends.py` via `resolve_umap_class` / `resolve_dbscan_class` |
 | `multi_subject.py` 🟢 | `SubjectTrack` + `MultiSubjectProject` — multi-subject tracking data containers and pipeline orchestration (P4) |
 | `batch.py` 🟢 | `BatchConfig` + `BatchRunner` — YAML-driven multi-project batch processing with optional parallelism and summary reporting (P4) |
 
@@ -240,7 +239,6 @@ Higher-level analysis modules that sit above `castle/core/` and operate on multi
 | `roi_manager.py` | ROI color management and utilities |
 | `download.py` | Checkpoint download via gdown |
 | `profiler.py` | `Profiler`, `TimeBlock`, `SystemMonitor` for performance monitoring |
-| `video_reader_simple.py` 🔷 | `SimpleVideoReader` — simplified PyAV-based video reader (no LRU cache, no cv2 fallback); clean `get_frame()` / `iter_frames()` API |
 
 ### `castle/visualization/` — Visualization Layer
 
@@ -309,10 +307,10 @@ Video File (.mp4)
 [Output] CSV labels, SRT subtitles, embedding NPZ
 ```
 
-!!! note "UMAP reproducibility & input standardization"
+!!! note "UMAP reproducibility"
     Every UMAP run records its resolved random seed, and each clustering session writes a `umap_log.jsonl` file (one JSON line per UMAP stage, recording the seed plus the resolved config). Reuse a logged seed to reproduce an embedding exactly — take the CPU/deterministic path for bit-identical results.
 
-    The first (raw-feature) UMAP stage now applies **per-feature z-score standardization by default** (`"standardize": true` in the default UMAP config preset). This improves cluster separation but changes embeddings relative to older, unstandardized runs, so the DBSCAN `eps` may need re-tuning. Standardization is configurable in the UMAP config JSON.
+    CASTLE does **not** apply per-feature z-score standardization to the UMAP input — it was intentionally removed (it amplified low-variance / noise dimensions for distance-based UMAP/DBSCAN). A legacy `"standardize"` key in a config is ignored, dropped before UMAP is constructed.
 
 ---
 
@@ -415,16 +413,13 @@ stats = registry.get_memory_stats()
 ### Auto Batch Size
 
 ```python
-from castle.core.auto_batch import compute_optimal_batch_size, auto_retry_on_oom
-
-# Query VRAM and return recommended batch size
-batch = compute_optimal_batch_size("dinov3_vitb16", frame_size=(518, 518, 3))
+from castle.core.auto_batch import auto_retry_on_oom
 
 # Wrap any callable; retries with halved batch on OOM
 result = auto_retry_on_oom(extract_fn, frames, batch_size=batch)
 ```
 
-`compute_optimal_batch_size` uses conservative per-model weight estimates and a 25 % VRAM safety margin. Falls back to **4** on CPU or when VRAM information is unavailable.
+`auto_retry_on_oom` wraps batch inference and, on a CUDA out-of-memory error, halves the batch size and retries until the call succeeds or a minimum batch size is reached.
 
 ### PipelineCache
 
@@ -548,61 +543,28 @@ cd2.save("/data/projects/my_project/cluster")
 
 ---
 
-### Centralised Device Management (`DeviceFactory`)
+### Centralised Device Management (`get_device`)
 
 ```python
-from castle.core.device_factory import DeviceFactory
+from castle.core.environment import get_device
+from castle.core.clustering_backends import (
+    resolve_umap_class, resolve_dbscan_class, UMAPReducer, DBSCANClusterer,
+)
 
-# Auto-detect device (cached after first call)
-device = DeviceFactory.get_device()   # → 'cuda' | 'mps' | 'cpu'
+# Canonical device detection (computed once in the module-level `env` singleton)
+device = get_device()   # → 'cuda' | 'mps' | 'cpu'
 
-# Get UMAP for the current device (cuml on GPU, umap-learn otherwise)
-umap = DeviceFactory.get_umap(n_neighbors=300, min_dist=0.0, n_components=2)
+# Algorithm classes are resolved per device: cuML on CUDA,
+# umap-learn / sklearn on CPU / MPS
+UMAPClass = resolve_umap_class(device)
+DBSCANClass = resolve_dbscan_class(device)
 
-# Get DBSCAN (cuml on GPU, sklearn otherwise)
-dbscan = DeviceFactory.get_dbscan(eps=0.5, min_samples=5)
-
-# Get HDBSCAN (cuml on GPU, sklearn ≥1.3 or hdbscan package otherwise)
-hdbscan = DeviceFactory.get_hdbscan(min_cluster_size=10)
-
-# Convert NumPy array to device tensor
-tensor = DeviceFactory.to_tensor(my_array)
+# Higher-level wrappers used by the clustering pipeline
+reducer = UMAPReducer({"n_neighbors": 300, "min_dist": 0.0, "n_components": 2}, device=device)
+clusterer = DBSCANClusterer({"eps": 0.5, "min_samples": 5}, device=device)
 ```
 
-Detection order: **CUDA > MPS (Apple Silicon) > CPU**.  
-Override with `DeviceFactory.set_device("cpu")` (e.g. in tests).
-
----
-
-### Simplified Video Reader (`SimpleVideoReader`)
-
-```python
-from castle.utils.video_reader_simple import SimpleVideoReader
-
-with SimpleVideoReader("video.mp4") as r:
-    print(r.fps, r.width, r.height, len(r))
-
-    # Random access — seeks to keyframe then decodes to target
-    frame = r.get_frame(42)          # (H, W, 3) BGR uint8
-
-    # Sequential iteration — no per-frame seek, most efficient
-    for idx, frame in r.iter_frames(start=0, end=500):
-        process(frame)
-
-    # Strided iteration — seeks per frame
-    for idx, frame in r.iter_frames(start=0, end=500, step=5):
-        process(frame)
-```
-
-`SimpleVideoReader` vs `VideoReader` (from `castle.utils.video_io`):
-
-| Feature | `SimpleVideoReader` | `VideoReader` |
-|---------|---------------------|---------------|
-| Dependency | PyAV only | PyAV + optional cv2 |
-| LRU frame cache | ✗ | ✓ |
-| Binary-search fallback | ✗ | ✓ |
-| Sequential read optimisation | ✓ | ✓ |
-| Use case | Simple pipelines, tests | Production, caching |
+Detection order: **MPS (Apple Silicon) > CUDA > CPU** (see `Environment._detect_device`).
 
 ---
 

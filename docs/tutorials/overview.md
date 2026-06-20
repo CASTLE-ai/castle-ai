@@ -2,7 +2,7 @@
 
 ## What CASTLE Does
 
-CASTLE (**C**lustering **A**nimal behavior with **S**calable **T**raining-free **L**atent **E**mbeddings) takes raw video of animal behavior and produces:
+CASTLE (**Combined Approach for Segmentation and Tracking with Latent Extraction**) takes raw video of animal behavior and produces:
 
 - **Segmented and tracked regions of interest (ROIs)** — precise masks of animals or body parts across all frames
 - **Visual feature representations** — high-dimensional latent vectors capturing posture and movement

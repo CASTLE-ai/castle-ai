@@ -43,8 +43,13 @@ pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 ```
 
-!!! warning "Do NOT use `pip install castle-ai`"
-    The `requirements.txt` is designed for installation from source. Install directly from the cloned repository — the PyPI package may be outdated.
+!!! tip "Installing from PyPI"
+    `pip install castle-ai` works and installs a CPU-ready build (GPU-only
+    accelerators `cuml-cu12` and `xformers` are split into the `gpu` extra, so
+    the default install never pulls a non-PyPI package). For GPU acceleration add
+    the extra **with the NVIDIA index**: `pip install "castle-ai[gpu]" --extra-index-url https://pypi.nvidia.com`.
+    Installing from the cloned repo (`pip install -r requirements.txt`) is still
+    recommended if you want the exact pinned environment or are developing CASTLE.
 
 !!! note "Key dependencies"
     The main dependencies include:

@@ -66,6 +66,7 @@ nav:
     - Workflow Overview: tutorials/overview.md
     - "Step 1: Create Project": tutorials/step1-project.md
     - "Step 2: Track ROIs": tutorials/step2-tracking.md
+    - "Step 2.5: Pre-process (Optional)": tutorials/step2_5-preprocessing.md
     - "Step 3: Extract Features": tutorials/step3-extract.md
     - "Step 4: Behavior Analysis": tutorials/step4-analysis.md
     - "Step 5: Export Results": tutorials/step5-export.md
@@ -74,6 +75,8 @@ nav:
     - Algorithm: technical/algorithm.md
     - Data Formats: technical/data-formats.md
     - Configuration: technical/configuration.md
+    - Environment Variables: technical/environment-variables.md
+    - Reproducibility: technical/reproducibility.md
   - API Reference: reference/api.md
   - FAQ: faq.md
   - Citation: citation.md

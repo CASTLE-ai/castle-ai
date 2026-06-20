@@ -3,7 +3,6 @@ import pytest
 import numpy as np
 import tempfile
 import os
-import shutil
 from unittest.mock import patch
 from castle.core.cluster import LatentAggregator
 
@@ -31,7 +30,14 @@ def test_latent_aggregator_clustering(mock_get_project_config, device):
     aggregator.latents = latents
     # Also mock videos_meta to allow generate_subtitles to run
     aggregator.videos_meta = [(len(latents) // aggregator.bin_size, "dummy_video.mp4")]
-    
+    # generate_subtitles expands labels to original frames via the FrameIndexMap;
+    # __init__ built an empty one (no latents were loaded), so rebuild it to match
+    # the latents/videos_meta we just injected.
+    from castle.core.prepare import build_legacy_index_map
+    aggregator.frame_index_map = build_legacy_index_map(
+        aggregator.videos_meta, aggregator.bin_size
+    ).for_window(1)
+
     # Generate Subtitles (Clustering)
     # We need a dummy output path
     with tempfile.TemporaryDirectory() as temp_dir:

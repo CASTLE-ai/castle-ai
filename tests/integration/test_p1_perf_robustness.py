@@ -17,9 +17,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
 from typing import List
 
 import numpy as np
@@ -134,6 +131,8 @@ def _aggregator_with_stub_reader(reader, video_path="/stub/v.mp4"):
     from collections import OrderedDict
     import threading
 
+    from castle.core.prepare import build_legacy_index_map
+
     agg = LatentAggregator.__new__(LatentAggregator)
     agg.source_path = "/stub"
     agg.bin_size = 1
@@ -143,6 +142,10 @@ def _aggregator_with_stub_reader(reader, video_path="/stub/v.mp4"):
     agg._cache_max_size = 8
     agg._frame_cache = OrderedDict()
     agg._frame_cache_max = 4   # Tiny for eviction test
+    # get_frame routes datapoint -> (video, original frame) through the
+    # FrameIndexMap, so a bypass-init aggregator must build the same legacy map
+    # __init__ does (bin_size==1 -> datapoint i == original frame i).
+    agg.frame_index_map = build_legacy_index_map(agg.videos_meta, agg.bin_size).for_window(1)
     # RLock matches production (3-E): _get_cached_frame holds the lock across
     # _get_cached_reader, which re-acquires the same lock from the same thread.
     agg._cache_lock = threading.RLock()

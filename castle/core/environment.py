@@ -6,6 +6,8 @@ Environment detection and setup.
 import os
 import sys
 import platform
+from functools import lru_cache
+
 import torch
 
 class Environment:
@@ -64,6 +66,74 @@ def get_device() -> str:
     All modules should use this instead of implementing their own detection.
     """
     return env.device
+
+
+@lru_cache(maxsize=1)
+def collect_run_environment() -> dict:
+    """Snapshot the runtime software/hardware stack for output provenance.
+
+    Captured once per process (cached) and embedded into saved artifacts so a
+    reproduction attempt — or a journal reviewer — can see exactly which CASTLE
+    version, library stack, device, and GPU produced an output. This matters
+    because the clustering backend silently resolves cuML-GPU vs umap-learn /
+    sklearn-CPU (which give *different* embeddings); recording the resolved
+    stack lets a failed reproduction be told apart from a backend mismatch.
+
+    Optional / absent packages record ``None`` rather than raising; the whole
+    function is best-effort and never throws.
+
+    Returns:
+        A JSON-serialisable dict: castle version, python, platform, resolved
+        device, key library versions, torch CUDA/cuDNN, and GPU model name(s).
+    """
+    import importlib.metadata as _md
+
+    def _ver(*dists: str) -> 'str | None':
+        for dist in dists:
+            try:
+                return _md.version(dist)
+            except Exception:
+                continue
+        return None
+
+    try:
+        import castle
+        castle_version = getattr(castle, "__version__", "unknown")
+    except Exception:
+        castle_version = "unknown"
+
+    info: dict = {
+        "castle_version": castle_version,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "device": env.device,
+        "packages": {
+            "torch": _ver("torch"),
+            "torchvision": _ver("torchvision"),
+            "numpy": _ver("numpy"),
+            "scipy": _ver("scipy"),
+            "scikit-learn": _ver("scikit-learn"),
+            "umap-learn": _ver("umap-learn"),
+            "cuml": _ver("cuml", "cuml-cu12"),
+            "transformers": _ver("transformers"),
+            "gradio": _ver("gradio"),
+            "h5py": _ver("h5py"),
+            "av": _ver("av"),
+            "opencv": _ver("opencv-python-headless", "opencv-python"),
+        },
+    }
+    # torch CUDA / cuDNN / GPU model names — best-effort, never raise.
+    try:
+        info["torch_cuda"] = torch.version.cuda
+        if torch.cuda.is_available():
+            info["cudnn"] = torch.backends.cudnn.version()
+            info["gpus"] = [
+                torch.cuda.get_device_name(i)
+                for i in range(torch.cuda.device_count())
+            ]
+    except Exception:
+        pass
+    return info
 
 
 def _env_int(name: str) -> 'int | None':

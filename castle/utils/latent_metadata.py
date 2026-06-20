@@ -48,8 +48,16 @@ def _build_metadata(
     tags: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the canonical metadata dict for a latent npz."""
+    # Library/hardware provenance — so a reproduction can see the exact stack
+    # (cuML-GPU vs sklearn-CPU give different embeddings). Best-effort; cached.
+    try:
+        from castle.core.environment import collect_run_environment
+        environment = collect_run_environment()
+    except Exception:  # never let provenance collection break a latent write
+        environment = None
+
     meta = {
-        "schema_version": 1,
+        "schema_version": 2,
         "castle_version": getattr(castle, "__version__", "unknown"),
         "video_name": video_name,
         "roi_id": int(roi_id),
@@ -58,6 +66,8 @@ def _build_metadata(
         "feature_dim": int(latent_array.shape[1]) if latent_array.ndim >= 2 else None,
         "dtype": str(latent_array.dtype),
     }
+    if environment is not None:
+        meta["environment"] = environment
     if seed is not None:
         meta["seed"] = int(seed)
     if tags:

@@ -11,6 +11,16 @@ from castle.ui.main_ui import CASTLE_JS, CASTLE_CSS
 OS_SYS = platform.uname().system
 COLAB_GPU = 'COLAB_GPU' in os.environ
 
+# Seed all global RNGs at startup so GUI-driven runs are reproducible by default
+# (honours CASTLE_SEED; mirrors the CLI's --seed). This does NOT lock UMAP — the
+# Behavior Microscope keeps its own per-stage seed / re-roll control.
+from castle.core.seed import set_global_seed
+try:
+    _CASTLE_SEED = int(os.environ.get('CASTLE_SEED', '42'))
+except ValueError:
+    _CASTLE_SEED = 42
+set_global_seed(_CASTLE_SEED)
+
 # Parse command line arguments
 parser = ArgumentParser()
 parser.add_argument("--root", dest="root")

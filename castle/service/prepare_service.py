@@ -213,6 +213,11 @@ def build_prepare(
             notify(f"Prepare: build {pid} cancelled; partial cache removed.")
             raise
         meta["created_at"] = datetime.now(timezone.utc).isoformat()
+        # Stamp library/hardware provenance here (the service layer owns the
+        # clock + environment; run_prepare stays pure). Lets a reproduction see
+        # the exact stack — incl. cuML-GPU vs sklearn-CPU — that built the cache.
+        from castle.core.environment import collect_run_environment
+        meta["environment"] = collect_run_environment()
         with open(os.path.join(tmp_dir, _prepare.META_FILENAME), "w", encoding="utf-8") as f:
             import json
 

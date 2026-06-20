@@ -10,6 +10,7 @@ No UI imports are allowed here — this is pure service-layer logic.
 """
 
 import glob
+import json
 import logging
 import os
 
@@ -165,3 +166,67 @@ def _collect_source_videos(project_path: str) -> list:
             rel = os.path.relpath(src, project_path)
             results.append((src, rel))
     return results
+
+
+def build_run_manifest(
+    project_path: str,
+    *,
+    project_name: str,
+    session_id: str = None,
+    components=None,
+    generated_at: str = None,
+) -> dict:
+    """Assemble a self-describing provenance manifest for an export bundle.
+
+    A downloaded export otherwise carries no record of *how* it was produced.
+    This manifest captures the CASTLE version, the full library/hardware stack
+    (so a reproduction can tell cuML-GPU from sklearn-CPU embeddings apart), the
+    selected components, the project inventory, and — if a clustering session is
+    selected — that session's manifest. Everything is best-effort: missing or
+    malformed inputs are skipped rather than raising, so writing the manifest can
+    never fail an export.
+
+    Args:
+        project_path: Absolute path to the project directory.
+        project_name: Project name.
+        session_id: Optional clustering session id to embed its manifest.
+        components: Iterable of selected component names (e.g. ['latent', ...]).
+        generated_at: Optional ISO/stamp string for when the export was built.
+
+    Returns:
+        A JSON-serialisable dict.
+    """
+    from castle.core.environment import collect_run_environment
+
+    manifest: dict = {
+        "manifest_schema_version": 1,
+        "generated_at": generated_at,
+        "project_name": project_name,
+        "components": sorted(components or []),
+        "environment": collect_run_environment(),
+    }
+
+    cfg_path = os.path.join(project_path, "config.json")
+    if os.path.isfile(cfg_path):
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+            manifest["project"] = {
+                "videos": sorted(cfg.get("source", [])),
+                "latent_count": len(cfg.get("latent", {})),
+            }
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("run_manifest: could not read project config: %s", exc)
+
+    if session_id:
+        sm_path = os.path.join(
+            project_path, "cluster", "sessions", session_id, "manifest.json"
+        )
+        if os.path.isfile(sm_path):
+            try:
+                with open(sm_path, encoding="utf-8") as f:
+                    manifest["session"] = json.load(f)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("run_manifest: could not read session manifest: %s", exc)
+
+    return manifest

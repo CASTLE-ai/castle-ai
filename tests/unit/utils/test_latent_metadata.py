@@ -40,7 +40,9 @@ def test_save_writes_npz_and_sidecar(tmp_path: Path) -> None:
     assert text["seed"] == 42
     assert text["tags"]["pooling_method"] == "weighted_average"
     assert "castle_version" in text
-    assert text["schema_version"] == 1
+    assert text["schema_version"] == 2
+    # schema v2 adds a run-environment provenance block.
+    assert "environment" in text and "packages" in text["environment"]
 
 
 def test_extract_metadata_reads_embedded_dict(tmp_path: Path) -> None:

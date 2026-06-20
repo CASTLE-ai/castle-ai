@@ -7,6 +7,7 @@ Supported exports: masks, latent features, cluster results, annotations,
 grid videos, and source videos.
 """
 
+import json
 import logging
 import os
 import shutil
@@ -24,6 +25,7 @@ from castle.service.export_service import (
     _collect_grid_videos,
     _collect_analysis,
     _collect_source_videos,
+    build_run_manifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -163,6 +165,31 @@ def on_export(
     try:
         packaged_count = 0
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            # Provenance manifest so the bundle is self-describing (CASTLE +
+            # library/GPU versions, selected components, project + session info).
+            try:
+                selected = [
+                    name for flag, name in (
+                        (include_masks, "masks"),
+                        (include_latent, "latent"),
+                        (include_cluster, "cluster"),
+                        (include_annotations, "annotations"),
+                        (include_grid_videos, "grid_videos"),
+                        (include_analysis, "analysis"),
+                        (include_source_videos, "source_videos"),
+                    ) if flag
+                ]
+                manifest = build_run_manifest(
+                    pp, project_name=project_name, session_id=session_id,
+                    components=selected, generated_at=timestamp,
+                )
+                zf.writestr(
+                    "run_manifest.json",
+                    json.dumps(manifest, indent=2, ensure_ascii=False),
+                )
+            except Exception as exc:  # never fail an export over the manifest
+                logger.warning("Export: could not write run_manifest.json: %s", exc)
+
             for i, (src, arc_name) in enumerate(unique_files, 1):
                 if not os.path.isfile(src):
                     logger.warning("Export: source file missing, skipping: %s", src)

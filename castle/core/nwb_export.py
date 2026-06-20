@@ -10,11 +10,14 @@ Creates NWB files containing:
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 try:
     from pynwb import NWBFile, NWBHDF5IO
@@ -82,6 +85,7 @@ def export_to_nwb(
     session_description: str = "CASTLE behavioral analysis",
     experimenter: str = "",
     subject_id: str = "",
+    session_start_time: Optional[datetime] = None,
 ) -> str:
     """Export CASTLE analysis results to NWB file.
 
@@ -101,6 +105,9 @@ def export_to_nwb(
         session_description: Description for NWB session.
         experimenter: Experimenter name.
         subject_id: Subject/animal identifier.
+        session_start_time: Recording start time (the NWB spec requires the
+            recording start, not the export time). When None, falls back to
+            ``datetime.now()`` with a logged warning.
 
     Returns:
         Path to created NWB file.
@@ -116,12 +123,33 @@ def export_to_nwb(
     # Create output directory if needed
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    # Create NWB file
-    session_start = datetime.now(tz=timezone.utc)
+    # NWB `session_start_time` is, per spec, the start of the RECORDING — not
+    # when the export ran. Use the caller-supplied recording time; fall back to
+    # "now" only when it is unavailable, and say so loudly (a wrong session time
+    # silently corrupts every downstream temporal alignment).
+    if session_start_time is not None:
+        session_start = session_start_time
+        if session_start.tzinfo is None:
+            session_start = session_start.replace(tzinfo=timezone.utc)
+    else:
+        session_start = datetime.now(tz=timezone.utc)
+        logger.warning(
+            "export_to_nwb: no session_start_time supplied — using the export "
+            "time as a placeholder. Pass the recording start for a spec-correct "
+            "NWB (session_start_time must be the recording start)."
+        )
+
+    import castle  # local: provenance only
+    _castle_version = getattr(castle, "__version__", "unknown")
+
+    # Create NWB file. A stable, subject-scoped identifier + CASTLE provenance
+    # (source_script) so the archival artifact records which pipeline produced it.
     nwbfile = NWBFile(
         session_description=session_description,
-        identifier=f"castle_{session_start.strftime('%Y%m%d_%H%M%S')}",
+        identifier=f"castle_{subject_id or 'subject'}_{session_start.strftime('%Y%m%d_%H%M%S')}",
         session_start_time=session_start,
+        source_script=f"castle-ai {_castle_version}",
+        source_script_file_name="castle",
     )
 
     if experimenter:

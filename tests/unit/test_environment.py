@@ -95,3 +95,48 @@ def test_get_num_workers_dev_box_unchanged(monkeypatch):
     monkeypatch.delenv('CASTLE_FORCE_NETWORK_FS', raising=False)
     from castle.core.environment import get_num_workers
     assert get_num_workers('extraction') == 10
+
+
+# ---- collect_run_environment (Phase-2 provenance) ----
+
+def test_collect_run_environment_shape():
+    """Provenance snapshot carries version/platform/device + a package map."""
+    import json
+    from castle.core.environment import collect_run_environment
+
+    info = collect_run_environment()
+    assert isinstance(info, dict)
+    for key in ("castle_version", "python", "platform", "device", "packages"):
+        assert key in info, f"missing provenance key {key!r}"
+    assert info["device"] in ("cuda", "cpu", "mps")
+    assert isinstance(info["packages"], dict)
+    # numpy/torch always present in a CASTLE env; values are version strings or None.
+    assert "numpy" in info["packages"] and "torch" in info["packages"]
+    # Must be JSON-serialisable (it is embedded into output artifacts).
+    json.dumps(info)
+
+
+def test_collect_run_environment_is_cached():
+    """Cached per process so embedding it in every artifact write is cheap."""
+    from castle.core.environment import collect_run_environment
+    assert collect_run_environment() is collect_run_environment()
+
+
+def test_latent_sidecar_embeds_environment(tmp_path):
+    """save_latent_with_metadata stamps the run environment into the sidecar."""
+    import numpy as np
+    from castle.utils.latent_metadata import (
+        save_latent_with_metadata, load_latent_metadata,
+    )
+
+    arr = np.zeros((5, 8), dtype=np.float32)
+    npz = tmp_path / "vid_ROI_1.npz"
+    save_latent_with_metadata(
+        str(npz), arr, video_name="vid.mp4", roi_id=1, model_name="dinov3_vitb16",
+    )
+    meta = load_latent_metadata(str(npz))
+    assert meta is not None
+    assert meta["schema_version"] == 2
+    assert "environment" in meta
+    assert meta["environment"]["castle_version"]
+    assert "packages" in meta["environment"]

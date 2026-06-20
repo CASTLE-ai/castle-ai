@@ -165,30 +165,6 @@ def build_group_ethogram(
 # Visualize
 # ---------------------------------------------------------------------------
 
-# Default qualitative colour palette (up to 20 clusters)
-_DEFAULT_COLORS = [
-    "#4E79A7",
-    "#F28E2B",
-    "#E15759",
-    "#76B7B2",
-    "#59A14F",
-    "#EDC948",
-    "#B07AA1",
-    "#FF9DA7",
-    "#9C755F",
-    "#BAB0AC",
-    "#1F77B4",
-    "#FF7F0E",
-    "#2CA02C",
-    "#D62728",
-    "#9467BD",
-    "#8C564B",
-    "#E377C2",
-    "#7F7F7F",
-    "#BCBD22",
-    "#17BECF",
-]
-
 
 def plot_group_ethogram(
     ethogram: dict,
@@ -258,9 +234,9 @@ def plot_group_ethogram(
     for sid in subject_ids:
         all_cluster_ids.update(int(c) for c in per_subject[sid]["cluster_names"])
     sorted_cids = sorted(all_cluster_ids)
+    from castle.core.config import color_for_cluster
     color_map: dict[int, str] = {
-        cid: _DEFAULT_COLORS[i % len(_DEFAULT_COLORS)]
-        for i, cid in enumerate(sorted_cids)
+        cid: color_for_cluster(i) for i, cid in enumerate(sorted_cids)
     }
 
     fig, axes = plt.subplots(

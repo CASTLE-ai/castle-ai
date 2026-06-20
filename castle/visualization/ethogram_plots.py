@@ -17,18 +17,9 @@ if TYPE_CHECKING:
 
 
 def _get_cluster_colors(names: Dict[int, str], n: int) -> List[str]:
-    """Generate a list of distinct colours for *n* clusters."""
-    try:
-        from castle.core.config import PALETTE_HEX
-        palette = (PALETTE_HEX * ((n // len(PALETTE_HEX)) + 1))[:n]
-    except Exception:
-        import matplotlib.cm as cm
-        cmap = cm.get_cmap("tab20", n)
-        palette = [
-            "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
-            for r, g, b, _ in [cmap(i) for i in range(n)]
-        ]
-    return palette
+    """Colorblind-safe distinct colours for *n* clusters (shared figure palette)."""
+    from castle.core.config import color_for_cluster
+    return [color_for_cluster(i) for i in range(n)]
 
 
 def plot_ethogram_raster(

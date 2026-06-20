@@ -3,6 +3,7 @@ castle/core/config.py
 Central configuration for Castle AI.
 """
 
+import colorsys
 from pathlib import Path
 from typing import Dict, List
 
@@ -91,3 +92,56 @@ PALETTE_HEX: List[str] = [
     '#e58606', '#5d69b1', '#52bca3', '#99c945', '#cc61b0', '#24796c', '#daa51b',
     '#2f8ac4', '#764e9f', '#ed645a', '#a5aa99',
 ]
+
+
+# ---------------------------------------------------------------------------
+# Colorblind-safe categorical palette for FIGURES (project decision 2026-06-20).
+# Based on the Okabe-Ito 8-colour set — the de-facto colorblind-safe categorical
+# standard for scientific figures (Okabe & Ito 2008). A single source of truth so
+# every analysis figure colours cluster *i* the same way and is legible to readers
+# with colour-vision deficiency. (The interactive UI cluster tree still uses its
+# own name-hash palette; figures use this.)
+# ---------------------------------------------------------------------------
+OKABE_ITO: List[str] = [
+    '#E69F00',  # orange
+    '#56B4E9',  # sky blue
+    '#009E73',  # bluish green
+    '#F0E442',  # yellow
+    '#0072B2',  # blue
+    '#D55E00',  # vermillion
+    '#CC79A7',  # reddish purple
+    '#000000',  # black
+]
+
+
+# Distinct, well-separated absolute lightness levels used to extend the 8-hue
+# Okabe-Ito set past 8 clusters. Six values → 48 unique colours before any
+# repeat (far beyond realistic behaviour-cluster counts). Using an *absolute*
+# lightness (rather than a relative darken/lighten) is what keeps even pure
+# black at index 7 distinct across wraps — a relative shift can't move a colour
+# that already sits at a lightness extreme, so clusters 7/15/23 would collide.
+_WRAP_LIGHTNESS: List[float] = [0.78, 0.30, 0.62, 0.46, 0.88, 0.18]
+
+
+def color_for_cluster(index: int) -> str:
+    """Colorblind-safe hex colour for the *index*-th cluster in a figure.
+
+    The first 8 clusters get the exact Okabe-Ito palette (the colourblind-safe
+    guarantee that matters). Beyond 8, the base hue is reused at a distinct
+    lightness from :data:`_WRAP_LIGHTNESS`, preserving hue/saturation so each
+    stays as legible as 8+ simultaneous categories allow. Deterministic in
+    ``index`` and unique for any realistic cluster count.
+    """
+    i = max(0, int(index))
+    base = OKABE_ITO[i % len(OKABE_ITO)]
+    wrap = i // len(OKABE_ITO)
+    if wrap == 0:
+        return base
+    r, g, b = (int(base[k:k + 2], 16) / 255.0 for k in (1, 3, 5))
+    h, _, s = colorsys.rgb_to_hls(r, g, b)
+    lightness = _WRAP_LIGHTNESS[(wrap - 1) % len(_WRAP_LIGHTNESS)]
+    extra = (wrap - 1) // len(_WRAP_LIGHTNESS)  # >48 clusters: nudge so still unique
+    if extra:
+        lightness = min(0.93, max(0.10, lightness + 0.05 * (extra if wrap % 2 else -extra)))
+    r2, g2, b2 = colorsys.hls_to_rgb(h, lightness, s)
+    return '#{:02x}{:02x}{:02x}'.format(int(r2 * 255), int(g2 * 255), int(b2 * 255))

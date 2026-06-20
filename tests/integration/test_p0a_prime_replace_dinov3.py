@@ -23,6 +23,13 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="DINOv3 HuggingFace migration is intentionally NOT adopted — CASTLE "
+    "loads DINOv3 from a local checkpoint via gdown by design (project decision "
+    "2026-06-20: HF needs a user account + Meta license acceptance for no UX gain). "
+    "These tests describe that unimplemented HF path."
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CASTLE_DIR = REPO_ROOT / "castle"
 

@@ -230,7 +230,7 @@ def test_migrate_legacy(tmp_path):
     assert info is not None
     assert info.session_id == "session_001"
     assert info.name == "Migrated Session"
-    assert info.n_clusters == 3  # len(df) - 1
+    assert info.n_clusters == 4  # one cluster per id.csv row (no -1 noise row in this fixture)
     assert info.model == "dinov3_vitb16"
     assert info.roi_id == 1
     assert info.bin_size == 5

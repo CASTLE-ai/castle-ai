@@ -139,8 +139,25 @@ def get_project_info(storage_path: str, project_name: str) -> dict:
         project_name: Project name
     
     Returns:
-        dict with keys: 'name', 'path', 'videos', 'video_count', 'config'
+        dict with keys: 'name', 'path', 'videos', 'video_count', 'latent_count',
+        'config'. If the project does not exist, the same keys are returned with
+        empty values plus an 'error' key explaining that the project was not found.
     """
+    # Detect a missing project explicitly. get_project_config() deliberately
+    # swallows a missing/!malformed config.json and returns an empty default
+    # config (for resilience mid-pipeline), so without this check a nonexistent
+    # project would silently come back looking like a valid empty one.
+    project_path = os.path.join(storage_path, project_name)
+    if not os.path.exists(os.path.join(project_path, 'config.json')):
+        return {
+            'name': project_name,
+            'path': project_path,
+            'videos': [],
+            'video_count': 0,
+            'latent_count': 0,
+            'config': {},
+            'error': 'Project not found',
+        }
     try:
         project_path, config = get_project_config(storage_path, project_name)
         videos = sorted(config.get('source', []))

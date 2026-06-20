@@ -55,3 +55,19 @@ def synthetic_video(tmp_path_factory) -> Path:
             writer.write_frame(frame)
 
     return out_path
+
+
+# ---- Collection hooks ----
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-mark every test under ``tests/integration/`` as ``integration``.
+
+    Integration tests need GPU / model weights / heavy fixtures and must stay
+    out of the default ``pytest -m 'not integration'`` CI lane. Marking by file
+    location (rather than relying on each author remembering the decorator)
+    keeps that gate reliable — historically only ~7 of the integration tests
+    carried the marker, so the rest leaked into the unit lane.
+    """
+    for item in items:
+        if "integration" in Path(str(item.fspath)).parts:
+            item.add_marker(pytest.mark.integration)

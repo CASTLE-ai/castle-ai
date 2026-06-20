@@ -130,7 +130,7 @@ def test_load_annotator_data_missing_npz(tmp_path):
     npz_path = os.path.join(storage_path, project_name, "cluster", "cluster_.npz")
     os.remove(npz_path)
 
-    with pytest.raises(FileNotFoundError, match="cluster_.npz"):
+    with pytest.raises(FileNotFoundError, match=r"cluster_\*\.npz"):
         load_annotator_data(storage_path, project_name)
 
 

@@ -43,7 +43,7 @@ def batch_run(
     no_save: bool = typer.Option(False, "--no-save", help="Do not save results to disk"),
 ) -> None:
     """Process all experiments defined in *yaml_file*."""
-    from castle.core.batch import BatchConfig, BatchRunner  # noqa: PLC0415
+    from castle.service.batch import BatchConfig, BatchRunner  # noqa: PLC0415
 
     if not os.path.isfile(yaml_file):
         typer.echo(f"Error: file not found: {yaml_file}", err=True)
@@ -146,7 +146,7 @@ def batch_report(
     Otherwise *output* is treated as a directory and one report per project
     is written there.
     """
-    from castle.core.batch import BatchConfig  # noqa: PLC0415
+    from castle.service.batch import BatchConfig  # noqa: PLC0415
     from castle.analysis.report import ReportGenerator  # noqa: PLC0415
 
     if not os.path.isfile(yaml_file):

@@ -9,7 +9,7 @@ import threading
 
 import pytest
 
-from castle.core.batch import BatchConfig, BatchRunner
+from castle.service.batch import BatchConfig, BatchRunner
 
 
 def _two_project_runner():

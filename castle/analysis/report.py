@@ -83,9 +83,10 @@ tr:hover td { background: #ebf8ff; }
 
 
 def _fig_to_b64(fig) -> str:  # type: ignore[type-arg]
-    """Encode a matplotlib Figure as a base64 PNG string."""
+    """Encode a matplotlib Figure as a base64 PNG string (report-embed DPI)."""
+    from castle.core.config import REPORT_EMBED_DPI
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=REPORT_EMBED_DPI)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("utf-8")
 

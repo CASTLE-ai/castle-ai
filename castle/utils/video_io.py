@@ -499,32 +499,42 @@ class VideoReader:
                 logger.warning(f"跳過影格 {i}: {e}")
                 continue
     
-    def get_batch_frames(self, indices: List[int]) -> List[np.ndarray]:
-        """
-        批次獲取影格
-        
+    def get_batch_frames(
+        self, indices: List[int], on_error: str = "raise"
+    ) -> List[np.ndarray]:
+        """批次獲取影格。
+
         Args:
-            indices: 影格索引列表
-            
+            indices: 影格索引列表。
+            on_error: 讀取失敗時的行為。``"raise"``（預設）直接拋出 —
+                預設不再靜默以全黑影格補位，因為黑影格會被下游視為一個
+                虛假的「行為」而污染科學輸出。``"zero"`` 才會插入全黑佔位
+                影格（保持與索引對齊，需明確選用）；``"skip"`` 則略過。
+
         Returns:
-            影格陣列列表
-            
+            影格陣列列表（``on_error="raise"`` 時長度等於 ``indices``）。
+
         Raises:
-            ValueError: 當索引列表為空時
+            ValueError: 當索引列表為空、或 ``on_error`` 不合法時。
+            Exception: ``on_error="raise"`` 且某影格讀取失敗時，原樣拋出。
         """
         if not indices:
             raise ValueError("索引列表不能為空")
-        
+        if on_error not in ("raise", "zero", "skip"):
+            raise ValueError(f"on_error must be raise/zero/skip, got {on_error!r}")
+
         frames = []
         for idx in indices:
             try:
-                frame = self.get_frame(idx)
-                frames.append(frame)
+                frames.append(self.get_frame(idx))
             except Exception as e:
-                logger.warning(f"跳過影格 {idx}: {e}")
-                # 添加空影格佔位符（與原索引對應）
-                frames.append(np.zeros((self.height, self.width, 3), dtype=np.uint8))
-        
+                if on_error == "raise":
+                    raise
+                logger.warning("跳過影格 %s: %s", idx, e)
+                if on_error == "zero":
+                    # 明確選用的全黑佔位影格（保持索引對齊）。
+                    frames.append(np.zeros((self.height, self.width, 3), dtype=np.uint8))
+
         return frames
     
     def get_info(self) -> VideoInfo:

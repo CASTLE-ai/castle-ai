@@ -72,6 +72,16 @@ DINOV3_CONSTANTS = {
 }
 
 
+# --- Figure output (publication quality) --------------------------------------
+# Standalone figures (e.g. the group ethogram) are publication artifacts, so they
+# render at 300 DPI and also emit a vector sibling (SVG) by default — journals
+# expect >=300 DPI raster or vector line art. Figures embedded in the HTML report
+# render at a lighter DPI to keep the (base64-inlined) report small.
+PUBLICATION_DPI = 300
+REPORT_EMBED_DPI = 200
+FIGURE_VECTOR_FORMAT = "svg"  # vector sibling format for publication figures
+
+
 # --- Backbone version pinning (reproducibility) -------------------------------
 # Pin the torch.hub backbone repos to explicit commits so a re-run pulls the
 # SAME backbone code — and, for DINOv2, the same pretrained-weight URLs baked

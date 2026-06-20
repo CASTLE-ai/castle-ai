@@ -172,7 +172,7 @@ def plot_group_ethogram(
     figsize: Optional[tuple[float, float]] = None,
     bar_height: float = 0.8,
     social_event_color: str = "#CC0000",
-    dpi: int = 150,
+    dpi: int = 300,  # config.PUBLICATION_DPI — publication-grade raster
 ) -> str:
     """Generate a multi-subject ethogram visualization.
 
@@ -350,8 +350,10 @@ def plot_group_ethogram(
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(str(out), dpi=dpi, bbox_inches="tight")
+    # Publication artifact: save at the configured DPI + a vector (SVG) sibling.
+    from castle.visualization.figure_io import save_publication_figure
+    written = save_publication_figure(fig, str(out), dpi=dpi)
     plt.close(fig)
 
-    logger.info("plot_group_ethogram: saved '%s'", out)
+    logger.info("plot_group_ethogram: saved %s", written)
     return str(out.resolve())

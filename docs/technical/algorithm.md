@@ -168,7 +168,7 @@ CASTLE's UMAP implementation uses:
 
 The `n_neighbors` parameter controls the scale of structure preserved — higher values capture more global patterns, lower values capture finer local details.
 
-**Input standardization (default ON)**: The first (raw-feature) UMAP stage now applies per-feature z-score standardization by default — the default UMAP config preset has `"standardize": true`. This improves cluster separation, but it **changes embeddings relative to older runs**, so the DBSCAN `eps` may need re-tuning. To opt out, set `"standardize": false` in the stage-0 UMAP config.
+**`standardize` is a legacy no-op**: per-feature input z-score standardization was **removed**. A `"standardize"` key in a UMAP config is now accepted but **ignored** (dropped before UMAP), so it has no effect on the embedding. UMAP runs on the raw (or prepared L2+PCA) features directly.
 
 !!! note "Reproducibility"
     Every UMAP run records its resolved random seed. For each clustering session, CASTLE writes a `umap_log.jsonl` file with one JSON line per UMAP stage, capturing the seed and that stage's config. To reproduce an embedding exactly, reuse the logged seed (run on the CPU/deterministic path for bit-identical results; GPU optimization can still vary slightly even with a fixed seed).

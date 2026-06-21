@@ -19,7 +19,9 @@ CASTLE is a **training-free** framework for unsupervised animal behavior analysi
 - 🏷️ **Cluster Annotator** — grid video browser with per-session labels, comment field, and auto-save
 - 📊 **Analysis tab** — Ethogram, Quality Metrics (silhouette, CH, DB), Group Comparison
 - 📦 **Export tab** — ZIP download with selectable data components
-- 📁 **Publication-ready outputs** — CSV labels, UMAP plots, ethograms, SRT subtitles, NWB export
+- 📁 **Publication-ready outputs** — CSV labels, UMAP plots, ethograms (300 DPI + SVG), SRT subtitles, NWB export
+- ♿ **Colour-vision-safe** — a unified dual-mode palette (colorblind Okabe-Ito ↔ vibrant) with a live toggle, applied to figures *and* the interactive views
+- 🔁 **Reproducible** — run-environment provenance stamped into every artifact, pinned + hash-verified backbones, and a citable `castle benchmark` accuracy harness ([reproducibility](technical/reproducibility.md), [benchmarking](technical/benchmarking.md))
 
 ---
 
@@ -58,7 +60,7 @@ Raw Video → SAM (segment) → DeAOT (track) → Preprocess (stabilize) → DIN
 !!! tip "New in the 2026-06 release"
     - **DINOv3 by default** — the default encoder is `dinov3_vitb16` (768-d); `dinov3_vitl16` (1024-d) and `dinov2_vitb14_reg4_pretrain` (768-d) remain selectable.
     - **Optional multi-GPU extraction** — set `CASTLE_MULTI_GPU=1` to split a video's frames across multiple CUDA GPUs during feature extraction (~1.9× faster on 2 GPUs, bit-identical output).
-    - **Reproducible UMAP** — each run logs its resolved random seed to a per-session `umap_log.jsonl`; reuse the seed to reproduce an embedding. Input z-score standardization is now **on by default** for the first UMAP stage, which may require re-tuning the DBSCAN `eps`.
+    - **Reproducible UMAP** — each run logs its resolved random seed to a per-session `umap_log.jsonl`; reuse the seed to reproduce an embedding.
 
 ---
 

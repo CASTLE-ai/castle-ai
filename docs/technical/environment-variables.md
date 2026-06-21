@@ -70,6 +70,20 @@ cpu-vs-cuda decision. They are independent layers.
 | `CASTLE_SCRATCH_DIR` | auto | path | Node-local directory for large temp files (memmaps, encode probes); unset, CASTLE auto-picks `/dev/shm` on big-RAM boxes or a non-network tmpdir — never silently a network FS. |
 | `CASTLE_FORCE_NETWORK_FS` | auto-probe | bool | Overrides network-filesystem detection (`1` = force "network", `0` = force "local"); for exotic mounts and tests. |
 
+## Models & reproducibility
+
+| Variable | Default | Type | Effect |
+|----------|---------|------|--------|
+| `CASTLE_DINOV2_REF` | pinned commit | str | Overrides the pinned `facebookresearch/dinov2` torch.hub commit (see `config.TORCH_HUB_REFS`). Set empty to track `main`. Pinning makes a re-run pull the same backbone code/weights. |
+| `CASTLE_DINOV3_REF` | pinned commit | str | Same, for `facebookresearch/dinov3`. |
+| `CASTLE_ALLOW_UNVERIFIED_CKPT` | `False` | bool | Skips the DINOv3 checkpoint SHA-256 verification done before load. Set truthy only when intentionally using a custom (non-release) checkpoint. |
+
+## Figures & appearance
+
+| Variable | Default | Type | Effect |
+|----------|---------|------|--------|
+| `CASTLE_COLOR_MODE` | `colorblind` | str | Cluster colour palette mode ∈ `{colorblind, normal}`. `colorblind` (default) uses the Okabe-Ito colour-vision-safe set for figures **and** the interactive tree/scatter; `normal` uses a vibrant palette. The Behavior Microscope's "Colour vision" toggle sets this live for the session; an invalid value falls back to the default. |
+
 ## Encoding & diagnostics
 
 | Variable | Default | Type | Effect |
@@ -81,6 +95,10 @@ cpu-vs-cuda decision. They are independent layers.
 !!! tip "Reproducibility runs"
     For a paper-grade, deterministic run: set a fixed `CASTLE_SEED`, add
     `CASTLE_STRICT_CUDA=1` (bit-identical CUDA, ~10% slower), and prefer the CPU
-    UMAP path. Each saved artifact (latent sidecar, prepare-cache manifest, export
-    `run_manifest.json`) records the resolved library/GPU stack so a reproduction
-    can be told apart from a backend mismatch.
+    UMAP path. The backbones are pinned to explicit torch.hub commits and the
+    DINOv3 checkpoint is SHA-256-verified on load, so the model code/weights are
+    fixed too. Each saved artifact (latent sidecar, prepare-cache manifest, export
+    `run_manifest.json`, HTML report footer, and `castle benchmark` report)
+    records the resolved library/GPU stack so a reproduction can be told apart
+    from a backend mismatch. See [Reproducibility](reproducibility.md) and
+    [Benchmarking](benchmarking.md).

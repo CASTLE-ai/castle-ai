@@ -57,8 +57,6 @@
 │  ── Phase 3 Simplification Modules 🔷 ──────────────────────── │
 │  project_data.py       — ProjectData + VideoInfo dataclasses   │
 │                          (unified path computation)            │
-│  cluster_data.py       — ClusterData dataclass (unified        │
-│                          cluster artefact container)           │
 │  environment.py        — get_device() (canonical device        │
 │                          detection: MPS > CUDA > CPU)          │
 └──────────────────────────┬─────────────────────────────────────┘
@@ -203,13 +201,12 @@ Clean separation between frontends and business logic. Both frontends (CLI, Grad
 | `nwb_export.py` | NWB file creation from CASTLE cluster data |
 | `model_registry.py` ⚡ | `ModelRegistry` singleton — lazy load, explicit unload, and CUDA memory accounting for SAM / DeAOT / DINOv2 / DINOv3 |
 | `auto_batch.py` ⚡ | `auto_retry_on_oom()` — automatic OOM retry with halved batch |
-| `pipeline.py` ⚡ | `Pipeline` + `PipelineConfig` — full tracking → extraction orchestrator with per-stage GPU cleanup and VRAM logging |
+| `pipeline.py` ⚡ | `Pipeline` + `PipelineConfig` — full tracking → extraction orchestrator with per-stage GPU cleanup and VRAM logging. _Now lives in `castle.service.pipeline`; `castle.core.pipeline` is a compatibility shim (orchestration is a service-layer concern)._ |
 | `cache.py` ⚡ | `PipelineCache` — SHA-256 content-addressed cache; manifest persisted as JSON; stale-entry auto-invalidation |
 | `project_data.py` 🔷 | `ProjectData` + `VideoInfo` dataclasses — unified project path computation, eliminating scattered `os.path.join` calls |
-| `cluster_data.py` 🔷 | `ClusterData` dataclass — consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, `annotations.csv` into one typed container |
 | `environment.py` | `get_device()` — canonical device detection (MPS > CUDA > CPU). Algorithm-class dispatch (UMAP/DBSCAN/HDBSCAN, cuML vs umap-learn/sklearn) lives in `clustering_backends.py` via `resolve_umap_class` / `resolve_dbscan_class` |
 | `multi_subject.py` 🟢 | `SubjectTrack` + `MultiSubjectProject` — multi-subject tracking data containers and pipeline orchestration (P4) |
-| `batch.py` 🟢 | `BatchConfig` + `BatchRunner` — YAML-driven multi-project batch processing with optional parallelism and summary reporting (P4) |
+| `batch.py` 🟢 | `BatchConfig` + `BatchRunner` — YAML-driven multi-project batch processing with optional parallelism and summary reporting (P4). _Now lives in `castle.service.batch`; `castle.core.batch` is a compatibility shim._ |
 
 ### `castle/analysis/` — Analysis Layer (Phase 4) 🟢
 
@@ -508,41 +505,6 @@ pd.ensure_dirs()
 
 ---
 
-### Unified Cluster Data (`ClusterData`)
-
-```python
-from castle.core.cluster_data import ClusterData
-
-# Load from existing project cluster directory
-cd = ClusterData.load("/data/projects/my_project/cluster")
-print(cd.n_clusters())           # → int
-frames = cd.get_cluster_frames(0)  # → np.ndarray of frame indices
-
-# Construct from freshly computed arrays
-cd2 = ClusterData.from_arrays(embeddings, cluster_ids, hierarchy=tree)
-
-# Persist back to disk
-cd2.save("/data/projects/my_project/cluster")
-```
-
-**`ClusterData`** fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `labels` | `np.ndarray (N,)` | Flat cluster ID per temporal bin; `-1` = unassigned |
-| `hierarchy` | `dict` | Optional hierarchical tree from clustering |
-| `names` | `dict[int, str]` | Cluster ID → human-readable name |
-| `colors` | `dict[int, tuple]` | Cluster ID → `(R, G, B)` tuple |
-| `annotations` | `dict[int, str]` | Cluster ID → annotation label string |
-
-`ClusterData.load()` reads files in order of precedence:
-1. `id.csv` → names + colors
-2. `cluster_*.npz` → flat label array + hierarchy
-3. `time_series_*.csv` → fallback label source
-4. `annotations.csv` (or `sessions/<session_id>/annotations.csv`)
-
----
-
 ### Centralised Device Management (`get_device`)
 
 ```python
@@ -677,7 +639,7 @@ path = plot_group_ethogram(ethogram, output_path="/tmp/group_ethogram.png")
 
 ---
 
-### Batch Processing (`castle/core/batch.py`)
+### Batch Processing (`castle/service/batch.py`)
 
 YAML-driven multi-project batch runner.
 

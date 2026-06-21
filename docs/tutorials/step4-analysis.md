@@ -125,10 +125,12 @@ You can edit the UMAP config JSON directly for full control. The format is a lis
 - `n_neighbors`: number of nearest neighbors (larger = broader structure)
 - `min_dist`: minimum distance between points in embedding (0.0 for clustering)
 - `n_components`: output dimensions for that stage
-- `standardize`: per-feature z-score the stage's input before UMAP (default `true` for the first, raw-feature stage)
 
-!!! note "Input standardization is on by default"
-    The default UMAP config preset has `"standardize": true` for the first (raw-feature) stage, which z-scores each input feature before reduction. This generally improves cluster separation, but it **changes the embedding** compared with older (non-standardized) runs — so you may need to **re-tune the DBSCAN `eps`** afterwards. Set `"standardize": false` in the config JSON to restore the previous behaviour.
+!!! note "`standardize` is a legacy no-op"
+    Older configs/presets may include a `"standardize"` key. Per-feature input
+    standardization was **removed**; the key is now accepted but **ignored**
+    (dropped before UMAP), so leaving it in a saved config is harmless and has no
+    effect on the embedding.
 
 ---
 
@@ -233,6 +235,20 @@ After generating clusters, use the **Cluster Annotator** sub-tab to review and l
 ### Mask Contour Overlay
 
 When tracking data is available, ROI mask contours are drawn over the video frames so you can confirm the tracked region corresponds to the animal.
+
+---
+
+## Colour vision
+
+A **Colour vision** toggle in the Explore panel switches the cluster palette
+between **Colorblind-safe** (Okabe-Ito, the default) and **Vibrant**. The same
+mode colours the cluster tree, the embedding scatter, the ethogram, and the
+exported publication figures, so what you see while exploring matches what you
+publish. The choice applies for the session; set a default for headless/CLI runs
+with the `CASTLE_COLOR_MODE` environment variable
+(see [Environment Variables](../technical/environment-variables.md)).
+
+![Behavior Microscope — cluster tree, embedding, and the Colour vision toggle](../assets/screenshots/behavior-microscope-colour-vision.png)
 
 ---
 

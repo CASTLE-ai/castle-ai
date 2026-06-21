@@ -142,12 +142,12 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 
 ![Behavior analysis results](../assets/screenshots/quickstart-analysis.png)
 
-!!! note "Reproducibility & input standardization"
-    The first (raw-feature) UMAP stage now applies **per-feature z-score standardization by default**
-    (`"standardize": true` in the UMAP config), which improves cluster separation but changes
-    embeddings relative to older runs — you may need to re-tune the DBSCAN `eps`. Every UMAP run also
-    records its resolved random seed in a per-session `umap_log.jsonl` (one JSON line per stage). Reuse
-    that seed — on the CPU/deterministic path — to reproduce an embedding exactly.
+!!! note "Reproducibility"
+    A `"standardize"` key in a UMAP config is a **legacy no-op** — per-feature z-score
+    standardization was removed, so the key is accepted but ignored and has no effect on the
+    embedding. Every UMAP run records its resolved random seed in a per-session `umap_log.jsonl`
+    (one JSON line per stage). Reuse that seed — on the CPU/deterministic path — to reproduce an
+    embedding exactly.
 
 ---
 

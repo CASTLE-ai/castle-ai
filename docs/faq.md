@@ -115,8 +115,11 @@ Adjust the **eps** parameter in DBSCAN:
 - **Too few clusters**: decrease eps (e.g., 0.5, 0.3)
 - **All noise (-1)**: eps is too small, increase it
 
-!!! note "Re-tuning eps after upgrading"
-    Per-feature **standardization (z-score) is now on by default** for the first (raw-feature) UMAP stage (`"standardize": true` in the default UMAP config). It generally improves cluster separation, but it changes the embedding scale compared with older runs, so a previously good `eps` may no longer fit — re-tune it. Standardization can be toggled in the UMAP config JSON.
+!!! note "`standardize` is a legacy no-op"
+    Per-feature input standardization (z-score) was **removed**. A `"standardize"`
+    key in a UMAP config is now accepted but **ignored** (dropped before UMAP), so
+    it has no effect on the embedding. `eps` still depends on your UMAP parameters
+    and data, so re-tune it whenever you change the UMAP config.
 
 ### How do I reproduce an embedding exactly?
 

@@ -84,8 +84,13 @@ The high-dimensional features are reduced and clustered to discover behavioral p
 
 CASTLE is a **human-in-the-loop** tool: cluster boundaries and labels must be reviewed by the user in the Behavior Microscope tab before they are scientifically meaningful. There is intentionally no "one-click cluster" entry point.
 
-!!! note "Reproducibility & standardization"
-    Input **standardization (per-feature z-score) is on by default** for the first (raw-feature) UMAP stage (`"standardize": true` in the default UMAP config). It improves cluster separation but changes embeddings relative to older runs, so the DBSCAN `eps` may need re-tuning; it is configurable in the UMAP config JSON. Every UMAP run also records its resolved random seed, and each clustering session writes a `umap_log.jsonl` file (one JSON line per UMAP stage with seed + config). Reuse the logged seed — via the CPU/deterministic path — to reproduce an embedding exactly.
+!!! note "Reproducibility"
+    A `"standardize"` key in a UMAP config is a **legacy no-op** — per-feature
+    z-score standardization was removed, so the key is accepted but ignored. Every
+    UMAP run records its resolved random seed, and each clustering session writes a
+    `umap_log.jsonl` file (one JSON line per UMAP stage with seed + config). Reuse
+    the logged seed — via the CPU/deterministic path — to reproduce an embedding
+    exactly.
 
 ### 6. Cluster Annotator
 

@@ -96,7 +96,7 @@ config = data['config']     # UMAP configuration used
 - Cluster value of `-1` indicates unclassified frames
 
 !!! tip "Reproducing an embedding"
-    Each clustering session writes a `umap_log.jsonl` file, with one JSON line per UMAP stage recording the resolved random seed and the config used. To reproduce an embedding exactly, reuse the logged seed (the default UMAP preset also z-score **standardizes** the raw-feature stage, so keep that setting too). For bit-identical results, run the CPU/deterministic UMAP path.
+    Each clustering session writes a `umap_log.jsonl` file, with one JSON line per UMAP stage recording the resolved random seed and the config used. To reproduce an embedding exactly, reuse the logged seed. For bit-identical results, run the CPU/deterministic UMAP path.
 
 ---
 

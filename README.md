@@ -5,7 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/castle-ai.svg)](https://badge.fury.io/py/castle-ai)
 [![CI](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/CASTLE-ai/castle-ai/actions/workflows/ci.yml)
 
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE.txt)
 [![Documentation](https://img.shields.io/badge/docs-castle--ai.github.io-blue)](https://castle-ai.github.io/castle-ai/)
 [![PyPI Downloads](https://static.pepy.tech/badge/castle-ai/month)](https://pepy.tech/projects/castle-ai)
 [![PyPI Downloads](https://static.pepy.tech/badge/castle-ai)](https://pepy.tech/projects/castle-ai)
@@ -30,6 +30,15 @@
 - [API Reference](https://castle-ai.github.io/castle-ai/reference/api/)
 
 ## Latest Updates
+- **2026-06: Maturity & Reproducibility** 🟢
+  - **Reproducibility-by-default**: every saved artifact (latent sidecar, prepared-cache manifest, export `run_manifest.json`, HTML report footer, benchmark report) records the resolved library/GPU stack via `collect_run_environment()`. Backbones are pinned to explicit `torch.hub` commits (`config.TORCH_HUB_REFS`) and the DINOv3 checkpoint is **SHA-256-verified** on load.
+  - **`castle benchmark`** — reproducible, citable accuracy harness: NMI / ARI / V-measure vs. a ground-truth CSV, plus unsupervised quality, written as a JSON + Markdown report with a dataset DOI (CalMS21 registered). Dataset-agnostic.
+  - **Unified dual-mode colour palette**: one engine colours **figures and the interactive tree/scatter** with a `colorblind` (Okabe-Ito, default) ↔ `normal` (vibrant) toggle — a live "Colour vision" control in the Behavior Microscope, or the `CASTLE_COLOR_MODE` env var.
+  - **Publication-grade figures**: standalone figures render at **300 DPI + an SVG vector sibling**.
+  - **Transfer probe**: cluster models record their training `bin_size` and warn on a cross-bin apply (silent feature-distribution mismatch).
+  - **Maintainability**: `clustering_service` god-module split (1876 → 1236 lines, into `cluster_npz`/`cluster_params`/`cluster_persistence`/`cluster_restore`); pipeline/batch orchestration moved to the service layer (core no longer imports service); CI (ruff + import-smoke + pytest on py3.10/3.12).
+  - **Apache-2.0** licensed; `pip install castle-ai` fixed (GPU-only deps moved to a `[gpu]` extra). **842 unit + 80 integration tests** (839 + 70 passing; the rest are environment-gated skips).
+
 - **2026-02: Phase 4 — Multi-Subject, Batch Processing & Reports** 🟢
   - **`SubjectTrack` + `MultiSubjectProject`** (`castle/core/multi_subject.py`): First-class support for videos with multiple animals. Each subject is defined by body + head ROI IDs in the shared mask HDF5. `process_all()` extracts per-subject positions and angles; the resulting `SubjectTrack` objects hold latents and cluster labels set by your extraction/clustering steps.
   - **Social Feature Extraction** (`castle/analysis/social_features.py`): `compute_pairwise_distance`, `compute_relative_orientation`, `compute_approach_score`, and `detect_social_events` — all operating on synchronised `SubjectTrack` lists and returning `(N, S, S)` arrays or event dicts.
@@ -39,7 +48,6 @@
 
 - **2026-02: Phase 3 — Simplification & Code Clarity**
   - **`ProjectData` + `VideoInfo`** (`castle/core/project_data.py`): Unified project path dataclass — eliminates all scattered `os.path.join(storage_path, project_name, …)` calls. Single `from_path()` constructor computes every standard directory and per-video path.
-  - **`ClusterData`** (`castle/core/cluster_data.py`): Typed dataclass that consolidates `cluster_*.npz`, `time_series_*.csv`, `id.csv`, and `annotations.csv` into one container with `load()`, `save()`, `from_arrays()`, `get_cluster_frames()`, and `n_clusters()`.
   - **`get_device()`** (`castle/core/environment.py`): Single canonical device detection (MPS on Apple Silicon > CUDA > CPU), computed once in the module-level `env` singleton. Algorithm dispatch lives in `castle/core/clustering_backends.py` — `resolve_umap_class(device)` / `resolve_dbscan_class(device)` pick GPU-accelerated cuML on CUDA or umap-learn/sklearn on CPU/MPS — so there are no scattered `if cuda … elif mps … else` branches.
   - **UI Handler Pattern Guide** (`castle/ui/HANDLER_GUIDE.md`): Documents the target thin-handler / fat-service convention for all Gradio UI callbacks — handler ≤ 15 lines, zero algorithmic logic, one service call, convert domain exceptions to `gr.Error`.
 
@@ -166,6 +174,7 @@ Opens at [http://localhost:7860](http://localhost:7860) with 8 tabs:
 
 ```bash
 castle --help
+castle --version                          # CASTLE version
 # Key commands:
 castle project init <name>
 castle track <project>
@@ -174,6 +183,9 @@ castle extract <project>
 castle cluster run <project>
 castle ethogram analyze <project>
 castle compare run <project_a> <project_b>
+castle benchmark run <project> --gt labels.csv --dataset calms21  # Accuracy vs. ground truth (NMI/ARI), citable report
+castle benchmark datasets                 # List registered DOI'd benchmark datasets
+castle env                                # Print the run environment (for bug reports / reproducibility)
 castle batch run experiments.yaml         # Batch: run full pipeline across experiments
 castle batch status experiments.yaml      # Batch: show last run status
 castle batch report experiments.yaml -o reports/  # Batch: generate HTML reports

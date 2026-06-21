@@ -26,6 +26,31 @@ EXCLUDE_REASON_NAMES: Dict[int, str] = {
 }
 
 
+def find_bouts(cluster_array: np.ndarray, cluster_id: int) -> List[Tuple[int, int]]:
+    """Find all consecutive bout segments for a given cluster ID.
+
+    Pure bout segmentation over a cluster-label array — a core algorithm (no
+    I/O), so it lives here in ``core`` rather than the service layer.
+    ``service.bout_service`` re-exports it for backward compatibility.
+
+    Args:
+        cluster_array: 1D array of cluster assignments per bin.
+        cluster_id: Target cluster ID.
+
+    Returns:
+        List of (start_bin, end_bin) tuples (end exclusive), sorted longest first.
+    """
+    mask = (cluster_array == cluster_id).astype(int)
+    if mask.sum() == 0:
+        return []
+    diff = np.diff(mask, prepend=0, append=0)
+    starts = np.where(diff == 1)[0]
+    ends = np.where(diff == -1)[0]
+    bouts = list(zip(starts.tolist(), ends.tolist()))
+    bouts.sort(key=lambda b: b[1] - b[0], reverse=True)
+    return bouts
+
+
 def excluded_reason_counts(
     cluster_labels: np.ndarray,
     exclude_reason: Optional[np.ndarray] = None,
@@ -192,8 +217,6 @@ def extract_bouts(cluster_labels: np.ndarray, fps: float = 30.0) -> List[BoutInf
     if len(cluster_labels) == 0:
         return []
 
-    from castle.service.bout_service import find_bouts as _find_bouts
-
     unique_ids = np.unique(cluster_labels)
     # Collect (start, end, cluster_id) tuples then sort by start.
     # Skip -1 (noise/unlabeled): it is a gap, not a behavioral state.
@@ -201,7 +224,7 @@ def extract_bouts(cluster_labels: np.ndarray, fps: float = 30.0) -> List[BoutInf
     for cid in unique_ids:
         if int(cid) == -1:
             continue
-        for start, end in _find_bouts(cluster_labels, int(cid)):
+        for start, end in find_bouts(cluster_labels, int(cid)):
             raw.append((start, end, int(cid)))
 
     raw.sort(key=lambda t: t[0])

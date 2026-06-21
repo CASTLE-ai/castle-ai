@@ -70,29 +70,10 @@ def _transcode_to_h264(video_path: str) -> None:
                 pass
 
 
-def find_bouts(cluster_array: np.ndarray, cluster_id: int) -> List[Tuple[int, int]]:
-    """Find all consecutive bout segments for a given cluster ID.
-
-    Args:
-        cluster_array: 1D array of cluster assignments per bin.
-        cluster_id: Target cluster ID.
-
-    Returns:
-        List of (start_bin, end_bin) tuples (end exclusive), sorted longest first.
-    """
-    mask = (cluster_array == cluster_id).astype(int)
-    if mask.sum() == 0:
-        return []
-
-    # Find transitions
-    diff = np.diff(mask, prepend=0, append=0)
-    starts = np.where(diff == 1)[0]
-    ends = np.where(diff == -1)[0]
-
-    bouts = list(zip(starts.tolist(), ends.tolist()))
-    # Sort by length (longest first)
-    bouts.sort(key=lambda b: b[1] - b[0], reverse=True)
-    return bouts
+# find_bouts is a pure bout-segmentation algorithm, so it now lives in
+# castle.core.ethogram (core, not service). Re-exported here so existing
+# `from castle.service.bout_service import find_bouts` importers keep working.
+from castle.core.ethogram import find_bouts  # noqa: F401,E402
 
 
 def extract_cluster_bouts(

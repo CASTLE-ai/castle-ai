@@ -13,7 +13,7 @@ import numpy as np
 
 from castle.core.environment import get_device
 from castle.core.config import (
-    PALETTE_HEX, GREY_UNLABELED, palette_color, color_for_name,
+    GREY_UNLABELED, palette_color, color_for_name,
 )
 from castle.core.types import CastleDataError, InsufficientDataError
 
@@ -113,8 +113,6 @@ def _knn_sampled(sampled, query_source, query_rows, k, metric, use_gpu,
 
 DEFAULT_DEVICE = get_device()
 
-_palette = PALETTE_HEX * 5
-
 
 def generate_distinct_color(index, saturation=0.7):
     """Distinct colour for cluster ``index`` via the unified mode-aware palette.
@@ -137,11 +135,6 @@ def _color_for_name(name: str) -> str:
     stay distinct.
     """
     return color_for_name(name)
-
-
-def generate_palette(avoid):
-    res = [c for c in _palette if c not in avoid]
-    return res or _palette
 
 
 def _resolve_umap_seed(cfg: dict, base_seed: Optional[int], stage: int) -> tuple:
@@ -425,7 +418,6 @@ class LocalLatent:
         self.index_mask = index_mask
         self.device = device
         self.color_avoid = color_avoid
-        self._palette = generate_palette(color_avoid)
         self.export = dict()
         # UMAP-subsampling state (None unless build_embedding subsampled this run).
         # _embedding_sampled is the S-row UMAP output DBSCAN clusters on; the

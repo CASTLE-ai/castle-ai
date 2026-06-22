@@ -154,7 +154,8 @@ def on_cluster_select(storage_path, project_name, annotator_data, annotations_st
         (stripped_cluster_name, video_path, info_text, behavior_radio_update,
         comment_update) — the first element is stored in
         ``selected_cluster_name`` state to avoid ✅-prefix validation issues with
-        the Radio component; the last re-displays the cluster's saved comment.
+        the Radio component; the last two re-display the cluster's saved label
+        and comment so the user can see how it was previously annotated.
     """
     cluster_name = _strip_check(cluster_choice)
     if not cluster_name or annotator_data is None:
@@ -185,16 +186,30 @@ def on_cluster_select(storage_path, project_name, annotator_data, annotations_st
         overlay_mask=True,
     )
 
-    info_text = (
-        f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
+    # Restore this cluster's saved annotation (if any) so the user can see how
+    # it was previously labeled: the Behavior Label radio switches to the stored
+    # label and the comment box re-displays the stored note. For an unlabeled
+    # cluster both reset to empty — which also keeps the radio firing .change()
+    # (None → label) when the user then picks the same label used on a prior
+    # cluster, so auto-save still triggers. Redundant re-saves from this
+    # programmatic restore are suppressed by the guard in on_save_annotation.
+    saved = (annotations_state or {}).get(cluster_name) or {}
+    raw_label = saved.get("behavior_label")
+    saved_label = raw_label if isinstance(raw_label, str) and raw_label.strip() else None
+    raw_comment = saved.get("comment")
+    saved_comment = raw_comment if isinstance(raw_comment, str) else ""
+
+    info_text = f"**{cluster_name}** — {n_bins_in_cluster} bins, {n_bouts} bouts"
+    if saved_label:
+        info_text += f"  ·  🏷️ labeled **{saved_label}**"
+
+    return (
+        cluster_name,
+        video_path,
+        info_text,
+        gr.update(value=saved_label),
+        gr.update(value=saved_comment),
     )
-    # Reset behavior_radio to None so selecting the same label on a new cluster
-    # always triggers .change() and auto-saves correctly. Re-display the saved
-    # comment (if any) so a reloaded annotation's note is visible, not blank.
-    saved_comment = ""
-    if annotations_state:
-        saved_comment = (annotations_state.get(cluster_name) or {}).get("comment", "")
-    return cluster_name, video_path, info_text, gr.update(value=None), gr.update(value=saved_comment)
 
 
 def on_scheme_change(storage_path, project_name, scheme_name):
@@ -223,6 +238,18 @@ def on_save_annotation(
     """
     cluster_name = selected_cluster_name or ""
     if not cluster_name or not behavior_label:
+        return annotations_state, gr.update()
+
+    # Idempotency guard: selecting a cluster programmatically restores its saved
+    # label into the radio, which fires .change() → this handler. If nothing
+    # actually changed, skip the write (and the "Saved" toast) so merely viewing
+    # an already-annotated cluster doesn't spam redundant saves.
+    existing = (annotations_state or {}).get(cluster_name)
+    if existing and (
+        existing.get("behavior_label", "") == behavior_label
+        and existing.get("scheme", "") == (scheme_name or "")
+        and existing.get("comment", "") == (comment or "")
+    ):
         return annotations_state, gr.update()
 
     # Resolve session_id from AnnotatorData

@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from castle.service.project_service import get_project_info
-from castle.service.extraction_service import extract_latent, make_preprocess_config
+from castle.service.extraction_service import extract_latent, make_preprocess_config, latent_gap_summary
 from castle.cli.storage_util import get_storage
 
 console = Console()
@@ -118,5 +118,15 @@ def extract(
             else:
                 progress.update(task, description=f"[red]✗ {video_name}: no output[/red]")
             progress.stop_task(task)
+
+            # Surface frames the tracker never tracked (stored as NaN gaps).
+            for p in (result or "").split(';'):
+                summary = latent_gap_summary(p)
+                if summary and summary["n_skipped"]:
+                    console.print(
+                        f"[yellow]⚠ {video_name}: {summary['n_skipped']}/{summary['n_total']} "
+                        f"frame(s) ({summary['frac']:.1%}) had no tracked mask — skipped "
+                        f"(stored as gaps, ignored by clustering).[/yellow]"
+                    )
 
     console.print("[green]Extraction complete.[/green]")

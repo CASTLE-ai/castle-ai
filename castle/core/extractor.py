@@ -474,6 +474,44 @@ def _resolve_latent_dtype(latent_dtype):
     return np.float16 if str(latent_dtype).lower() in ("float16", "fp16", "half") else np.float32
 
 
+# Fraction of all-NaN (skipped) frames above which a latent is considered
+# unusable. Frames with no tracked mask are an *expected* data gap (they become
+# NaN placeholder rows), so a single bad stretch never aborts extraction — but a
+# latent that is essentially all gaps cannot be clustered, so we fail loudly
+# rather than write a useless file and defer a more confusing error to clustering.
+_NEAR_TOTAL_SKIP = 0.99
+
+
+def _count_nan_rows(arr) -> int:
+    """Number of all-NaN placeholder rows (skipped / failed frames).
+
+    Reads only column 0 — placeholder rows are written entirely NaN — so this
+    stays cheap and RAM-bounded even when ``arr`` is a large disk memmap.
+    """
+    n = int(arr.shape[0])
+    if n == 0:
+        return 0
+    return int(np.isnan(np.asarray(arr[:, 0])).sum())
+
+
+def _guard_near_total_skip(video_name: str, n_total: int, n_skipped: int) -> None:
+    """Raise :class:`ExtractionError` when essentially every frame was skipped.
+
+    An all-NaN latent cannot be clustered, so completing silently would only
+    defer a more confusing failure to the clustering step. The threshold is
+    ``_NEAR_TOTAL_SKIP`` of the frames (with a floor of 1 so an all-skipped
+    short clip still trips it).
+    """
+    if n_total == 0 or n_skipped >= max(1, int(_NEAR_TOTAL_SKIP * n_total)):
+        frac = (n_skipped / n_total) if n_total else 1.0
+        raise ExtractionError(
+            f"{video_name}: {n_skipped}/{n_total} frame(s) ({frac:.0%}) had no usable "
+            f"tracked mask, so the latent is essentially empty and cannot be "
+            f"clustered. Check this video's tracking output (re-run `castle track`) "
+            f"before extracting."
+        )
+
+
 # --- Core Function 1: Extract Latent ---
 def extract_roi_latent_from_video(
     storage_path: str,
@@ -684,10 +722,17 @@ def extract_roi_latent_from_video(
     (latent_array, failed_frame_ranges, n_batches_failed, latent_tmp), total_batches = \
         auto_retry_on_oom(_attempt, batch_size=batch_size, min_batch=1)
 
+    # Skipped/failed frames (no tracked mask, ROI absent, or a tolerated batch
+    # error) are stored as all-NaN placeholder rows; count them for the summary
+    # and the near-total guard below.
+    n_total = int(latent_array.shape[0])
+    n_skipped = _count_nan_rows(latent_array)
+
     # BUG-14: embed video / ROI / model identity so loaders can stop relying
     # on filename parsing. Always release + delete the memmap backing file after
     # save (success or error), so temp .latents.dat files don't accumulate.
     try:
+        _guard_near_total_skip(video_name, n_total, n_skipped)
         if hasattr(latent_array, "flush"):
             latent_array.flush()
         save_latent_with_metadata(
@@ -702,6 +747,8 @@ def extract_roi_latent_from_video(
                 "feature_layers": list(feature_layers) if feature_layers else None,
                 "rotation": False,
                 "failed_frame_ranges": failed_frame_ranges or None,
+                "n_skipped_frames": int(n_skipped),
+                "n_total_frames": int(n_total),
                 "remove_background": bool(preprocess_config.remove_background_switch),
                 "preprocess_session_id": session_id,
                 "device": str(device) if device else None,
@@ -734,6 +781,13 @@ def extract_roi_latent_from_video(
             "filters NaN rows).",
             video_name, n_batches_failed, total_batches,
             max_batch_failure_rate * 100, n_nan_frames,
+        )
+    if n_skipped:
+        logger.warning(
+            "Extraction for %s: %d/%d frame(s) (%.1f%%) had no usable tracked mask "
+            "and were skipped (stored as NaN gaps; downstream clustering ignores "
+            "them).",
+            video_name, n_skipped, n_total, 100.0 * n_skipped / max(n_total, 1),
         )
 
     # Update Config — use atomic read-modify-write context manager so two
@@ -817,7 +871,10 @@ def extract_roi_crop_video(
                     )
                     h, w = frame.shape[:2]
                     writer.write_frame(blank_page(h, w))
-                except (IOError, OSError, KeyError) as e:
+                except (IOError, OSError, KeyError, ValueError) as e:
+                    # ValueError covers H5IO.read_mask raising "Without mask at
+                    # frame N" for a frame the tracker never wrote — skip it
+                    # (blank frame) instead of crashing the crop render.
                     if on_frame_error == "raise":
                         raise ExtractionError(
                             f"Frame {i} in {video_name}: mask read failed: {e}"
@@ -862,7 +919,26 @@ class RotationDataset(VideoDataset):
             self.tracker = H5IO(self.mask_path, read_only=True)
 
         frame = self.reader[idx]
-        mask = self.tracker.read_mask(idx)
+        try:
+            mask = self.tracker.read_mask(idx)
+        except (ValueError, KeyError, OSError, IOError) as e:
+            # No tracked mask for this frame — skip it (all rotated views become
+            # NaN-placeholder rows via the model's empty-mask guard), unless the
+            # caller asked to fail hard. Mirrors VideoDataset.__getitem__.
+            if self.on_frame_error == "raise":
+                raise ROINotFoundError(
+                    f"No tracked mask for frame {idx} in {self.mask_path}. "
+                    f"Use on_frame_error='skip' (the default) to skip such frames."
+                ) from e
+            logger.warning(
+                "Frame %d in %s has no tracked mask; skipping all rotated views "
+                "(NaN placeholder).", idx, self.video_path,
+            )
+            h = self.preprocess.center_roi_crop_height
+            w = self.preprocess.center_roi_crop_width
+            blanks = np.stack([blank_page(h, w) for _ in self.angles])
+            zero_masks = np.zeros((len(self.angles), h, w), dtype=np.uint8)
+            return blanks, zero_masks
 
         frames_list = []
         masks_list = []
@@ -1069,6 +1145,13 @@ def extract_roi_rotation_latent_from_video(
                 f"All {total_batches} rotation batches failed for {video_name}."
             )
 
+        # Frames with no tracked mask are skipped to all-NaN placeholder rows by
+        # RotationDataset (they don't increment failed_frame_ranges), so count
+        # NaN rows directly and fail only when essentially everything is a gap.
+        n_total = int(latent_array.shape[0])
+        n_skipped = _count_nan_rows(latent_array)
+        _guard_near_total_skip(video_name, n_total, n_skipped)
+
         # latent_array is the preallocated buffer, already filled in place.
         # BUG-14: include metadata so loaders can stop relying on filename
         # parsing (rotation files don't carry model_name in the filename).
@@ -1081,6 +1164,8 @@ def extract_roi_rotation_latent_from_video(
             tags={
                 "rotation": True,
                 "failed_frame_ranges": failed_frame_ranges or None,
+                "n_skipped_frames": int(n_skipped),
+                "n_total_frames": int(n_total),
                 "remove_background": bool(preprocess_config.remove_background_switch),
                 "preprocess_session_id": session_id,
                 **_compute_determinism_tags(),
@@ -1099,6 +1184,12 @@ def extract_roi_rotation_latent_from_video(
                 "%d frame(s) stored as NaN placeholders to keep the timeline "
                 "aligned (ranges recorded in metadata).",
                 video_name, n_batches_failed, total_batches, n_nan_frames,
+            )
+        if n_skipped:
+            logger.warning(
+                "Rotation extraction for %s: %d/%d frame(s) (%.1f%%) had no usable "
+                "tracked mask and were skipped (stored as NaN gaps).",
+                video_name, n_skipped, n_total, 100.0 * n_skipped / max(n_total, 1),
             )
 
         return latent_path
@@ -1399,6 +1490,10 @@ def extract_roi_latent_from_video_2gpu(
             except OSError:
                 pass
 
+        n_total = int(latent_array.shape[0])
+        n_skipped = _count_nan_rows(latent_array)
+        _guard_near_total_skip(video_name, n_total, n_skipped)
+
         if hasattr(latent_array, "flush"):
             latent_array.flush()
         save_latent_with_metadata(
@@ -1413,6 +1508,8 @@ def extract_roi_latent_from_video_2gpu(
                 "feature_layers": list(feature_layers) if feature_layers else None,
                 "rotation": False,
                 "failed_frame_ranges": failed_frame_ranges or None,
+                "n_skipped_frames": int(n_skipped),
+                "n_total_frames": int(n_total),
                 "multi_gpu_device_ids": list(device_ids),
                 "remove_background": bool(preprocess_config.remove_background_switch),
                 "preprocess_session_id": session_id,
@@ -1438,6 +1535,12 @@ def extract_roi_latent_from_video_2gpu(
             "Multi-GPU extraction for %s: %d batches failed; %d frame(s) stored as "
             "NaN placeholders to keep the timeline aligned (ranges in metadata).",
             video_name, n_batches_failed, n_nan_frames,
+        )
+    if n_skipped:
+        logger.warning(
+            "Multi-GPU extraction for %s: %d/%d frame(s) (%.1f%%) had no usable "
+            "tracked mask and were skipped (stored as NaN gaps).",
+            video_name, n_skipped, n_total, 100.0 * n_skipped / max(n_total, 1),
         )
 
     from castle.core.project import update_config

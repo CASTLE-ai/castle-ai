@@ -291,6 +291,10 @@ def ui_extract_roi_latent(
     completed = {"n": 0}
     success = {"n": 0}
     failed: list = []
+    # Frames the tracker never tracked (no mask) are skipped to NaN gaps; tally
+    # them across videos so we can warn the user at the end (otherwise the only
+    # trace is a log line they never see).
+    gaps = {"skipped": 0, "total": 0, "videos": 0}
 
     def _final(status_text):
         return (
@@ -445,6 +449,20 @@ def ui_extract_roi_latent(
         elif res:
             success["n"] += 1
             messages.append(f"  ✅ {vname}: {os.path.basename(res)}")
+            try:
+                from castle.service.extraction_service import latent_gap_summary
+                summary = latent_gap_summary(res)
+            except Exception:  # noqa: BLE001 - a summary must never break extraction
+                summary = None
+            if summary and summary["n_skipped"]:
+                gaps["skipped"] += summary["n_skipped"]
+                gaps["total"] += summary["n_total"]
+                gaps["videos"] += 1
+                messages.append(
+                    f"     ⚠️ {summary['n_skipped']}/{summary['n_total']} "
+                    f"frame(s) ({summary['frac']:.1%}) had no tracked mask — "
+                    f"skipped (stored as gaps)."
+                )
         else:
             failed.append(vname)
             messages.append(f"  ⚠️ {vname}: no path returned")
@@ -592,6 +610,14 @@ def ui_extract_roi_latent(
     cancelled = cancel_event is not None and cancel_event.is_set()
     if failed:
         gr.Warning(f"{len(failed)} video(s) failed during extraction. See the log.")
+    if gaps["skipped"]:
+        frac = gaps["skipped"] / max(gaps["total"], 1)
+        summary_line = (
+            f"⚠️ {gaps['skipped']} frame(s) ({frac:.1%}) across {gaps['videos']} video(s) "
+            f"had no tracked mask and were skipped (stored as gaps; clustering ignores them)."
+        )
+        messages.append("\n" + summary_line)
+        gr.Warning(summary_line)
     final_status = ("🛑 Cancelled." if cancelled
                     else f"✅ Done — {success['n']}/{total} videos.")
     yield _final(final_status)

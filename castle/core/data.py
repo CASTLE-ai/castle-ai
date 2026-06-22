@@ -192,6 +192,23 @@ class VideoDataset(Dataset):
     def __len__(self) -> int:
         return self.video_len
 
+    def _skip_pair(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """A ``(blank frame, all-zero mask)`` pair representing a dropped frame.
+
+        Sized to match this dataset's *real* preprocessed output so it collates
+        with normal batches, and the all-zero mask makes the model's empty-mask
+        guard emit a NaN-placeholder latent row — kept in place to preserve
+        ``row index == frame index`` (downstream clustering treats NaN rows as
+        unclustered gaps). The mask is 2D ``(H, W)``: ``blank_page()`` returns a
+        3D ``(H, W, 3)`` frame, and a 3D mask would break DataLoader collation
+        against real 2D masks.
+        """
+        if self.preprocess.center_roi_switch:
+            h, w = self.preprocess.center_roi_crop_height, self.preprocess.center_roi_crop_width
+        else:
+            h, w = frame.shape[:2]
+        return blank_page(h, w), np.zeros((h, w), dtype=np.uint8)
+
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
         # Worker 第一次工作時，才打開自己的檔案
         if self.reader is None:
@@ -203,7 +220,26 @@ class VideoDataset(Dataset):
             self.tracker = H5IO(self.mask_path, read_only=True)
 
         frame = self.reader[idx]
-        mask = self.tracker.read_mask(idx)
+        try:
+            mask = self.tracker.read_mask(idx)
+        except (ValueError, KeyError, OSError, IOError) as e:
+            # No mask stored for this frame: the tracker lost the object here, or
+            # the frame's key was never written (e.g. a partial/cancelled track).
+            # read_mask raises ValueError("Without mask at frame N") for a missing
+            # key — treat it as an expected per-frame gap, exactly like a frame
+            # whose centre ROI is absent, instead of letting it crash the whole
+            # DataLoader worker (the bug this guard fixes).
+            if self.on_frame_error == "raise":
+                raise ROINotFoundError(
+                    f"No tracked mask for frame {idx} in {self.mask_path}. "
+                    f"Tracking lost the object on this frame. Use "
+                    f"on_frame_error='skip' (the default) to skip such frames."
+                ) from e
+            logger.warning(
+                "Frame %d in %s has no tracked mask; skipping (NaN placeholder).",
+                idx, self.video_path,
+            )
+            return self._skip_pair(frame)
 
         # Get precomputed closest point for this frame (if interpolation is active)
         closest_point = self.interpolated_points.get(idx) if self.interpolated_points else None
@@ -220,13 +256,7 @@ class VideoDataset(Dataset):
                 "Dropping frame %d in %s due to preprocessing error: %s",
                 idx, self.video_path, e,
             )
-            h, w = self.preprocess.center_roi_crop_height, self.preprocess.center_roi_crop_width
-            pf = blank_page(h, w)
-            # Mask must be 2D (H, W); blank_page() returns a 3D (H, W, 3) frame.
-            # A 3D mask breaks DataLoader collation (shape mismatch with real 2D
-            # masks) and, if a whole batch is blank, propagates a 3D tensor into
-            # the patch-grid pooling. Use a 2D all-background mask instead.
-            pm = np.zeros((h, w), dtype=np.uint8)
+            return self._skip_pair(frame)
 
         return pf, pm
 

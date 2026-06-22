@@ -284,6 +284,41 @@ def extract_latent(
     return ';'.join(paths)
 
 
+def latent_gap_summary(latent_path: str) -> Optional[dict]:
+    """Per-video skipped-frame summary for a saved latent ``.npz``.
+
+    Frames whose tracker produced no usable mask are stored as all-NaN gap rows
+    and the count is recorded in the latent metadata (``n_skipped_frames`` /
+    ``n_total_frames``). This reads that back from the cheap metadata sidecar so
+    the CLI / UI can tell the user how many frames were skipped without
+    re-scanning the array.
+
+    Returns:
+        ``{'n_skipped': int, 'n_total': int, 'frac': float}`` or ``None`` when
+        the file has no such metadata (e.g. an older latent).
+    """
+    if not latent_path:
+        return None
+    try:
+        from castle.utils.latent_metadata import load_latent_metadata
+        meta = load_latent_metadata(latent_path)
+    except Exception:  # noqa: BLE001 - a summary must never break the caller
+        return None
+    if not meta:
+        return None
+    tags = meta.get("tags") or {}
+    n_skipped = tags.get("n_skipped_frames")
+    n_total = tags.get("n_total_frames") or meta.get("n_frames")
+    if n_skipped is None or n_total is None:
+        return None
+    n_skipped, n_total = int(n_skipped), int(n_total)
+    return {
+        "n_skipped": n_skipped,
+        "n_total": n_total,
+        "frac": (n_skipped / n_total) if n_total else 0.0,
+    }
+
+
 def delete_session_with_latent_cleanup(
     storage_path: str, project_name: str, session_id: str
 ) -> None:

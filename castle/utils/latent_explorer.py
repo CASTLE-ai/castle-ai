@@ -166,18 +166,13 @@ class LocalLatent:
         
 
     def build_embedding(self, configs):
-        if self.device == 'cpu' or self.device == 'mps':
-            from umap import UMAP
-        elif 'cuda' in self.device:
+        try:
+            from cuml.manifold import UMAP
+        except:
             try:
-                from cuml.manifold import UMAP
+                from castle.utils.myumap import UMAP
             except:
-                try:
-                    from castle.utils.myumap import UMAP
-                except:
-                    from umap import UMAP
-        else:
-            assert False, f'device error, expect cpu, mps, or cuda, got {self.device}'
+                from umap import UMAP
         Z = self.data
         if hasattr(self, 'embedding'):
             delattr(self, 'embedding')

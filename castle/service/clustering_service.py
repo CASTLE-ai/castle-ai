@@ -345,6 +345,10 @@ class ClusteringSession:
         """
         if self.local_latents is None:
             raise ValueError("No local latents — run UMAP + DBSCAN first")
+        from castle.core.project import invalid_name_reason
+        reason = invalid_name_reason(name)
+        if reason:
+            raise ValueError(reason)
         self.local_latents.label_cluster(cluster_id, name, color)
     
     def auto_label_all(self, parent_name: Optional[str] = None) -> int:

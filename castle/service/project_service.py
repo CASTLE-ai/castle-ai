@@ -11,7 +11,7 @@ import json
 import logging
 from typing import List
 
-from castle.core.project import get_project_config
+from castle.core.project import get_project_config, invalid_name_reason
 from castle.utils.video_manager import (
     add_video_to_project,
     list_videos_in_directory,
@@ -34,7 +34,11 @@ def create_project(storage_path: str, name: str) -> dict:
     
     Raises:
         FileExistsError: If project already exists
+        ValueError: If the name cannot be used as a folder name
     """
+    reason = invalid_name_reason(name)
+    if reason:
+        raise ValueError(reason)
     project_path = os.path.join(storage_path, name)
     if os.path.exists(project_path):
         raise FileExistsError(f"Project '{name}' already exists at {project_path}")

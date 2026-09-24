@@ -42,7 +42,7 @@ def create_new_project_wrapper(storage_path, project_name):
     try:
         create_project(storage_path, project_name)
         gr.Info(f"Created project: {project_name}")
-    except FileExistsError as e:
+    except (FileExistsError, ValueError) as e:
         gr.Warning(str(e))
     except Exception as e:
         logger.exception("Failed to create project %r", project_name)

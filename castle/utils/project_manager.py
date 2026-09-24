@@ -6,6 +6,8 @@ import shutil
 import datetime
 import logging
 
+from castle.core.project import invalid_name_reason
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,7 +42,11 @@ def create_project(storage_path, project_name):
         
     Raises:
         FileExistsError: If project already exists
+        ValueError: If the name cannot be used as a folder name
     """
+    reason = invalid_name_reason(project_name)
+    if reason:
+        raise ValueError(reason)
     project_path = os.path.join(storage_path, project_name)
     
     if os.path.exists(project_path):

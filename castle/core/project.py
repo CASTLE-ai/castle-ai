@@ -31,6 +31,28 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG: Dict = {}
 
+# Characters Windows forbids in file names, plus names it reserves. User-given
+# project and cluster names end up in paths, so they are validated on input.
+_ILLEGAL_NAME_CHARS = set('\\/:*?"<>|')
+_RESERVED_NAMES = {'CON', 'PRN', 'AUX', 'NUL',
+                   *(f'COM{i}' for i in range(1, 10)),
+                   *(f'LPT{i}' for i in range(1, 10))}
+
+
+def invalid_name_reason(name: str) -> Optional[str]:
+    """Why *name* cannot be used as a project/cluster name, or ``None`` if OK."""
+    if not name or not name.strip():
+        return "Name must not be empty."
+    bad = sorted({c for c in name if c in _ILLEGAL_NAME_CHARS or ord(c) < 32})
+    if bad:
+        shown = ' '.join(repr(c)[1:-1] for c in bad)
+        return f'Name must not contain: {shown}  (not allowed: \\ / : * ? " < > |)'
+    if name[-1] in '. ':
+        return "Name must not end with a period or a space."
+    if name.split('.')[0].strip().upper() in _RESERVED_NAMES:
+        return f"'{name}' is a reserved name on Windows."
+    return None
+
 # Per-project threading lock registry.  Two threads in the same process editing
 # the same project's config.json contend on the same Lock object.  Different
 # projects get independent locks so they don't serialize.

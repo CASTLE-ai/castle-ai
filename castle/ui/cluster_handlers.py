@@ -349,6 +349,11 @@ def label_local_cluster(local_latents, cluster_id, cluster_name):
     if not cluster_name:
         gr.Info('Please enter a name for the cluster before clicking Enter.')
         return
+    from castle.core.project import invalid_name_reason
+    reason = invalid_name_reason(cluster_name)
+    if reason:
+        gr.Warning(reason)
+        return
     local_latents.label_cluster(cluster_id, cluster_name)
     gr.Info(f'Named {cluster_id} as {cluster_name}')
 

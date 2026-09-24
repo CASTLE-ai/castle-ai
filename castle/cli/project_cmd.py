@@ -32,7 +32,7 @@ def init(
     try:
         result = create_project(storage, name)
         console.print(f"[green]✓[/green] Project [bold]{result['name']}[/bold] created at {result['path']}")
-    except FileExistsError as e:
+    except (FileExistsError, ValueError) as e:
         console.print(f"[red]✗[/red] {e}")
         raise typer.Exit(code=1)
 

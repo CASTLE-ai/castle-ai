@@ -71,9 +71,10 @@ cd DIR && .venv/Scripts/python.exe app.py   # Windows
 cd DIR && ./.venv/bin/python app.py         # macOS/Linux
 ```
 
-It is ready when the output contains `Running on local URL:`. Tell the user to
-open **http://127.0.0.1:7860** in their browser (not the `0.0.0.0` address that
-is printed), and that closing the terminal stops CASTLE.
+It is ready when the output contains `CASTLE is running. Open
+http://127.0.0.1:7860`. Tell the user to open that address in their browser (not
+the `0.0.0.0` address Gradio also prints, and not a `gradio.live` share link),
+and that closing the terminal stops CASTLE.
 
 ## 4. When the installer reports FAIL
 

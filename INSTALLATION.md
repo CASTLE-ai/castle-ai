@@ -51,8 +51,10 @@ cd $env:USERPROFILE\castle
 cd ~/castle && ./.venv/bin/python app.py
 ```
 
-**It worked if** the window shows `Running on local URL:`. Then open **http://127.0.0.1:7860** in your browser. Keep the window open while
-you use CASTLE; closing it stops CASTLE.
+**It worked if** the window shows
+`CASTLE is running. Open http://127.0.0.1:7860 in your browser.` Open that
+address (not the `0.0.0.0` one printed above it). Keep the window open while you
+use CASTLE; closing it stops CASTLE.
 
 If you installed into another folder, `cd` into that folder instead.
 
@@ -79,6 +81,7 @@ Running the installer again updates CASTLE to the latest `dev` version. Your
 | `These model files could not be downloaded` | Google Drive limits how often a file is downloaded. Open the listed links in a browser, save the files into the `ckpt` folder inside the install folder, and run the installer again (it checks the files and continues). |
 | `uv installation failed` or `Could not download` | Check the internet connection (some school or company networks block GitHub or astral.sh) and run the command again. |
 | The browser cannot open `http://0.0.0.0:7860` | Use **http://127.0.0.1:7860** instead. |
+| The page keeps spinning on a long step (e.g. a grid video) and only a page refresh helps | Open CASTLE at **http://127.0.0.1:7860** on the computer running it, not through a `gradio.live` link (`--share`): long requests through the share tunnel can be dropped. |
 | Windows Firewall asks about Python when CASTLE starts | Either answer works; CASTLE on your own computer is not affected. |
 | `Unsupported video: variable frame rate (VFR)` when adding a video | CASTLE only supports constant-frame-rate video. Re-export the video with a constant frame rate, then add it again. |
 | A project or behavior name is refused | Names cannot contain `\ / : * ? " < > \|`, end with a period or space, or be a Windows device name such as `CON`. |
@@ -99,9 +102,9 @@ libraries. So on a typical `*-cu12` pip install that has both torch and cuML,
 `nvidia-smi`: during a UMAP run a python process will be pinning one GPU.
 
 **If it's slow, lower the UMAP work — this is the real lever:**
-- `n_epochs`: the presets hardcode **5000**; umap-learn's own large-data default is
-  **200**. Dropping to 200–500 is the single biggest speedup (~10×) and barely
-  changes the embedding on big data.
+- `n_epochs`: the presets use **500**; lowering it to **200** (umap-learn's own
+  large-data default) shortens UMAP further and barely changes the embedding on
+  big data.
 - `n_neighbors`: 100 → 30–50.
 - Explore `k'`: use fewer PCA dimensions.
 

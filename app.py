@@ -96,7 +96,14 @@ if __name__ == '__main__':
             theme=gr.themes.Soft(),
             js=CASTLE_JS,
             css=CASTLE_CSS,
+            prevent_thread_lock=True,
         )
+        # Gradio prints the bind address (http://0.0.0.0:...), which browsers on
+        # Windows cannot open; students then fell back to --share links. Print
+        # the address to use on this computer after the server is up.
+        print(f"\n  CASTLE is running. Open http://127.0.0.1:{app.server_port} "
+              "in your browser.\n", flush=True)
+        app.block_thread()
     except KeyboardInterrupt:
         # uvicorn re-raises SIGINT as KeyboardInterrupt; swallow so cleanup runs
         # quietly instead of dumping a traceback on a normal Ctrl+C.

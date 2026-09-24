@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.sh 
 ```
 
 Step-by-step guide, options and troubleshooting: [INSTALLATION.md](https://github.com/CASTLE-ai/castle-ai/blob/dev/INSTALLATION.md).
-Installing through an AI assistant: [AGENTS.md](https://github.com/CASTLE-ai/castle-ai/blob/dev/AGENTS.md).
+Using an AI assistant to install CASTLE, learn how to use it, or tune settings: point it to [AGENTS.md](https://github.com/CASTLE-ai/castle-ai/blob/dev/AGENTS.md).
 
 ---
 

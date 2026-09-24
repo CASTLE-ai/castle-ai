@@ -1,8 +1,13 @@
-# Installing CASTLE for a user (instructions for AI agents)
+# CASTLE for AI agents
 
-You are installing CASTLE on the user's computer. The user may not be a
-programmer: run the steps yourself, and only ask them the questions listed here.
-The human-facing version of these steps is [INSTALLATION.md](INSTALLATION.md).
+Instructions for an AI assistant helping a user with CASTLE. The user may not be
+a programmer: do the work yourself and only ask them the questions listed here.
+
+- Installing: [Install CASTLE](#install-castle) (human version:
+  [INSTALLATION.md](INSTALLATION.md)).
+- Using it and tuning settings: [Find how a feature works](#find-how-a-feature-works).
+
+# Install CASTLE
 
 ## Rules
 
@@ -87,3 +92,51 @@ and that closing the terminal stops CASTLE.
 
 Re-running the installer is always safe: it updates the code and keeps
 `DIR/projects` and verified files in `DIR/ckpt`.
+
+# Find how a feature works
+
+The code is the source of truth. The guides in `docs/` explain the workflow and
+the reasoning behind settings, but they were last revised in the first half of
+2026 and can lag the code: when a guide and the code disagree, trust the code
+and say so to the user. Skip `castle/aot/` and `castle/sam/` (vendored
+third-party models).
+
+## Where each UI tab lives
+
+The web UI (`app.py` → `castle/ui/main_ui.py`) is a row of tabs. A tab's
+`castle/ui/*_ui.py` file defines its widgets and their default values; the
+logic it calls is in `castle/service/`, `castle/core/` and `castle/utils/`.
+
+| Tab | UI code | Logic | Guide |
+|---|---|---|---|
+| 0. Project | `castle/ui/project_ui.py` | `castle/service/project_service.py`, `castle/utils/project_manager.py` | `docs/tutorials/step1-project.md` |
+| 1. Upload Videos | `castle/ui/source_ui.py` | `castle/utils/video_manager.py` | `docs/tutorials/step1-project.md` |
+| 2. Tracking ROIs | `castle/ui/edit_ui.py` (sub-tabs: `label_ui.py`, `knowledge_ui.py` = ROI Prompts, `track_ui.py`, `batch_track_ui.py`) | `castle/service/tracking_service.py`, `castle/utils/image_segment.py` (SAM), `castle/utils/video_object_segment.py` (DeAOT) | `docs/tutorials/step2-tracking.md` |
+| 3. Pre-process (optional) | `castle/ui/preprocess_ui.py` | `castle/service/preprocessing_service.py`, `castle/core/stabilized_camera.py`, `castle/core/preprocess_session.py` | `docs/tutorials/step2_5-preprocessing.md` |
+| 4. Extract Latent | `castle/ui/extract_ui.py` | `castle/service/extraction_service.py`, `castle/core/extractor.py`, `castle/core/models.py` (DINOv2/v3) | `docs/tutorials/step3-extract.md` |
+| 5. Behavior Microscope → Clustering (Prepare, Explore) | `castle/ui/cluster_page_ui.py` (UMAP presets at the top), `castle/ui/cluster_handlers.py` | `castle/service/prepare_service.py`, `castle/service/clustering_service.py`, `castle/service/cluster_params.py`, `castle/core/cluster.py`, `castle/core/clustering_backends.py` | `docs/tutorials/step4-analysis.md` |
+| 5. Behavior Microscope → Cluster Annotator | `castle/ui/annotator_ui.py` | `castle/service/annotator_loader.py`, `castle/service/bout_service.py`, `castle/service/annotation_service.py` | `docs/tutorials/step4-analysis.md` |
+| 6. Analysis | `castle/ui/analysis_ui.py` | `castle/service/ethogram_service.py`, `castle/service/comparison_service.py` | `docs/tutorials/step5-export.md` |
+| 7. Export | `castle/ui/export_ui.py` | `castle/service/export_service.py` | `docs/tutorials/step5-export.md` |
+
+## Where settings and their defaults live
+
+| What | Where |
+|---|---|
+| Defaults shared by several steps (batch sizes, bin size, UMAP / DBSCAN defaults), each with the reason for its value | `castle/defaults.py` |
+| A widget's default in the UI | that tab's `castle/ui/*_ui.py` |
+| Per-project saved settings | `castle/core/project_config.py`; the project's `config.json` |
+| Model checkpoints and model settings | `castle/core/config.py`, `castle/configs/model_config.json` |
+| Environment variables (workers, encoders, seeds, …) | `docs/technical/environment-variables.md` |
+| All configuration layers at a glance | `docs/technical/configuration.md` |
+| Command-line equivalents of the UI steps | `castle --help`; `castle/cli/` |
+
+## Background and troubleshooting
+
+- What the pipeline does and why: `docs/getting-started/concepts.md`,
+  `docs/technical/algorithm.md`.
+- Output files and their formats: `docs/technical/data-formats.md`.
+- Reproducibility (seeds, pinned models): `docs/technical/reproducibility.md`.
+- Problems: the troubleshooting table in [INSTALLATION.md](INSTALLATION.md#troubleshooting),
+  `docs/faq.md`, and the terminal window running `app.py` (every error is logged
+  there).

@@ -36,7 +36,7 @@ def _load_cluster_data(project_path: str) -> dict:
     cluster_names: dict = {}
     cluster_meta: dict = {}
     if os.path.exists(id_csv):
-        with open(id_csv, "r") as f:
+        with open(id_csv, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 cid = int(row["Id"])
@@ -121,7 +121,7 @@ def _read_time_series(ts_path: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     labels = []
     reasons = []
     has_reason = False
-    with open(ts_path, "r") as f:
+    with open(ts_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         has_reason = reader.fieldnames is not None and "exclude_reason" in reader.fieldnames
         for row in reader:
@@ -308,7 +308,7 @@ def _read_cluster_names(project_path: str) -> dict:
     id_csv = os.path.join(project_path, "cluster", "id.csv")
     names: dict = {}
     if os.path.exists(id_csv):
-        with open(id_csv, "r") as f:
+        with open(id_csv, "r", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 cid = int(row["Id"])
                 names[cid] = row.get("Name", f"cluster_{cid}")
@@ -649,9 +649,9 @@ def export_ethogram_csv(
     stats_path = os.path.join(output_path, "bout_stats.csv")
     bouts_path = os.path.join(output_path, "bouts.csv")
     summary_path = os.path.join(output_path, "video_summary.csv")
-    with open(stats_path, "w", newline="") as sf, \
-            open(bouts_path, "w", newline="") as bf, \
-            open(summary_path, "w", newline="") as mf:
+    with open(stats_path, "w", newline="", encoding="utf-8") as sf, \
+            open(bouts_path, "w", newline="", encoding="utf-8") as bf, \
+            open(summary_path, "w", newline="", encoding="utf-8") as mf:
         stats_writer = csv.DictWriter(sf, fieldnames=stats_fields)
         stats_writer.writeheader()
         bouts_writer = csv.writer(bf)
@@ -709,14 +709,14 @@ def export_ethogram_csv(
 
             tm = ethogram.transition_matrix
             tm_path = os.path.join(output_path, f"transition_matrix_{basename}.csv")
-            with open(tm_path, "w", newline="") as f:
+            with open(tm_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow([""] + tm.cluster_names)
                 for i, name in enumerate(tm.cluster_names):
                     writer.writerow([name] + [round(float(x), 6) for x in tm.matrix[i]])
 
             tc_path = os.path.join(output_path, f"transition_counts_{basename}.csv")
-            with open(tc_path, "w", newline="") as f:
+            with open(tc_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow([""] + tm.cluster_names)
                 for i, name in enumerate(tm.cluster_names):

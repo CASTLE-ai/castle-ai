@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import shutil
 import tempfile
 from typing import Dict, Iterator, List, Optional, Tuple, cast
 
@@ -318,8 +319,7 @@ def idlest_cuda_device_str(min_free_bytes: int = 0, fallback: str = "cpu") -> st
 
 def _free_bytes(path: str) -> int:
     try:
-        st = os.statvfs(path)
-        return st.f_bavail * st.f_frsize
+        return shutil.disk_usage(path).free  # os.statvfs does not exist on Windows
     except OSError:
         return 0
 

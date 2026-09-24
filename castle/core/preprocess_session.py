@@ -66,7 +66,7 @@ def load_session_meta(
     meta_path = get_session_dir(storage_path, project_name, session_id) / "session_meta.json"
     if not meta_path.exists():
         return None
-    return json.loads(meta_path.read_text())
+    return json.loads(meta_path.read_text(encoding="utf-8"))
 
 
 def save_session_meta(
@@ -77,7 +77,7 @@ def save_session_meta(
     session_dir.mkdir(parents=True, exist_ok=True)
     meta_path = session_dir / "session_meta.json"
     tmp = meta_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(meta, indent=2))
+    tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     tmp.rename(meta_path)
 
 

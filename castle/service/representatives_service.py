@@ -171,13 +171,13 @@ def export_cluster_representatives(
                 )
                 continue
             png_path = output_dir / f"cluster_{cid:03d}_{_safe(name)}_bin{int(idx):06d}.png"
-            cv2.imwrite(str(png_path), frame)
+            _imwrite(png_path, frame)
             written_paths.append(png_path)
             frames.append(frame)
 
         if frames:
             grid_path = output_dir / f"cluster_{cid:03d}_{_safe(name)}_grid.png"
-            cv2.imwrite(str(grid_path), _make_grid(frames))
+            _imwrite(grid_path, _make_grid(frames))
             written_paths.append(grid_path)
 
         representatives[cid] = written_paths
@@ -188,3 +188,16 @@ def export_cluster_representatives(
 def _safe(name: str) -> str:
     """Make a cluster name filesystem-friendly."""
     return ''.join(c if (c.isalnum() or c in '-_') else '_' for c in name)[:32] or 'cluster'
+
+
+def _imwrite(path: Path, img: np.ndarray) -> None:
+    """``cv2.imwrite`` that also works for non-ASCII paths on Windows.
+
+    ``cv2.imwrite`` silently returns False there when the path contains e.g.
+    Chinese characters (a Chinese user name puts every project under one), so
+    encode in memory and let numpy write the bytes.
+    """
+    ok, buf = cv2.imencode(path.suffix or '.png', img)
+    if not ok:
+        raise IOError(f"could not encode image for {path}")
+    buf.tofile(str(path))

@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 import urllib.request
 
 from castle.core.logging_config import setup_logger
@@ -38,8 +39,10 @@ def download_with_gdown(file_id, destination, notify_func=None):
         logger.info(message)
         _safe_notify(notify_func, message)
 
-        # Use --id flag to ensure correct file ID handling
-        result = subprocess.run(['gdown', '--id', file_id, '--output', destination],
+        # Run gdown through this interpreter: a bare 'gdown' is not on PATH when
+        # the app is started as .venv\Scripts\python app.py without activating
+        # the venv. A bare id is accepted by gdown 4.6+ (--id is deprecated).
+        result = subprocess.run([sys.executable, '-m', 'gdown', file_id, '--output', destination],
                               capture_output=True, text=True)
         if result.returncode != 0:
             error_msg = f"Failed to download {os.path.basename(destination)}"

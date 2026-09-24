@@ -36,7 +36,7 @@ def _load_per_video_cluster_data(project_path: str) -> Dict:
     id_csv = os.path.join(cluster_dir, "id.csv")
     cluster_names: Dict[int, str] = {}
     if os.path.exists(id_csv):
-        with open(id_csv, "r") as f:
+        with open(id_csv, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 cid = int(row["Id"])
@@ -59,7 +59,7 @@ def _load_per_video_cluster_data(project_path: str) -> Dict:
     for ts_file in ts_files:
         ts_path = os.path.join(cluster_dir, ts_file)
         labels = []
-        with open(ts_path, "r") as f:
+        with open(ts_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 labels.append(int(row["behavior"]))
@@ -375,13 +375,13 @@ def export_comparison_report(result: dict, output_dir: str) -> List[str]:
 
     # summary.txt
     summary_path = os.path.join(output_dir, "summary.txt")
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         f.write(result.get("summary", ""))
     created.append(summary_path)
 
     # omnibus_tests.csv
     omnibus_path = os.path.join(output_dir, "omnibus_tests.csv")
-    with open(omnibus_path, "w", newline="") as f:
+    with open(omnibus_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["test", "statistic", "p_value"])
         writer.writerow(["BFA", result.get("bfa_distance", ""), result.get("bfa_pvalue", "")])
@@ -394,7 +394,7 @@ def export_comparison_report(result: dict, output_dir: str) -> List[str]:
     # feature_tests.csv
     if result.get("feature_names"):
         feat_path = os.path.join(output_dir, "feature_tests.csv")
-        with open(feat_path, "w", newline="") as f:
+        with open(feat_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(
                 [

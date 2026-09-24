@@ -43,7 +43,7 @@ def _load_config_file(path: Path) -> dict:
     if not path.exists():
         raise typer.BadParameter(f"Config file not found: {path}")
     suffix = path.suffix.lower()
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     if suffix == ".json":
         try:
             data = json.loads(text) if text.strip() else {}

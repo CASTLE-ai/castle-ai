@@ -296,6 +296,12 @@ class DINOv2Encoder(VisualEncoder):
     def load_model(self):
         repo = _hub_repo('dinov2')
         logger.info(f"Loading DINOv2: {self.model_name} from {repo}")
+        # DINOv2 uses xformers whenever it is importable, but xformers has no
+        # CPU/MPS kernels (NotImplementedError: memory_efficient_attention_forward).
+        # Its layers read XFORMERS_DISABLED at import time, so set it before the
+        # hub modules load.
+        if not str(self.device).startswith('cuda'):
+            os.environ.setdefault('XFORMERS_DISABLED', '1')
         self.model = torch.hub.load(repo, self.model_name, **_HUB_KWARGS)
         self.model.eval().to(self.device)
 

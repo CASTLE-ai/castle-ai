@@ -11,64 +11,70 @@ The Export tab lets you select which data components to include in a downloadabl
 | Component | Contents |
 |-----------|----------|
 | **Tracking Masks** | `track/<video>/mask_list.h5` — per-frame HDF5 masks |
-| **Latent Features** | `latent/**/*.npz` — extracted feature vectors |
+| **Latent Features** | `latent/` — extracted feature vectors |
 | **Cluster Results** | `cluster/id.csv`, `cluster_*.npz`, `time_series_*.csv` |
 | **Annotations** | `cluster/sessions/<id>/annotations.csv` — labels + comments |
 | **Grid Videos** | `cluster/grid_videos/*.mp4` — pre-rendered cluster mosaic clips |
 | **Analysis Outputs** | `analysis/` + session analysis folders |
+| **Source Videos** | `sources/` — original videos (off by default) |
 
 1. Switch to the **7. Export** tab
-2. Select a session (for annotations/grid videos)
+2. Select a session (for annotations)
 3. Check the components you want
-4. Click **Package ZIP** — the archive is built and a download link appears
+4. Click **📦 Export** — the archive is built and a download link appears
 
 ---
 
 ## Available Outputs
 
-All outputs are saved in the `cluster/` directory within your project:
+Outputs are saved in the `cluster/` directory within your project (SRT subtitles go to `subtitles/`):
 
 ```
 projects/my-project/
-└── cluster/
-    ├── id.csv                          # Cluster ID → name mapping (legacy)
-    ├── time_series.csv                 # Frame-by-frame assignments (legacy)
-    ├── cluster_behavior1_behavior2_.npz # Embedding + cluster data
-    ├── grid_videos/                    # Pre-rendered cluster grid videos
-    └── sessions/
-        └── <session_id>/
-            ├── annotations.csv         # Cluster labels + comments
-            └── time_series_<id>.csv    # Frame assignments for this session
+├── cluster/
+│   ├── id.csv                          # Cluster ID → name/colour mapping
+│   ├── time_series_<video>.csv         # Frame-by-frame assignments, one per video
+│   ├── time_series_<video>.meta.json   # fps + cluster-name map for that CSV
+│   ├── cluster_init_a0_init_a1_.npz    # Embedding + cluster data
+│   ├── grid_videos/                    # Pre-rendered cluster grid videos
+│   └── sessions/
+│       └── <session_id>/
+│           ├── annotations.csv         # Cluster labels + comments
+│           ├── umap_log.jsonl          # UMAP seed + config per stage
+│           └── time_series_<video>.csv # Snapshot of this session's assignments
+└── subtitles/
+    └── <video>.srt                     # Behavioral labels as subtitles
 ```
 
 ### Behavior ID CSV (`id.csv`)
 
-Maps cluster IDs to their human-assigned names.
+Maps cluster IDs to their auto-generated hierarchical names (behavior labels from the Cluster Annotator are stored in `annotations.csv`). `Color` is empty unless a custom colour was set.
 
 ```csv
-Id,Name
-0,init
-1,grooming
-2,rearing
-3,locomotion
+Id,Name,Color
+0,init,grey
+1,init_a0,
+2,init_a1,
+3,init_a2,
 ```
 
-### Time Series CSV (`time_series.csv`)
+### Time Series CSV (`time_series_<video>.csv`)
 
-Frame-by-frame behavioral state assignments. Each row corresponds to one frame.
+Frame-by-frame behavioral state assignments, one file per video. Each row corresponds to one original video frame.
 
 ```csv
-,behavior
-0,1
-1,1
-2,1
-3,3
-4,3
+behavior,exclude_reason
+1,0
+1,0
+1,0
+3,0
+-1,1
 ...
 ```
 
 - Values correspond to cluster IDs from `id.csv`
 - `-1` indicates unclassified frames (e.g., frames with missing tracking data)
+- `exclude_reason` codes why a frame is `-1`: `0` = not excluded, `1` = DBSCAN noise, `2` = non-finite latent
 - When using a time window > 1, values are repeated for each frame in the window
 
 ### SRT Subtitles
@@ -86,7 +92,7 @@ Contains the UMAP coordinates and cluster assignments:
 ```python
 import numpy as np
 
-data = np.load('cluster_grooming_rearing_.npz')
+data = np.load('cluster_init_a0_init_a1_.npz')
 embeddings = data['emb']    # Shape: (n_samples, 2) — UMAP coordinates
 clusters = data['cls']      # Shape: (n_samples,) — cluster assignments
 config = data['config']     # UMAP configuration used
@@ -109,7 +115,7 @@ import pandas as pd
 import numpy as np
 
 # Load behavioral time series
-ts = pd.read_csv('projects/my-project/cluster/time_series.csv', index_col=0)
+ts = pd.read_csv('projects/my-project/cluster/time_series_<video>.csv')
 behaviors = ts['behavior'].values
 
 # Load cluster names
@@ -128,7 +134,7 @@ print(Counter(named_behaviors))
 
 ```r
 # Load behavioral time series
-ts <- read.csv("projects/my-project/cluster/time_series.csv")
+ts <- read.csv("projects/my-project/cluster/time_series_<video>.csv")
 behaviors <- ts$behavior
 
 # Load cluster names

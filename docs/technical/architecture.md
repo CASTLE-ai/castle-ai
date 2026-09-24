@@ -97,8 +97,7 @@
 │                 Vendored / External Models                      │
 │  castle/sam/     — Segment Anything Model (Meta)               │
 │  castle/aot/     — DeAOT video object segmentation             │
-│  castle/dinov2/  — DINOv2 vendored components                  │
-│  castle/dinov3/  — DINOv3 vendored components                  │
+│  DINOv2 / DINOv3 — not vendored; loaded via torch.hub          │
 │  castle/configs/ — model_config.json                           │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -113,7 +112,7 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 |--------|---------|
 | `main.py` | Typer app entry point, registers all subcommand groups |
 | `project_cmd.py` | `castle project init/info/add-videos/list` |
-| `cluster_cmd.py` | `castle cluster run/export/save-model/apply-model/auto/evaluate` |
+| `cluster_cmd.py` | `castle cluster run/export/save-model/apply-model/evaluate/suggest` |
 | `extract_cmd.py` | `castle extract <project>` |
 | `track_cmd.py` | `castle track <project>` |
 | `preprocess_cmd.py` | `castle preprocess <project> --video … --body-roi … --head-roi …` ★ |
@@ -121,6 +120,9 @@ Built on [Typer](https://typer.tiangolo.com/). Provides a `castle` command for h
 | `ethogram_cmd.py` | `castle ethogram analyze/transitions/bouts/export/export-nwb` |
 | `compare_cmd.py` | `castle compare run/fingerprint` |
 | `batch_cmd.py` 🟢 | `castle batch run/status/report` — batch processing across multiple experiments (P4) |
+| `benchmark_cmd.py` | `castle benchmark run/datasets` — reproducible accuracy benchmark vs. ground truth |
+| (in `main.py`) | `castle env` — print runtime environment (CASTLE + library versions, device, GPUs) |
+| `storage_util.py` | Resolves the `--storage` path from multiple sources |
 
 ### `castle/ui/` — Gradio Web Interface
 
@@ -138,12 +140,11 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module.
 | `label_ui.py` | └─ Label ROI | Point-and-click segmentation with SAM |
 | `knowledge_ui.py` | └─ ROI Prompts | Gallery of all saved ROI labels |
 | `track_ui.py` | └─ Tracking | Run DeAOT tracking with progress |
-| `post_track_ui.py` | └─ Post-Track | Post-process and review tracking results |
-| `batch_track_ui.py` | └─ Batch | Process multiple videos |
+| `post_track_ui.py` | └─ Analysis | Post-process and review tracking results |
+| `batch_track_ui.py` | └─ Batch Videos Tracking | Process multiple videos |
 | `preprocess_ui.py` | 3. Pre-process (Optional) | Stabilized camera preprocessing (P0) ★ |
 | `extract_ui.py` | 4. Extract Latent | Configure and run feature extraction |
 | `cluster_page_ui.py` | 5. Behavior Microscope | UMAP + DBSCAN clustering workspace |
-| `embedding_scatter.py` | └─ (component) | Plotly embedding scatter widget |
 | `cluster_handlers.py` | └─ (component) | Cluster operation callbacks |
 | `cluster_tree.py` | └─ (component) | Hierarchical cluster tree view |
 | `cluster_input_ui.py` | └─ (component) | Clustering parameter input widgets |
@@ -151,6 +152,9 @@ Built on [Gradio](https://gradio.app/). Each tab has its own module.
 | `analysis_ui.py` | 6. Analysis | Ethogram, Quality Metrics sub-tabs, Group Comparison placeholder |
 | `export_ui.py` | 7. Export | ZIP download with selectable data components |
 | `plot_mask_info.py` | (component) | Mask info / contour overlay utilities |
+| `progress_ui.py` | (component) | Shared progress-bar / ETA / cancel helpers for the batch tabs |
+| `video_select.py` | (component) | Reusable "Videos to process" multi-select widget for the batch tabs |
+| `app.py` | — | Entry-point shim — delegates to `main_ui.create_ui()` |
 | `HANDLER_GUIDE.md` 🔷 | (guide) | UI handler pattern guide — thin-handler / fat-service convention, anti-patterns, error handling contract |
 
 ### `castle/service/` — Service Layer
@@ -163,7 +167,7 @@ Clean separation between frontends and business logic. Both frontends (CLI, Grad
 | `extraction_service.py` | Feature extraction orchestration |
 | `clustering_service.py` | UMAP + DBSCAN session management for the Behavior Microscope (human-in-the-loop) |
 | `tracking_service.py` | Tracking pipeline orchestration |
-| `preprocessing_service.py` | Stabilized camera preprocessing — `PreprocessingService` + `preprocess_stabilized_camera()` ★ |
+| `preprocessing_service.py` | Pre-process — `preprocess_stabilized_camera()` (KIT) + `preprocess_center_crop()` (CenterROI) ★ |
 | `annotation_service.py` | Classification scheme management |
 | `annotator_loader.py` | `AnnotatorData` — loads cluster + video data for Annotator and Analysis UIs |
 | `session_manager.py` | `SessionManager` — list/create/activate clustering sessions |
@@ -174,6 +178,19 @@ Clean separation between frontends and business logic. Both frontends (CLI, Grad
 | `comparison_service.py` | Group comparison: loads per-video data, delegates to `castle.core.comparison` |
 | `nwb_service.py` | NWB (Neurodata Without Borders) export orchestration |
 | `incremental_service.py` ⚡ | `get_unprocessed_videos()` — detect pending videos; `cleanup_deleted_videos()` — remove orphaned latent / cluster / cache data |
+| `prepare_service.py` | Orchestration for the clustering Prepare step (L2 + PCA cache under `cluster/prepared/`) |
+| `cluster_npz.py` | `cluster_*.npz` filename grammar and `node_*_meta.json` sidecar lookup |
+| `cluster_params.py` | Heuristic clustering-parameter suggestion for first-time users |
+| `cluster_persistence.py` | Save / apply cluster-transfer models (longitudinal studies) |
+| `cluster_restore.py` | Restore a clustering session / local latent from on-disk artifacts |
+| `clip_service.py` | Short-clip generation around a clicked UMAP point |
+| `representatives_service.py` | Cluster representative frame export |
+| `plotting_service.py` | Gradio-free wrappers for embedding scatter plots |
+| `export_service.py` | Shared file-collection helpers for project data export |
+| `auto_config.py` | Recommends pipeline parameters based on video properties |
+| `benchmark_service.py` | Reproducible accuracy benchmark report for clustering |
+| `pipeline.py` ⚡ | `Pipeline` + `PipelineConfig` — tracking → extraction orchestrator (see `castle/core/` `pipeline.py`) |
+| `batch.py` 🟢 | `BatchConfig` + `BatchRunner` — YAML-driven multi-project batch processing |
 
 ### `castle/core/` — Core Business Logic
 
@@ -205,6 +222,18 @@ Clean separation between frontends and business logic. Both frontends (CLI, Grad
 | `cache.py` ⚡ | `PipelineCache` — SHA-256 content-addressed cache; manifest persisted as JSON; stale-entry auto-invalidation |
 | `project_data.py` 🔷 | `ProjectData` + `VideoInfo` dataclasses — unified project path computation, eliminating scattered `os.path.join` calls |
 | `environment.py` | `get_device()` — canonical device detection (MPS > CUDA > CPU). Algorithm-class dispatch (UMAP/DBSCAN/HDBSCAN, cuML vs umap-learn/sklearn) lives in `clustering_backends.py` via `resolve_umap_class` / `resolve_dbscan_class` |
+| `clustering_backends.py` | Default UMAP / DBSCAN / HDBSCAN adapters (`UMAPReducer`, `DBSCANClusterer`, `HDBSCANClusterer`) and cuML-vs-CPU class resolution |
+| `clustering_protocols.py` | `DimensionReducer` / `Clusterer` protocols and pure-data container for clustering |
+| `prepare.py` | Cached Prepare step for clustering — per-sample L2 normalisation + IncrementalPCA → `reduced.dat` |
+| `latent_scales.py` | Helpers to parse / slice SPP multiscale latent blocks |
+| `preprocess_session.py` | Pre-process session management (`preprocessed/sessions/<id>/session_meta.json`, atomic tmp + replace writes) |
+| `video_encoder.py` | Shared H.264 encoder selection (NVENC with libx264 fallback) and `transcode_to_h264()` via PyAV |
+| `memory_guard.py` | Pre-flight RAM / VRAM estimate before extraction |
+| `seed.py` | Global seed management (all stochastic components except UMAP's seed) |
+| `types.py` | Shared types and `CastleError` exception hierarchy |
+| `cpu_pool.py` | CPU worker-count policy for pre-process parallel stages |
+| `gpu_pool.py` | Video-level multi-GPU work queue |
+| `_centroid_worker.py` | Process-pool worker for parallel centroid extraction (KIT pre-process) |
 | `multi_subject.py` 🟢 | `SubjectTrack` + `MultiSubjectProject` — multi-subject tracking data containers and pipeline orchestration (P4) |
 | `batch.py` 🟢 | `BatchConfig` + `BatchRunner` — YAML-driven multi-project batch processing with optional parallelism and summary reporting (P4). _Now lives in `castle.service.batch`; `castle.core.batch` is a compatibility shim._ |
 
@@ -236,6 +265,13 @@ Higher-level analysis modules that sit above `castle/core/` and operate on multi
 | `roi_manager.py` | ROI color management and utilities |
 | `download.py` | Checkpoint download via gdown |
 | `profiler.py` | `Profiler`, `TimeBlock`, `SystemMonitor` for performance monitoring |
+| `latent_metadata.py` | Save latent `.npz` with embedded `metadata` + `.json` sidecar |
+| `safe_load.py` | `load_latent_safe()` — safe loader for latent `.npz` files |
+| `distance.py` | GPU-accelerated pairwise distance with CPU fallback |
+| `numeric_safe.py` | Numerically safe z-score / min-max helpers |
+| `plot.py` | Low-level mask visualization (colorize, overlay) |
+| `visual_latent_extract.py` | Backward-compatibility wrapper around `castle.core.models` |
+| `explorer.py` | Deprecated alias of `latent_explorer.py` |
 
 ### `castle/visualization/` — Visualization Layer
 
@@ -246,6 +282,8 @@ Separated from utils (B-01) so data classes don't depend on matplotlib/plotly:
 | `embedding_plots.py` | UMAP scatter, syllable bar, focus embedding, named embedding |
 | `ethogram_plots.py` | Ethogram raster, transition heatmap, bout duration box plots, frequency bar chart (P1) |
 | `comparison_plots.py` | Fingerprint radar, transition heatmap diff, volcano plot, forest plot (P4) |
+| `embedding_scatter.py` | `EmbeddingScatterPlot` — matplotlib embedding scatter used by the Behavior Microscope |
+| `figure_io.py` | `save_publication_figure()` — 300 DPI raster + vector (SVG) sibling |
 
 ### `castle/sam/` — SAM (Vendored)
 
@@ -278,7 +316,7 @@ Video File (.mp4)
     │  ├─ extract_orientations_from_masks → heading angle θ(t)
     │  ├─ Zero-phase Butterworth LP (fc=0.25 Hz, filtfilt) → x_c(t), θ_c(t)
     │  ├─ dynamic crop: max(300, 2×(‖x−x_c‖+75)) px
-    │  └─ warpAffine + resize → stabilized.mp4  (preprocessed/{video}/)
+    │  └─ warpAffine + resize → stabilized.mp4  (preprocessed/sessions/{id}/{video}/)
     │
     ▼
 [4. Align] Center + rotate + crop → normalized frames
@@ -318,7 +356,7 @@ After a complete analysis run:
 ```
 projects/my-project/
 ├── config.json                              # Project metadata (file inventory)
-├── castle_config.json                       # ProjectConfig (processing parameters)
+├── castle_config.json                       # ProjectConfig (processing parameters; optional, only if saved)
 ├── sources/                                 # Video files
 │   ├── video1.mp4
 │   └── video2.mp4
@@ -329,29 +367,36 @@ projects/my-project/
 ├── track/                                   # Tracking results (DeAOT output)
 │   └── video1.mp4/
 │       └── mask_list.h5                     # HDF5 with per-frame masks
-├── preprocessed/                            # Stabilized camera output (Phase 0) ★
-│   └── video1.mp4/
-│       ├── stabilized.mp4                   # Full-length stabilised video (592×592)
-│       └── stabilized_preview.mp4           # 10-second preview clip
-├── crop/                                    # Cropped/aligned videos
-│   └── video1.mp4/
-│       └── video1_ROI_1_crop.mp4
+├── preprocessed/                            # Pre-process output (Phase 0) ★
+│   └── sessions/
+│       └── <session_id>/                    # 8-char hash of the parameter set
+│           ├── session_meta.json            # Session parameters + video list
+│           └── video1.mp4/
+│               ├── stabilized.mp4           # KIT: full-length stabilised video (592×592)
+│               └── mask_list.h5             #      masks in the stabilised frame
+│                                            # (CenterROI: cropped.mp4 + mask_list.h5)
 ├── latent/                                  # Extracted features (sub-dir per model)
+│   ├── video1_ROI_1_crop.mp4                # Cropped/aligned video (extract_crop_video)
 │   └── dinov3_vitb16/                        # default model (DINOv3)
 │       ├── video1_ROI_1_dinov3_vitb16_ctr_rmbg.npz        # default pooling
 │       ├── video1_ROI_1_dinov3_vitb16_ctr_spp1x2x4.npz    # multiscale SPP
 │       └── video1_ROI_1_dinov3_vitb16_ctr_L3x7x11.npz     # multi-layer
 ├── cluster/                                 # Clustering outputs
-│   ├── id.csv                               # Cluster ID → name mapping (legacy)
-│   ├── time_series.csv                      # Frame-by-frame assignments (legacy)
+│   ├── id.csv                               # Cluster ID → name / color mapping
+│   ├── time_series_video1.csv               # Frame-by-frame assignments (per video)
+│   ├── time_series_video1.meta.json         # fps + cluster-name sidecar
 │   ├── cluster_grooming_rearing_.npz        # Embedding + labels
+│   ├── node_init_meta.json                  # Per-node UMAP config / eps / seed
+│   ├── prepared/                            # Prepare-step cache (L2 + PCA)
 │   ├── grid_videos/                         # Pre-rendered cluster grid videos
-│   │   └── <session_id>_cluster0.mp4
+│   │   └── <cluster_name>_grid_<N>x<N>.mp4
 │   └── sessions/                            # Per-session clustering state
+│       ├── _active.txt                      # Active session ID
 │       └── <session_id>/
-│           ├── session.json                 # Session metadata
+│           ├── manifest.json                # Session metadata
+│           ├── id.csv, cluster_*.npz, time_series_*.csv, node_*_meta.json
 │           ├── annotations.csv              # Per-cluster labels + comments
-│           ├── time_series_<session>.csv    # Frame assignments for this session
+│           ├── umap_log.jsonl               # UMAP seed + config per stage
 │           └── analysis/                   # Ethogram / metrics outputs
 └── analysis/                                # Project-wide analysis outputs
 ```
@@ -382,7 +427,7 @@ Pipeline.run()
           models._evict_model_cache()   + CUDA cache flush
 ```
 
-VRAM utilisation is logged at every stage boundary (`pipeline-start`, `before-tracking-cleanup`, `after-tracking-cleanup`, `extraction-start`, `after-extraction-cleanup`, `pipeline-end`) and approximately every 100 video iterations during extraction.
+VRAM utilisation is logged at every stage boundary (`pipeline-start`, `tracking-start`, `before-tracking-cleanup`, `after-tracking-cleanup`, `extraction-start`, `before-extraction-cleanup`, `after-extraction-cleanup`, `pipeline-end`) and approximately every 100 video iterations during extraction.
 
 !!! tip "Opt-in multi-GPU extraction"
     Set `CASTLE_MULTI_GPU=1` in the environment to split a single video's frames by range across all available CUDA GPUs during latent extraction. Each GPU runs the full decode → preprocess → encode on its frame range, and the partial latents are merged back in original frame order. The merged output is **bit-identical** to the single-GPU result on identical GPUs and runs ~1.9× faster on 2 GPUs. Activates only when the variable is truthy **and** ≥ 2 CUDA GPUs are present; the default is single-GPU.
@@ -523,7 +568,7 @@ DBSCANClass = resolve_dbscan_class(device)
 
 # Higher-level wrappers used by the clustering pipeline
 reducer = UMAPReducer({"n_neighbors": 300, "min_dist": 0.0, "n_components": 2}, device=device)
-clusterer = DBSCANClusterer({"eps": 0.5, "min_samples": 5}, device=device)
+clusterer = DBSCANClusterer(eps=0.5, min_samples=5, device=device)
 ```
 
 Detection order: **MPS (Apple Silicon) > CUDA > CPU** (see `Environment._detect_device`).
@@ -579,7 +624,7 @@ project.process_all()
 tracks = project.get_subjects()   # list[SubjectTrack]
 ```
 
-**`SubjectTrack`** — immutable data container per individual:
+**`SubjectTrack`** — data container per individual:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -590,6 +635,7 @@ tracks = project.get_subjects()   # list[SubjectTrack]
 | `angles` | `np.ndarray (N,)` | Unwrapped orientation (degrees) |
 | `latents` | `np.ndarray (N, D) or None` | Feature vectors (set after extraction) |
 | `labels` | `np.ndarray (N,) or None` | Cluster assignments (set after clustering) |
+| `valid_frames` | `np.ndarray (N,) bool or None` | True where the frame had a real detection, False where interpolated (None → all valid) |
 
 **`MultiSubjectProject`** orchestrates per-subject preprocessing from the shared mask HDF5. Call `process_all()` to populate `positions` and `angles`; feature extraction and clustering are applied externally via `set_latents()` / `set_labels()`.
 

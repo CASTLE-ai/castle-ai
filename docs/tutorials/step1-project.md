@@ -8,7 +8,7 @@ This step covers the first two tabs of the CASTLE interface: **0. Project** and 
 
 1. Open the **0. Project** tab
 2. Click the **New Project** sub-tab
-3. Enter a project name (or leave blank for an auto-generated timestamp name like `2026-02-08-14-30-00-Project`)
+3. Enter a project name (clicking into the empty field fills in an auto-generated timestamp name like `2026-02-08-14-30-00-Project`)
 4. Click **Create**
 
 ![Create a new project](../assets/screenshots/tutorial-step1-create-project.png)
@@ -19,7 +19,7 @@ This step covers the first two tabs of the CASTLE interface: **0. Project** and 
 2. Click **Open**
 
 !!! tip "Storage Location"
-    By default, projects are stored in `projects/` relative to the CASTLE directory. You can change this by expanding the **Change Storage Location** accordion at the top of the Project tab.
+    By default, projects are stored in `projects/` relative to the CASTLE directory. You can change this by expanding the **Change Storage Location (Optional)** accordion at the top of the Project tab.
 
 ### Project Structure on Disk
 
@@ -36,7 +36,7 @@ projects/
     │   └── video-name/      # Per-video tracking data (mask_list.h5)
     ├── latent/              # Extracted features (.npz files)
     │   └── model-name/      # Per-model subdirectories
-    ├── crop/                # Cropped/aligned videos
+    ├── preprocessed/        # Pre-process sessions (optional stabilized/cropped videos)
     └── cluster/             # Clustering results (CSV, embeddings)
 ```
 
@@ -62,14 +62,15 @@ For videos already on the server (common in lab setups):
 2. The system automatically scans and lists found videos
 3. Click **Add All Videos** to import them into the project
 
-This method creates symlinks or copies rather than requiring re-upload, making it efficient for large video files.
+This method copies the files into `sources/` on the server rather than requiring a browser upload, making it efficient for large video files.
 
 ### Supported Formats
 
 CASTLE uses PyAV and OpenCV for video I/O, supporting most common formats:
 
-- MP4, AVI, MOV, MKV
+- MP4, AVI, MOV, MKV, WMV, FLV
 - Most codecs supported by FFmpeg
+- Constant frame rate only: videos with a variable frame rate (VFR) are rejected when added
 
 ---
 

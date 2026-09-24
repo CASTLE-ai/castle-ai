@@ -23,7 +23,7 @@ dynamically-sized crop centred on the filtered trajectory and resized to 592×59
 ```
 mask_list.h5  (tracking output)
     │
-    ├─ extract_centroids_from_masks → body centroid x(t)
+    ├─ extract_body_head_centroids → body centroid x(t)
     ├─ extract_orientations_from_masks (body→head vector) → θ(t)
     │
     ▼
@@ -41,7 +41,7 @@ warpAffine: translate → x_c(t), rotate → θ_c(t) − 90°
 Resize → 592 × 592 px   (DINOv3 ViT-B/16 default; 518 = 37 × 14 suits DINOv2 ViT-B/14)
     │
     ▼
-preprocessed/{video}/stabilized.mp4
+preprocessed/sessions/{session_id}/{video}/stabilized.mp4
 ```
 
 ### Why zero-phase filtering?
@@ -116,44 +116,14 @@ ROI 1 and Head as ROI 2 in the tracking step, use `--body-roi 1 --head-roi 2`.
 === "Gradio Web UI"
 
     1. Switch to the **3. Pre-process (Optional)** tab
-    2. Select the project video from the dropdown
-    3. Enter Body ROI id and Head ROI id
-    4. Adjust filter parameters if needed
-    5. Click **Run Preprocessing**
+    2. Keep **Pre-processing method** on **KIT** (default)
+    3. Select **Body ROI ID** and **Head ROI ID** (the dropdowns list the ROI ids found in the tracking masks)
+    4. Adjust filter parameters under **⚙ Advanced KIT Parameters** if needed
+    5. Pick the videos under **Videos to process** and click **▶ Run Pre-process**
 
-    A preview clip is shown inline when processing completes.
+    Click **🔍 Preview (single frame)** to check the crop on the video selected in **ROI source / preview video** before running.
 
 === "Python API"
-
-    ```python
-    from castle.service.preprocessing_service import PreprocessingService
-
-    svc = PreprocessingService(storage_path="projects/", project_name="my_project")
-
-    result = svc.preprocess_stabilized_camera(
-        video_name="animal.mp4",
-        body_roi_id=1,
-        head_roi_id=2,
-        # Optional — override defaults:
-        fc=0.25,
-        order=2,
-        margin=75,
-        min_crop=300,
-        output_size=592,
-        preview_duration=10.0,
-    )
-
-    print(result["preprocessed_video_path"])   # full stabilised video
-    print(result["preview_path"])              # 10-second preview
-    print(result["n_frames"])                  # number of processed frames
-
-    diag = result["diagnostics"]
-    print(f"HP residual RMS: {diag['hp_residual_rms']:.2f} px")
-    print(f"Frames at min_crop: {diag['pct_at_min_crop']:.1f}%")
-    print(f"Speed-crop correlation: {diag['speed_crop_correlation']:.3f}")
-    ```
-
-    You can also call the module-level function directly:
 
     ```python
     from castle.service.preprocessing_service import preprocess_stabilized_camera
@@ -162,26 +132,46 @@ ROI 1 and Head as ROI 2 in the tracking step, use `--body-roi 1 --head-roi 2`.
         storage_path="projects/",
         project_name="my_project",
         video_name="animal.mp4",
-        body_roi_id=1,
-        head_roi_id=2,
+        kit_params={
+            "anterior_roi_id": 1,   # body ROI
+            "posterior_roi_id": 2,  # head ROI
+            # Optional — override defaults:
+            "fc": 0.25,
+            "order": 2,
+            "margin": 75,
+            "min_crop": 300,
+            "output_size": 592,
+        },
     )
+
+    print(result["preprocessed_video_path"])   # full stabilised video
+    print(result["session_id"])                # pre-process session id
+    print(result["n_frames"])                  # number of processed frames
+
+    diag = result["diagnostics"]
+    print(f"HP residual RMS: {diag['hp_residual_rms']:.2f} px")
+    print(f"Frames at min_crop: {diag['pct_at_min_crop']:.1f}%")
+    print(f"Speed-crop correlation: {diag['speed_crop_correlation']:.3f}")
     ```
 
 ---
 
 ## Output
 
-The preprocessed files are saved under the project directory:
+The preprocessed files are saved as a **session** (one parameter set) under the project directory:
 
 ```
 projects/my_project/
 └── preprocessed/
-    └── animal.mp4/
-        ├── stabilized.mp4          # Full-length stabilised video (output_size × output_size)
-        └── stabilized_preview.mp4  # Short preview clip (first preview_duration seconds)
+    └── sessions/
+        └── {session_id}/               # 8-char hash of the session name, e.g. KIT_a1_p2_fc0.25_sz592
+            ├── session_meta.json
+            └── animal.mp4/
+                ├── stabilized.mp4      # Full-length stabilised video (output_size × output_size)
+                └── mask_list.h5        # Tracking masks transformed into the stabilised frame
 ```
 
-Use `stabilized.mp4` as the video source in the **4. Extract Latent** tab.
+Select the session in the **Pre-process Session** dropdown of the **4. Extract Latent** tab to extract from `stabilized.mp4`.
 
 ---
 
@@ -199,7 +189,7 @@ After preprocessing, CASTLE reports three metrics to help you judge quality:
 
 ## Tips
 
-- **Check the preview clip first** — open `stabilized_preview.mp4` to visually verify that the
+- **Check the preview first** — click **🔍 Preview (single frame)** to visually verify that the
   animal is centred and the orientation is correct before processing the full video.
 - **Increase `min_crop`** if the animal is large relative to the frame (the default 300 px may
   clip body parts for big animals).

@@ -40,7 +40,7 @@ The **Label ROI** sub-tab is where you define what to track using point-and-clic
 2. **Click on the animal** (or body part) to create a segmentation mask
     - SAM generates a mask from your click
     - Click mode defaults to **Add** — each click refines the mask
-    - Use **Change Mode** to switch to **Remove** mode for excluding regions
+    - Use **Change mode** to switch to **Remove** mode for excluding regions
 3. To track multiple ROIs (e.g., body + head), click **Label Next ROI** to start a new ROI
 4. Click **Save ROIs** when satisfied
 
@@ -73,12 +73,12 @@ The **ROI Prompts** sub-tab displays a gallery of all saved labels across the pr
 
 The **Tracking** sub-tab runs DeAOT to propagate masks across frames.
 
-1. Select a tracking model:
-    - **R50** (ResNet-50): faster, good for most cases
-    - **SwinB** (Swin Transformer-B): more accurate, better for challenging videos
+1. Select a **Tracking Model**:
+    - **R50** (`r50_deaotl`, ResNet-50, default): faster, good for most cases
+    - **SwinB** (`swinb_deaotl`, Swin Transformer-B): more accurate, better for challenging videos
 2. Set **Start Frame** and **Stop Frame** (defaults to the full video)
-3. Optionally check **Skip existing** to avoid re-processing
-4. Click to start tracking
+3. **Skip Processed Files** (on by default) skips tracking if `mask_list.h5` already exists
+4. Click **Apply parameters**, then **Start Tracking**
 
 ![Run tracking](../assets/screenshots/tutorial-step2-tracking.png)
 

@@ -4,7 +4,7 @@ The **5. Behavior Microscope** tab is where CASTLE's core analysis happens — t
 
 The tab contains two sub-tabs:
 
-- **Clustering** — UMAP + DBSCAN workspace
+- **Clustering** — UMAP + DBSCAN workspace, with a **Prepare** sub-tab (optional reduced latent cache) and an **Explore (UMAP/DBSCAN)** sub-tab
 - **Cluster Annotator** — grid video browser with behavior labeling, comments, and auto-save
 
 ---
@@ -14,7 +14,7 @@ The tab contains two sub-tabs:
 The analysis workflow:
 
 ```
-Latent Vectors → Initialize → Select Cluster → UMAP Embedding → DBSCAN Clustering → Label & Submit
+Latent Vectors → Initialize → Select Cluster → UMAP Embedding → DBSCAN Clustering → Submit (auto-label)
                                                                                            ↓
                                                               Cluster Annotator (grid video, label, comment)
 ```
@@ -22,7 +22,7 @@ Latent Vectors → Initialize → Select Cluster → UMAP Embedding → DBSCAN C
 This is an **iterative, hierarchical** process. You start with broad categories (low magnification) and progressively zoom in to discover finer behavioral syllables.
 
 !!! warning "Human-in-the-loop is required"
-    CASTLE intentionally provides **no automated cluster command** — every cluster boundary and label must be reviewed by the user in the Behavior Microscope tab. A cluster is only scientifically meaningful after you have (1) inspected representative frames, (2) verified the boundary by adjusting `eps`, and (3) assigned a behavioural label.
+    The Behavior Microscope UI intentionally provides **no one-click cluster entry point** (the `castle cluster run` CLI runs UMAP + DBSCAN + auto-label + submit for scripted use, but its output needs the same review) — every cluster boundary and label must be reviewed by the user in the Behavior Microscope tab. A cluster is only scientifically meaningful after you have (1) inspected representative frames, (2) verified the boundary by adjusting `eps`, and (3) assigned a behavioural label.
 
 ---
 
@@ -30,14 +30,17 @@ This is an **iterative, hierarchical** process. You start with broad categories 
 
 ### Initialize
 
-1. Switch to the **5. Behavior Microscope** tab
-2. In the **Input Setting** accordion, configure:
+1. Switch to the **5. Behavior Microscope** tab → **Clustering** → **Explore (UMAP/DBSCAN)**
+2. In the **⚙️ New Session** accordion, configure:
 
     | Parameter | Description | Default |
     |-----------|-------------|---------|
     | **Select Visual Model** | Must match the model used in Step 3 | `dinov3_vitb16` |
     | **Enter ROI ID** | Comma-separated list (e.g., `1` or `1,2,3`) | `1` |
     | **Time window (frame)** | Number of frames to aggregate per data point | `1` |
+    | **Latent pooling** | Which extracted-latent variant to use (`auto`, `weighted_average`, `multiscale`); legacy raw only | `auto` |
+    | **Data source** | A prepared cache built in the **Prepare** sub-tab, or legacy raw latents (model, pooling and ROI are hidden when a cache is picked) | `(legacy raw — no cache)` |
+    | **Explained variance % (PCA → UMAP)** | Prepared cache only: % of variance kept, which sets the number of PCA dims fed to UMAP | `95` |
 
 3. Click **Initialize**
 
@@ -73,7 +76,8 @@ Configuration format:
     {
         "n_neighbors": 100,
         "min_dist": 0.0,
-        "n_components": 2
+        "n_components": 2,
+        "n_epochs": 500
     }
 ]
 ```
@@ -84,17 +88,17 @@ Two-step reduction: first to 5D, then to 2D. Captures more structure than single
 
 | Preset | Stage 1 n_neighbors | Stage 2 n_neighbors |
 |--------|--------------------|--------------------|
-| Intermediate (1000, 500) | 1000 | 500 |
-| Intermediate (500, 300) | 500 | 300 |
-| Intermediate (300, 100) | 300 | 100 |
-| Intermediate (100, 50) | 100 | 50 |
-| Intermediate (50, 25) | 50 | 25 |
+| Intermediate-magnification objective (1000, 500) | 1000 | 500 |
+| Intermediate-magnification objective (500, 300) | 500 | 300 |
+| Intermediate-magnification objective (300, 100) | 300 | 100 |
+| Intermediate-magnification objective (100, 50) | 100 | 50 |
+| Intermediate-magnification objective (50, 25) | 50 | 25 |
 
 Configuration format:
 ```json
 [
-    {"n_neighbors": 300, "min_dist": 0.0, "n_components": 5},
-    {"n_neighbors": 100, "min_dist": 0.0, "n_components": 2}
+    {"n_neighbors": 300, "min_dist": 0.0, "n_components": 5, "n_epochs": 500},
+    {"n_neighbors": 100, "min_dist": 0.0, "n_components": 2, "n_epochs": 500}
 ]
 ```
 
@@ -104,19 +108,29 @@ Two-step reduction: first to 10D, then to 2D. Preserves the most structure for f
 
 | Preset | Stage 1 n_neighbors | Stage 2 n_neighbors |
 |--------|--------------------|--------------------|
-| High (1000, 500) | 1000 | 500 |
-| High (500, 300) | 500 | 300 |
-| High (300, 100) | 300 | 100 |
-| High (100, 50) | 100 | 50 |
-| High (50, 25) | 50 | 25 |
+| High-magnification objective (1000, 500) | 1000 | 500 |
+| High-magnification objective (500, 300) | 500 | 300 |
+| High-magnification objective (300, 100) | 300 | 100 |
+| High-magnification objective (100, 50) | 100 | 50 |
+| High-magnification objective (50, 25) | 50 | 25 |
 
 Configuration format:
 ```json
 [
-    {"n_neighbors": 300, "min_dist": 0.0, "n_components": 10},
-    {"n_neighbors": 100, "min_dist": 0.0, "n_components": 2}
+    {"n_neighbors": 300, "min_dist": 0.0, "n_components": 10, "n_epochs": 500},
+    {"n_neighbors": 100, "min_dist": 0.0, "n_components": 2, "n_epochs": 500}
 ]
 ```
+
+#### Super-High Magnification (Three-Stage UMAP)
+
+Three-step reduction: 15D, then 5D, then 2D.
+
+| Preset | Stage 1 n_neighbors | Stage 2 n_neighbors | Stage 3 n_neighbors |
+|--------|--------------------|--------------------|--------------------|
+| Super-high-magnification objective (500, 300, 100) | 500 | 300 | 100 |
+| Super-high-magnification objective (300, 100, 50) | 300 | 100 | 50 |
+| Super-high-magnification objective (100, 50, 25) | 100 | 50 | 25 |
 
 ### Custom Configuration
 
@@ -125,6 +139,7 @@ You can edit the UMAP config JSON directly for full control. The format is a lis
 - `n_neighbors`: number of nearest neighbors (larger = broader structure)
 - `min_dist`: minimum distance between points in embedding (0.0 for clustering)
 - `n_components`: output dimensions for that stage
+- `n_epochs`: optimisation epochs (the presets use `500`)
 
 !!! note "`standardize` is a legacy no-op"
     Older configs/presets may include a `"standardize"` key. Per-feature input
@@ -138,7 +153,7 @@ You can edit the UMAP config JSON directly for full control. The format is a lis
 
 ### 1. Generate Embedding
 
-1. Select a cluster from the **Select Cluster** dropdown (starts with `init` — the full dataset)
+1. Click a node in the **Cluster Tree** (starts with `init` — the full dataset)
 2. Choose a UMAP preset or edit the config manually
 3. Click **Generate Embedding**
 
@@ -147,10 +162,10 @@ The UMAP scatter plot appears on the right. Each point represents a data point (
 ![UMAP embedding](../assets/screenshots/tutorial-step4-umap.png)
 
 !!! tip "Interactive Exploration"
-    Click on any point in the UMAP plot to see the corresponding video frame. This helps you understand what each region of the embedding represents.
+    Click on any point in the UMAP plot to play a short video clip around the corresponding frame. This helps you understand what each region of the embedding represents.
 
 !!! note "Reproducible embeddings"
-    Each run records its resolved **UMAP seed**, shown in the status line below the plot. Leave the **UMAP seed** field blank to draw a fresh seed each run, or paste a previously logged seed to reproduce a layout. Every UMAP stage is also recorded as one JSON line (seed + config) in a per-session `umap_log.jsonl` file. For **bit-identical** reproduction, reuse the logged seed with the **CPU (umap-learn)** backend — the GPU (cuML) backend is fast but its layout may vary slightly run-to-run.
+    Each run records its resolved **UMAP seed**, shown in the status line below the plot. Leave the **seed** field blank to draw a fresh seed each run, or paste a previously logged seed to reproduce a layout. Every UMAP stage is also recorded as one JSON line (seed + config) in a per-session `umap_log.jsonl` file. For **bit-identical** reproduction, reuse the logged seed with the **CPU** backend (umap-learn) — the **GPU** backend (cuML) is fast but its layout may vary slightly run-to-run.
 
 ### 2. Cluster the Embedding
 
@@ -164,11 +179,7 @@ The plot updates with colors indicating cluster assignments.
 
 ### 3. Label Clusters
 
-For each cluster you want to name:
-
-1. Enter the **Cluster ID** (number shown in the plot)
-2. Enter a **Cluster Name** (e.g., "grooming", "rearing", "locomotion")
-3. Click **Enter**
+Cluster names are assigned automatically when you click **Submit**: every DBSCAN cluster (noise `-1` excluded) gets a hierarchical name built from its parent — children of `init` become `init_a0`, `init_a1`, …; children of `init_a0` become `init_a0_b0`, …. Behavior labels are assigned afterwards in the [Cluster Annotator](#cluster-annotator-sub-tab).
 
 !!! tip
     Click on points within each cluster to view representative frames. This helps you identify what behavior each cluster represents.
@@ -177,6 +188,7 @@ For each cluster you want to name:
 
 Click **Submit** to:
 
+- Auto-label every cluster (see above)
 - Import the labeled clusters into the main analysis
 - Generate a syllable plot (ethogram)
 - Export CSV files (behavior IDs and time series)
@@ -228,7 +240,7 @@ After generating clusters, use the **Cluster Annotator** sub-tab to review and l
 
 ### Labeling
 
-- Enter a **behavior name** in the label field (replaces the default cluster name)
+- Pick a **Behavior Label** from the selected **Classification Scheme** (default `mice-10-class`; add your own under **✏️ Custom Scheme**). The label is stored in the session's `annotations.csv` next to the auto-generated cluster name
 - Optionally add a **comment** to describe the behavior or note uncertainty
 - Labels are **auto-saved** immediately on change; comments are auto-saved on focus-out
 

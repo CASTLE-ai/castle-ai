@@ -32,6 +32,7 @@ The `Segmentor` wraps SAM's `SamAutomaticMaskGenerator` and interactive predicto
 | `pred_iou_thresh` | 0.8 | IoU prediction threshold |
 | `stability_score_thresh` | 0.9 | Mask stability threshold |
 | `crop_n_layers` | 1 | Number of crop layers |
+| `crop_n_points_downscale_factor` | 2 | Point-grid downscale factor per crop layer |
 | `min_mask_region_area` | 200 | Minimum mask area in pixels |
 
 ### Reference
@@ -126,7 +127,7 @@ Extraction process:
 
 1. Load aligned video frames as a `VideoDataset` (PyTorch `Dataset`)
 2. Batch frames through the visual encoder (default batch size: 32)
-3. Extract CLS token or pooled features per frame
+3. Pool the patch tokens per frame, weighted by the ROI mask (`weighted_average`, default) or per spatial-pyramid region (`multiscale`)
 4. Save as `.npz` file with shape `(n_frames, feature_dim)`
 5. Frames with empty masks produce NaN vectors
 
@@ -148,15 +149,16 @@ Extraction process:
 
 ### CASTLE's Usage
 
-- **Implementation**: `castle/utils/myumap.py` — custom UMAP using cuml (GPU-accelerated) with spectral layout initialization
-- **Called from**: `castle/utils/latent_explorer.py` → `Latent.build_embedding()`
+- **Implementation**: `castle/core/clustering_backends.py` → `UMAPReducer` — on CUDA uses cuML `cuml.manifold.UMAP`, falling back to the in-repo `castle/utils/myumap.py`, then CPU `umap-learn`; on CPU / MPS uses `umap-learn`
+- **Called from**: `castle/utils/latent_explorer.py` → `LocalLatent.build_embedding()`
+- **Epochs**: the Behavior Microscope presets set `n_epochs` = 500 per stage
 
-CASTLE's UMAP implementation uses:
+The in-repo `myumap` fallback uses:
 
 - **cuml** `fuzzy_simplicial_set` for graph construction
 - **Spectral layout** or **PCA** for initialization
 - **cuml** `simplicial_set_embedding` for optimization
-- Default: 20,000 epochs for convergence
+- Default: 20,000 epochs (constructor default)
 
 **Hierarchical multi-stage UMAP**: CASTLE supports chaining multiple UMAP stages to progressively reduce dimensions:
 
@@ -165,6 +167,7 @@ CASTLE's UMAP implementation uses:
 | Low | 1 stage | → 2D |
 | Intermediate | 2 stages | → 5D → 2D |
 | High | 2 stages | → 10D → 2D |
+| Super-high | 3 stages | → 15D → 5D → 2D |
 
 The `n_neighbors` parameter controls the scale of structure preserved — higher values capture more global patterns, lower values capture finer local details.
 
@@ -188,7 +191,7 @@ The `n_neighbors` parameter controls the scale of structure preserved — higher
 
 ### CASTLE's Usage
 
-- **Implementation**: `castle/utils/latent_explorer.py` → `Latent.build_cluster()`
+- **Implementation**: `castle/utils/latent_explorer.py` → `LocalLatent.build_cluster()` (via `DBSCANClusterer` in `castle/core/clustering_backends.py`; cuML DBSCAN on CUDA, scikit-learn otherwise)
 - **Key parameter**: `eps` (epsilon-neighborhood radius)
     - Smaller eps → more, smaller clusters
     - Larger eps → fewer, larger clusters

@@ -16,17 +16,19 @@ Tracked Video (frames + masks) → Preprocessing → Visual Model → Latent Vec
 
 ## Configuration
 
-When you switch to the Extract Latent tab, the interface shows three columns:
+When you switch to the Extract Latent tab, the interface shows a **Pre-process Session** selector followed by the **Model** and **Source & Options** sections:
 
-### Model & Target Settings (Left Column)
+### Model & Target Settings
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| **Select Visual Model** | Feature extraction backbone | `dinov3_vitb16` |
-| **Enter ROI ID** | Which tracked ROI to extract features from | `1` |
-| **Batch size** | Frames processed per batch (increase if VRAM allows) | `32` |
-| **Select Target Video** | Specific video or "All" | `All` |
+| **Pre-process Session** | Session from [Step 2.5](step2_5-preprocessing.md) to extract from, or the raw source video | `(None — use raw source)` |
+| **Visual Model** | Feature extraction backbone | `dinov3_vitb16` |
+| **ROI ID** | Which tracked ROI to extract features from | `1` |
+| **Batch Size** | Frames processed per batch (increase if VRAM allows; **Auto Batch Size** picks one) | `32` |
+| **Videos to extract** | Which project videos to process | All checked |
 | **Skip existing files** | Don't re-extract if output already exists | ✅ Enabled |
+| **Remove Background** | Mask out pixels outside the ROI | `False` |
 
 Available models:
 
@@ -34,71 +36,48 @@ Available models:
 - **`dinov3_vitl16`** — DINOv3 ViT-L/16 (larger model, 1024-dim, higher quality but slower)
 - **`dinov2_vitb14_reg4_pretrain`** — DINOv2 ViT-B/14 with registers (768-dim, well-tested alternative)
 
-### Preprocessing Settings (Middle Column)
+### Preprocessing Settings
 
-These settings control how frames are preprocessed before feature extraction:
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| **Center ROI** | Crop frames centered on a reference ROI | `False` |
-| **Center ROI ID** | Which ROI to center on | `1` |
-| **Width / Height** | Crop dimensions in pixels | `300 × 300` |
-| **Rotate based on Tail** | Normalize orientation using a tail ROI | `False` |
-| **Tail ROI ID** | Which ROI defines the tail direction | `2` |
-| **Remove Background** | Mask out pixels outside the ROI | `False` |
-
-!!! warning "Click Apply First"
-    After changing preprocessing settings, you **must click the Apply button** before extracting. The preview image shows the result of your preprocessing configuration on the first frame.
+Centering, cropping and rotation are not set on this tab. They are produced in the **3. Pre-process (Optional)** tab as a session (**KIT** or **Center ROI + Crop**, see [Step 2.5](step2_5-preprocessing.md)) and applied here by choosing that session in **Pre-process Session**.
 
 ![Preprocessing preview](../assets/screenshots/tutorial-step3-preprocess.png)
 
 ### Preprocessing Recommendations
 
-| Scenario | Center ROI | Rotate | Remove BG |
-|----------|-----------|--------|-----------|
-| **General behavior** | ✅ On | ❌ Off | ❌ Off |
-| **Posture analysis** | ✅ On | ✅ On | ✅ On |
-| **Locomotion patterns** | ✅ On | ✅ On | ❌ Off |
-| **No preprocessing** | ❌ Off | ❌ Off | ❌ Off |
+| Scenario | Pre-process Session | Remove BG |
+|----------|---------------------|-----------|
+| **General behavior** | Center ROI + Crop | ❌ Off |
+| **Posture analysis** | KIT (centered + rotated) | ✅ On |
+| **Locomotion patterns** | KIT (centered + rotated) | ❌ Off |
+| **No preprocessing** | None (raw source) | ❌ Off |
 
 ---
 
 ## Extraction Types
 
-CASTLE offers three extraction modes, each triggered by a different button:
+CASTLE offers two extraction modes:
 
 ### Extract (Standard Latent Extraction)
 
 The primary extraction mode. Runs the selected visual model on preprocessed frames and saves latent vectors.
 
 - **Output**: `.npz` file in `project/latent/model-name/`
-- **Filename pattern**: `{video}_ROI_{id}_{model}_{tags}.npz`
-- **Tags**: `ctr` (centered), `rmbg` (background removed)
-
-### Extract Crop Video
-
-Exports the preprocessed (centered, rotated, cropped) video as an MP4 file. Useful for:
-
-- Visual verification of preprocessing
-- Sharing aligned videos with collaborators
-- Input to external analysis tools
-
-- **Output**: `.mp4` file in `project/crop/video-name/`
+- **Filename pattern**: `{video}_ROI_{id}_{model}_{tags}_pre-{session_id}.npz` (`_{tags}` only when tags apply; `_pre-{session_id}` only when a pre-process session is selected)
+- **Tags**: `ctr` (centered), `rmbg` (background removed), `spp…` (multiscale pooling), `L…` (feature layers)
 
 ### Extract Rotation Latent
 
-Extracts features specifically capturing rotational information. Used when orientation is a key behavioral variable.
+Enabled with **Eliminate Rotation Asymmetry** under **Advanced Extraction Options**; runs after the standard extraction. Embeds 7 rotated views of each frame and averages them to reduce orientation bias in the latent space.
 
-- **Output**: `.npz` file with rotation-specific features
+- **Output**: `{video}_ROI_{id}_rotation_latent.npz` in `project/latent/model-name/` (with the same `_pre-{session_id}` suffix when a session is selected)
 
 ---
 
 ## Running Extraction
 
-1. Configure model, ROI, and preprocessing settings
-2. Click **Apply** to confirm preprocessing
-3. Click **Extract** (or the appropriate extraction button)
-4. Monitor progress in the log output area
+1. Select the pre-process session, model, ROI, and options
+2. Click **Extract**
+3. Monitor progress in the **Log Output** area
 
 The log shows:
 
@@ -108,11 +87,11 @@ The log shows:
 
 ![Extraction progress](../assets/screenshots/tutorial-step3-extract.png)
 
-!!! tip "Multi-GPU extraction (opt-in)"
-    On a machine with two or more CUDA GPUs you can speed up extraction by setting the environment variable `CASTLE_MULTI_GPU=1` in your environment before launching CASTLE (the Gradio app and the CLI both honour it). CASTLE then splits a single video's frames by range across the available GPUs (each GPU runs the full decode → preprocess → encode on its half, and the results are merged in original order). On two identical GPUs this is bit-identical to the single-GPU output and roughly **1.9× faster**. The feature is **off by default** (single GPU).
+!!! tip "Multi-GPU extraction"
+    On a machine with two or more CUDA GPUs, check **Use multiple GPUs** on the Extract Latent tab (enabled and checked by default only when two or more GPUs are detected). With several videos selected, each GPU processes whole videos; with a single video, CASTLE splits its frames by range across the available GPUs (each GPU runs the full decode → preprocess → encode on its part, and the results are merged in original order). On two identical GPUs this is bit-identical to the single-GPU output and roughly **1.9× faster**. The CLI stays single-GPU unless the environment variable `CASTLE_MULTI_GPU=1` is set.
 
     ```bash
-    CASTLE_MULTI_GPU=1 python app.py
+    CASTLE_MULTI_GPU=1 castle extract my_project
     ```
 
 ---
@@ -151,7 +130,7 @@ With 7 ROIs on a 30-min video, DINOv3 ViT-B extraction takes ~84 min total.
     - Increase **batch size** if you have spare VRAM (e.g., 64 or 128 on a 24 GB card)
     - Use **Skip existing** when re-running after adding new videos
     - The ViT-B models (`dinov3_vitb16`, `dinov2_vitb14_reg4_pretrain`) are fastest; `dinov3_vitl16` is slowest but potentially highest quality
-    - On a multi-GPU machine, set `CASTLE_MULTI_GPU=1` for roughly 1.9× faster extraction on 2 GPUs
+    - On a multi-GPU machine, keep **Use multiple GPUs** checked (CLI: set `CASTLE_MULTI_GPU=1`) for roughly 1.9× faster extraction on 2 GPUs
     - Feature extraction is the pipeline bottleneck — plan accordingly for large datasets
 
 ---

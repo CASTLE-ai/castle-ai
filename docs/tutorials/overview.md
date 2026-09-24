@@ -44,7 +44,7 @@ Before feature extraction, the **StabilizedCamera** module normalises each frame
 
 - **Zero-phase Butterworth low-pass filter** (`filtfilt`, fc = 0.25 Hz, order 2) applied to centroid x(t) and heading angle θ(t) — no temporal delay
 - **Dynamic crop window**: `max(300, 2 × (‖residual‖ + 75))` px, adapting to fast movements
-- **Output**: 592×592 px MP4 saved to `preprocessed/{video}/stabilized.mp4`
+- **Output**: 592×592 px MP4 saved to `preprocessed/sessions/{session_id}/{video}/stabilized.mp4`
 - Available via CLI (`castle preprocess`) and Gradio UI (Tab 3: Pre-process)
 
 This ensures that the extracted features encode **posture and movement** rather than arena position or heading direction.
@@ -53,8 +53,8 @@ This ensures that the extracted features encode **posture and movement** rather 
 
 Before feature extraction, tracked ROIs are preprocessed:
 
-- **Center ROI**: crop the video around a reference ROI (e.g., body centroid)
-- **Rotate**: normalize orientation using a secondary ROI (e.g., tail direction)
+- **Center ROI + Crop** (Pre-process tab): crop the video around a reference ROI (e.g., body centroid)
+- **Eliminate Rotation Asymmetry**: extract latents at 7 rotation angles (orientation from a reference ROI) and average them to reduce orientation bias
 - **Remove background**: mask out non-ROI pixels
 
 This normalization ensures that features reflect **posture and movement**, not position or orientation in the frame.
@@ -71,7 +71,7 @@ Visual foundation models extract latent features from each aligned frame:
 - Batch processing with configurable batch size
 
 !!! tip "Multi-GPU extraction (opt-in)"
-    Set `CASTLE_MULTI_GPU=1` in your environment before running extraction. When two or more CUDA GPUs are present, latent extraction for a single video splits its frames by range across the GPUs (each runs the full decode → preprocess → encode on its half; results are merged in original order). Output is bit-identical to the single-GPU path on identical GPUs and roughly **1.9× faster on 2 GPUs**. Default is off (single GPU).
+    When two or more CUDA GPUs are present, the **Use multiple GPUs** checkbox in the Extract Latent tab (on by default when several GPUs are detected) spreads videos across the GPUs (one video per GPU), and latent extraction for a single video splits its frames by range across the GPUs (each runs the full decode → preprocess → encode on its part; results are merged in original order). For the CLI, set `CASTLE_MULTI_GPU=1` in your environment before running extraction; default there is off (single GPU). Frame-split output is bit-identical to the single-GPU path on identical GPUs and roughly **1.9× faster on 2 GPUs**.
 
 ### 5. Behavior Analysis (UMAP + DBSCAN)
 
@@ -79,7 +79,7 @@ The high-dimensional features are reduced and clustered to discover behavioral p
 
 - **UMAP** (Uniform Manifold Approximation and Projection) reduces dimensions for visualization
 - **DBSCAN** clusters the embedding into behavioral syllables
-- **Hierarchical exploration**: three magnification levels (low → intermediate → high) for progressively finer behavioral categories
+- **Hierarchical exploration**: magnification presets (low → intermediate → high → super-high) for progressively finer behavioral categories
 - Interactive click-to-explore on the UMAP plot
 
 CASTLE is a **human-in-the-loop** tool: cluster boundaries and labels must be reviewed by the user in the Behavior Microscope tab before they are scientifically meaningful. There is intentionally no "one-click cluster" entry point.
@@ -109,7 +109,7 @@ After clustering, annotate discovered clusters with behavior labels:
 
 ### 8. Export
 
-Package results as a ZIP archive with selectable components (masks, latent features, cluster results, annotations, grid videos, analysis outputs).
+Package results as a ZIP archive with selectable components (masks, latent features, cluster results, annotations, grid videos, analysis outputs, source videos).
 
 ---
 
@@ -120,10 +120,11 @@ CASTLE offers two interfaces:
 ### Gradio Web UI (Recommended for exploration)
 
 ```bash
-python app.py
+./.venv/bin/python app.py              # macOS / Linux (from the CASTLE install folder)
+.\.venv\Scripts\python.exe app.py      # Windows (PowerShell)
 ```
 
-Interactive web interface at `http://localhost:7860` with **8 tabs** following the pipeline:
+Interactive web interface at `http://127.0.0.1:7860` with **8 tabs** following the pipeline:
 
 | Tab | Name | Purpose |
 |-----|------|---------|

@@ -11,11 +11,14 @@ This guide walks you through a complete analysis using a demo video in under 5 m
 
 === "Gradio Web UI"
 
+    From the CASTLE install folder:
+
     ```bash
-    python app.py
+    ./.venv/bin/python app.py              # macOS / Linux
+    .\.venv\Scripts\python.exe app.py      # Windows (PowerShell)
     ```
 
-    The Gradio web UI opens at [http://localhost:7860](http://localhost:7860).
+    Then open [http://127.0.0.1:7860](http://127.0.0.1:7860) in your browser.
 
 ---
 
@@ -49,7 +52,7 @@ This guide walks you through a complete analysis using a demo video in under 5 m
 
 1. Switch to the **2. Tracking ROIs** tab
 2. In the **Label ROI** sub-tab, define your regions of interest on the first frame
-3. Use the **ROI Prompts** sub-tab to set prompts for the segmentation model
+3. Use the **ROI Prompts** sub-tab to review (or delete) the labeled frames used as tracking prompts
 4. Go to **Tracking** to run the tracker across all frames
 
 ![Define and track ROIs](../assets/screenshots/quickstart-tracking.png)
@@ -63,9 +66,9 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 === "Gradio Web UI"
 
     1. Switch to the **3. Pre-process (Optional)** tab
-    2. Select a video and enter the body ROI id and head ROI id
+    2. Select a video and choose the body ROI id and head ROI id
     3. Adjust filter parameters if needed (defaults work well for most videos)
-    4. Click **Run Preprocessing**
+    4. Click **▶ Run Pre-process**
 
 === "CLI"
 
@@ -92,8 +95,9 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
     | `--output-size` | `592` | Output frame side length (px). 592 (= 37×16) for the default DINOv3 ViT-B/16; 518 (= 37×14) for DINOv2 ViT-B/14. |
 
 !!! note "Output"
-    The stabilised video is saved to `{storage}/{project}/preprocessed/{video}/stabilized.mp4`.
-    A short 10-second preview clip is also generated at `stabilized_preview.mp4`.
+    The stabilised video is saved as a pre-process session, at
+    `{storage}/{project}/preprocessed/sessions/{session_id}/{video}/stabilized.mp4`
+    (with a matching `mask_list.h5`). Select the session in **4. Extract Latent**.
 
 !!! tip "When to use preprocessing"
     Use preprocessing when your animal moves freely in the arena and you want DINOv3 features
@@ -111,17 +115,20 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 ![Extract latent features](../assets/screenshots/quickstart-extract.png)
 
 !!! tip "Multi-GPU extraction (opt-in)"
-    Set the environment variable `CASTLE_MULTI_GPU=1` in your environment before running extraction to split a
-    single video's frames by range across all available CUDA GPUs (each GPU decodes, preprocesses,
-    and encodes its half; results are merged in original order). This needs **≥2 CUDA GPUs** and is
-    off by default. Output is bit-identical to single-GPU on identical GPUs, and ~1.9× faster on 2 GPUs.
+    With **≥2 CUDA GPUs**, the **Use multiple GPUs** checkbox in the **4. Extract Latent** tab (on by
+    default when several GPUs are detected) spreads videos across GPUs (one video per GPU) and splits a
+    single video's frames by range across the GPUs (each GPU decodes, preprocesses, and encodes its
+    part; results are merged in original order). For the CLI, set the environment variable
+    `CASTLE_MULTI_GPU=1` before running extraction; it is off by default there. Frame-split output is
+    bit-identical to single-GPU on identical GPUs, and ~1.9× faster on 2 GPUs.
 
 !!! tip "Auto Batch Size & Cache (Phase 2)"
-    CASTLE automatically selects a safe GPU batch size based on available VRAM, so you don't need to tune `batch_size` manually.
+    CASTLE can pick a safe GPU batch size from available VRAM: the CLI does this when `--batch-size` is omitted,
+    and in the UI the **Auto Batch Size** button fills in the **Batch Size** field (default `32`).
     If a GPU out-of-memory error occurs mid-run the batch is halved and the extraction retries transparently.
 
-    Extraction results are also **cached by content hash** (video path + modification time + preprocessing config + model name).
-    Re-running extraction on an unchanged video is nearly instant — the cached `.npz` is reused without re-inferring.
+    With **Skip existing files** checked (the default), re-running extraction skips videos that already have a
+    latent `.npz` for the same ROI, model and settings — the existing file is reused without re-inferring.
 
     To run extraction only on videos not yet processed (incremental mode):
 
@@ -164,8 +171,8 @@ Stabilized Camera Preprocessing normalises each frame around the tracked body ce
 ## 8. Export Results
 
 1. Switch to the **7. Export** tab
-2. Select the data components you want (masks, latent, cluster results, annotations, grid videos)
-3. Click **Package ZIP** to download a ZIP archive
+2. Select the data components you want (masks, latent, cluster results, annotations, grid videos, analysis results, source videos)
+3. Click **📦 Export**, then download the ZIP archive
 
 ---
 

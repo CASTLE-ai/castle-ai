@@ -133,15 +133,13 @@ Configured in the **4. Extract Latent** tab:
 
 ### Preprocessing
 
+Center-ROI cropping is configured in the **3. Pre-process** tab (method "Center ROI + Crop": ROI ID `1`, crop `300` × `300` px by default), not in the Extract tab. The Extract tab offers:
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| Center ROI | `False` | Crop centered on ROI centroid |
-| Center ROI ID | `1` | Which ROI to center on |
-| Crop Width | `300` px | Crop window width |
-| Crop Height | `300` px | Crop window height |
-| Rotate (Tail) | `False` | Normalize orientation via tail ROI |
-| Tail ROI ID | `2` | Which ROI defines tail direction |
 | Remove Background | `False` | Zero out non-ROI pixels |
+| Eliminate Rotation Asymmetry | `False` | After the main extraction, also extract a 7-angle rotation latent (Advanced Extraction Options) |
+| Reference ROI ID | `2` | ROI that sets body orientation for the rotation latent |
 
 ---
 
@@ -168,8 +166,7 @@ JSON array of UMAP stages:
 | `n_neighbors` | Nearest neighbors (local vs global structure) | 25–1000 |
 | `min_dist` | Minimum distance in embedding | 0.0 (for clustering) |
 | `n_components` | Output dimensions per stage | 2, 5, or 10 |
-
-**Internal parameter** (in `myumap.py`): `n_epochs = 20000` — number of optimization epochs. Not exposed in the UI.
+| `n_epochs` | Optimization epochs (optional per-stage key; the UI templates use `500`, the CLI default config `5000`) | 500–5000 |
 
 !!! note "No input standardization"
     CASTLE does **not** z-score the raw features before UMAP — per-feature standardization was intentionally removed (it amplified low-variance / noise dimensions for distance-based UMAP/DBSCAN). A legacy `"standardize"` key in a stage config is ignored: it is dropped before UMAP is constructed and has no effect.
@@ -184,6 +181,7 @@ JSON array of UMAP stages:
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
 | `eps` | `1.0` | 0.1–10.0 | Epsilon-neighborhood radius |
+| `min_samples` ("min points") | `5` | ≥ 1 | Minimum neighbors for a core point |
 
 Smaller eps → more clusters. Larger eps → fewer clusters.
 
@@ -315,7 +313,7 @@ cfg.save('castle_config.json')           # to file
 |-------|------|---------|-------------|
 | `clustering.method` | `str` | `'dbscan'` | Clustering algorithm |
 | `clustering.eps` | `float` | `1.0` | DBSCAN epsilon |
-| `clustering.umap_stages` | `List[UMAPConfig]` | `[{n_neighbors:100, min_dist:0.0, n_components:2}]` | Multi-stage UMAP configs |
+| `clustering.umap_stages` | `List[UMAPConfig]` | `[{n_neighbors:100, min_dist:0.0, n_components:2, n_epochs:5000}]` | Multi-stage UMAP configs |
 
 CASTLE does not standardize the raw features (any `standardize` key is ignored). The top-level `master_seed` field (default `42`) seeds every stochastic component; resolved per-stage UMAP seeds are recorded in the session's `umap_log.jsonl` for reproducibility (see [UMAP Parameters](#umap-parameters)).
 

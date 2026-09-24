@@ -47,8 +47,10 @@ model):
 |---|---|
 | Latent feature files | `*.npz.json` sidecar — `environment` block + model name + seed |
 | Prepare cache | `prepared/<id>/meta.json` — `environment` + PCA/seed/sources |
+| Cluster result | `cluster_*.npz` — `run_environment` array (JSON string) alongside `emb`/`cls`/`config` |
 | Export bundle | `run_manifest.json` inside the ZIP — environment + selected components + project/session info |
 | HTML report | footer line — CASTLE + library/GPU stack |
+| Benchmark report | `benchmark_report.json` — `provenance` block (see [Benchmarking](benchmarking.md)) |
 | NWB export | `source_script` field; `session_start_time` is the recording start (pass it explicitly for a spec-correct file) |
 
 ## Reproducing a published result — checklist

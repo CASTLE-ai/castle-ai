@@ -28,8 +28,13 @@ def toggle_tab_visibility(project_name, object_count):
     return [gr.update(visible=is_visible) for _ in range(object_count)]
 
 
+# Gradio 6 evaluates ``launch(js=...)`` as a function and calls it once on
+# load, so a plain ``function`` declaration stays local to that call and the
+# tree nodes' inline ``onclick="castleTreeClick(...)"`` finds nothing (clusters
+# could not be selected). Assign it onto ``window`` so it is global.
 CASTLE_JS = """
-function castleTreeClick(el, name) {
+() => {
+window.castleTreeClick = function (el, name) {
     document.querySelectorAll('.cct-node').forEach(function(n) {
         n.classList.remove('cct-selected');
     });
@@ -47,6 +52,7 @@ function castleTreeClick(el, name) {
     }
     tb.dispatchEvent(new Event('input', { bubbles: true }));
     tb.dispatchEvent(new Event('change', { bubbles: true }));
+};
 }
 """
 

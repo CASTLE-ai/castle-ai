@@ -1,377 +1,219 @@
 #!/usr/bin/env bash
-# CASTLE One-Line Installer — Linux / macOS
+# CASTLE installer — Linux / macOS
+#
+# Installs the current CASTLE (the `dev` branch of CASTLE-ai/castle-ai) into one
+# folder: source code, a Python 3.10 environment (.venv) and the model
+# checkpoints (ckpt). Picks CPU, CUDA or Apple-silicon PyTorch automatically.
+#
 # Usage:
-#   curl -fsSL https://castle-ai.github.io/install.sh | bash
-#   curl -fsSL https://castle-ai.github.io/install.sh | bash -s -- --cpu-only
-#   curl -fsSL https://castle-ai.github.io/install.sh | bash -s -- --uninstall
+#   curl -fsSL https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.sh | bash -s -- --install-dir ~/castle
 #
 # Options:
-#   --cpu-only          Force CPU-only PyTorch (skip CUDA detection)
-#   --no-checkpoints    Skip model checkpoint download (~2 GB)
-#   --version VER       Install a specific castle-ai version (default: latest)
-#   --uninstall         Remove the CASTLE installation entirely
+#   --install-dir DIR   Install folder (default: ~/castle; env CASTLE_INSTALL_DIR)
+#   --cpu-only          Force CPU-only PyTorch (skip NVIDIA detection)
+#   --no-checkpoints    Skip model checkpoint download
+#   --uninstall         Remove CASTLE from the install folder (keeps projects/)
+#
+# Exit codes: 0 = installed, 1 = failed, 2 = stopped before installing because
+# the install folder path contains non-ASCII characters (see message).
+# The last line printed is always CASTLE_INSTALL_RESULT=OK or =FAIL / =STOPPED.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-CASTLE_HOME="${CASTLE_HOME:-$HOME/.castle}"
-CASTLE_BIN="$CASTLE_HOME/bin"
-CASTLE_CKPT="$CASTLE_HOME/ckpt"
-CASTLE_VENV="$CASTLE_HOME/venv"
-CASTLE_VERSION=""          # empty → latest
+INSTALL_DIR="${CASTLE_INSTALL_DIR:-}"
+EXPLICIT_DIR=false
+[[ -n "$INSTALL_DIR" ]] && EXPLICIT_DIR=true
 PYTHON_VERSION="3.10"
 CPU_ONLY=false
 NO_CHECKPOINTS=false
 UNINSTALL=false
+REPO_TARBALL="https://github.com/CASTLE-ai/castle-ai/archive/refs/heads/dev.tar.gz"
 
-# ── Checkpoint URLs ──────────────────────────────────────────────────────────
-SAM_URL="https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
-SAM_FILE="sam_vit_b_01ec64.pth"
-
-DEAOT_GDRIVE_ID="1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ"
-DEAOT_FILE="R50_DeAOTL_PRE_YTB_DAV.pth"
-
-DINOV2_URL="https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_reg4_pretrain.pth"
-DINOV2_FILE="dinov2_vitb14_reg4_pretrain.pth"
+# ── Checkpoints: file | source (URL or Google Drive id) | SHA-256 ───────────
+CHECKPOINTS=(
+    "sam_vit_b_01ec64.pth|https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth|ec2df62732614e57411cdcf32a23ffdf28910380d03139ee0f4fcbe91eb8c912"
+    "R50_DeAOTL_PRE_YTB_DAV.pth|gdrive:1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ|7e8a8d83310739bac02817f6bf48b6bbe2bbd7d5325722f1084088eb3aee1e06"
+    "dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth|gdrive:18doehnHWWnz9zBtOdgYZ3XMTpgPYbYZ6|73cec8be7427c8655ceced13ce62f6e20a1fa90d1b4d4a550df17a1144081a7c"
+)
 
 # ── Colours ──────────────────────────────────────────────────────────────────
 if [[ -t 1 ]] && [[ "${TERM:-}" != "dumb" ]]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+    BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 else
-    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; BOLD=''; NC=''
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; NC=''
 fi
 
-info()  { printf "${BLUE}ℹ${NC}  %s\n" "$*"; }
-ok()    { printf "${GREEN}✓${NC}  %s\n" "$*"; }
-warn()  { printf "${YELLOW}⚠${NC}  %s\n" "$*" >&2; }
-err()   { printf "${RED}✗${NC}  %s\n" "$*" >&2; }
-die()   { err "$*"; exit 1; }
+info()  { printf "${BLUE}[..]${NC} %s\n" "$*"; }
+ok()    { printf "${GREEN}[OK]${NC} %s\n" "$*"; }
+warn()  { printf "${YELLOW}[!!]${NC} %s\n" "$*" >&2; }
+err()   { printf "${RED}[XX]${NC} %s\n" "$*" >&2; }
+die()   { err "$*"; echo "CASTLE_INSTALL_RESULT=FAIL"; exit 1; }
 
-banner() {
-    printf "${CYAN}"
-    cat <<'EOF'
-
-  ╔═══════════════════════════════════════╗
-  ║          CASTLE Installer             ║
-  ║  Combined Approach for Segmentation   ║
-  ║  and Tracking with Latent Extraction  ║
-  ╚═══════════════════════════════════════╝
-
-EOF
-    printf "${NC}"
+usage() {
+    cat <<'USAGE'
+Usage: install.sh [--install-dir DIR] [--cpu-only] [--no-checkpoints] [--uninstall]
+  --install-dir DIR   Install folder (default: ~/castle; env CASTLE_INSTALL_DIR)
+  --cpu-only          Force CPU-only PyTorch
+  --no-checkpoints    Skip model checkpoint download
+  --uninstall         Remove CASTLE from the install folder (keeps projects/)
+USAGE
 }
 
-# ── Argument parsing ─────────────────────────────────────────────────────────
+# ── Parse arguments ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --cpu-only)       CPU_ONLY=true;       shift ;;
+        --install-dir)    INSTALL_DIR="$2"; EXPLICIT_DIR=true; shift 2 ;;
+        --cpu-only)       CPU_ONLY=true; shift ;;
         --no-checkpoints) NO_CHECKPOINTS=true; shift ;;
-        --uninstall)      UNINSTALL=true;      shift ;;
-        --version)
-            [[ -n "${2:-}" ]] || die "--version requires a value"
-            CASTLE_VERSION="$2"; shift 2 ;;
-        -h|--help)
-            banner
-            cat <<'HELP'
-  Options:
-    --cpu-only          Force CPU-only PyTorch
-    --no-checkpoints    Skip model download (~2 GB)
-    --version VER       Install a specific version
-    --uninstall         Remove CASTLE
-    -h, --help          Show this message
-HELP
-            exit 0 ;;
-        *) die "Unknown option: $1" ;;
+        --uninstall)      UNINSTALL=true; shift ;;
+        -h|--help)        usage; exit 0 ;;
+        *) die "Unknown option: $1 (see --help)" ;;
     esac
 done
+[[ -z "$INSTALL_DIR" ]] && INSTALL_DIR="$HOME/castle"
+VENV="$INSTALL_DIR/.venv"
+PY="$VENV/bin/python"
+CKPT="$INSTALL_DIR/ckpt"
 
-# ── Uninstall ────────────────────────────────────────────────────────────────
-if [[ "$UNINSTALL" == true ]]; then
-    banner
-    info "Uninstalling CASTLE …"
-    rm -rf "$CASTLE_HOME"
-    rm -f "$HOME/.local/bin/castle"
-    ok "CASTLE uninstalled."
+OS="$(uname -s)"
+case "$OS" in
+    Linux|Darwin) ;;
+    *) die "Unsupported OS: $OS (use install.ps1 on Windows)" ;;
+esac
+
+# ── Uninstall (keeps projects/) ──────────────────────────────────────────────
+if $UNINSTALL; then
+    if [[ ! -d "$INSTALL_DIR" ]]; then ok "Nothing to remove at $INSTALL_DIR"; exit 0; fi
+    find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name projects -exec rm -rf {} +
+    ok "CASTLE removed from $INSTALL_DIR (the projects folder, if any, was kept)."
     exit 0
 fi
 
-# ── Banner ───────────────────────────────────────────────────────────────────
-banner
+printf "\n  ${CYAN}CASTLE installer (%s)${NC}\n  Install folder: %s\n\n" "$OS" "$INSTALL_DIR"
 
-# ── Platform detection ───────────────────────────────────────────────────────
-detect_platform() {
-    OS="$(uname -s)"
-    ARCH="$(uname -m)"
+# ── 1. Install folder must be decided by the user if it is non-ASCII ─────────
+if ! $EXPLICIT_DIR && LC_ALL=C grep -q '[^ -~]' <<<"$INSTALL_DIR"; then
+    warn "The install folder contains non-English characters:"
+    warn "    $INSTALL_DIR"
+    warn "Some video tools can fail on such paths. Choose one and run the installer again:"
+    warn "  a) an English-only folder (recommended):  ... | bash -s -- --install-dir /opt/castle"
+    warn "  b) keep this folder anyway:               ... | bash -s -- --install-dir \"$INSTALL_DIR\""
+    echo "CASTLE_INSTALL_RESULT=STOPPED"
+    exit 2
+fi
 
-    case "$OS" in
-        Linux)  ;;
-        Darwin) ;;
-        *)      die "Unsupported OS: $OS  (only Linux and macOS are supported)" ;;
-    esac
-
-    case "$ARCH" in
-        x86_64|amd64) ARCH="x86_64" ;;
-        aarch64|arm64) ARCH="arm64" ;;
-        *) die "Unsupported architecture: $ARCH  (need x86_64 or arm64)" ;;
-    esac
-
-    info "Platform: $OS $ARCH"
-}
-
-# ── uv ───────────────────────────────────────────────────────────────────────
+# ── 2. uv (brings its own Python; no system Python needed) ───────────────────
 install_uv() {
-    if command -v uv &>/dev/null; then
-        ok "uv already installed: $(uv --version)"
-        return
-    fi
-    info "Installing uv …"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    # Ensure uv is on PATH for the rest of the script
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    if command -v uv &>/dev/null; then ok "uv found: $(uv --version)"; return; fi
+    info "Installing uv ..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh || die "uv installation failed"
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     command -v uv &>/dev/null || die "uv installation failed — 'uv' not found on PATH"
     ok "uv installed: $(uv --version)"
 }
 
-# ── CUDA detection ───────────────────────────────────────────────────────────
-detect_cuda() {
-    if [[ "$CPU_ONLY" == true ]]; then
-        echo "cpu"; return
-    fi
-
-    # macOS → no NVIDIA CUDA
-    if [[ "$OS" == "Darwin" ]]; then
-        echo "cpu"; return
-    fi
-
-    if ! command -v nvidia-smi &>/dev/null; then
-        echo "cpu"; return
-    fi
-
-    local cuda_ver
-    cuda_ver=$(nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+' || true)
-    if [[ -z "$cuda_ver" ]]; then
-        echo "cpu"; return
-    fi
-
-    local major minor
-    major=$(echo "$cuda_ver" | cut -d. -f1)
-    minor=$(echo "$cuda_ver" | cut -d. -f2)
-
-    if (( major >= 12 )); then
-        if (( minor >= 6 )); then echo "cu126"
-        elif (( minor >= 4 )); then echo "cu124"
-        else echo "cu121"; fi
-    elif (( major == 11 && minor >= 8 )); then
-        echo "cu118"
-    else
-        warn "CUDA $cuda_ver is too old for current PyTorch — falling back to CPU"
-        echo "cpu"
-    fi
+# ── 3. Source code (dev branch tarball; no git needed) ───────────────────────
+get_source() {
+    info "Downloading CASTLE (dev branch) ..."
+    local tmp; tmp="$(mktemp -d)"
+    curl -fsSL "$REPO_TARBALL" | tar -xz -C "$tmp" || { rm -rf "$tmp"; die "Could not download or unpack CASTLE"; }
+    mkdir -p "$INSTALL_DIR"
+    # Overwrite code in place; projects/ and downloaded ckpt files are not in the tarball.
+    cp -R "$tmp"/*/. "$INSTALL_DIR"/
+    rm -rf "$tmp"
+    ok "Source code in $INSTALL_DIR"
 }
 
-# ── GPU display name (for summary) ──────────────────────────────────────────
-gpu_display() {
-    local cuda="$1"
-    if [[ "$cuda" == "cpu" ]]; then
-        echo "CPU only"
-        return
-    fi
-    local gpu_name cuda_ver
-    gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
-    cuda_ver=$(nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+' || true)
-    if [[ -n "$gpu_name" ]]; then
-        echo "CUDA $cuda_ver ($gpu_name)"
-    else
-        echo "CUDA ($cuda)"
-    fi
+# ── 4. PyTorch backend ───────────────────────────────────────────────────────
+detect_backend() {
+    if [[ "$OS" == "Darwin" ]]; then echo "macos"; return; fi
+    if $CPU_ONLY; then echo "cpu"; return; fi
+    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then echo "cuda"; else echo "cpu"; fi
 }
 
-# ── Create venv & install packages ───────────────────────────────────────────
-install_castle() {
-    local cuda="$1"
-    local pkg="castle-ai"
-    [[ -n "$CASTLE_VERSION" ]] && pkg="castle-ai==$CASTLE_VERSION"
-
-    # Create (or reuse) venv
-    if [[ -d "$CASTLE_VENV" ]]; then
-        info "Reusing existing venv at $CASTLE_VENV"
-    else
-        info "Creating Python $PYTHON_VERSION venv …"
-        uv venv "$CASTLE_VENV" --python "$PYTHON_VERSION"
+# ── 5. Python environment ────────────────────────────────────────────────────
+install_env() {
+    local backend="$1"
+    if [[ ! -x "$PY" ]]; then
+        info "Creating Python $PYTHON_VERSION environment ..."
+        uv venv "$VENV" --python "$PYTHON_VERSION" || die "uv venv failed"
     fi
-
-    local py="$CASTLE_VENV/bin/python"
-
-    # Install PyTorch + torchvision with the right index
-    info "Installing PyTorch (backend: $cuda) …"
-    if [[ "$cuda" == "cpu" ]]; then
-        uv pip install --python "$py" \
-            torch torchvision --index-url https://download.pytorch.org/whl/cpu
+    info "Installing PyTorch ($backend) ..."
+    case "$backend" in
+        cpu)   uv pip install --python "$PY" torch torchvision --index-url https://download.pytorch.org/whl/cpu ;;
+        *)     uv pip install --python "$PY" torch torchvision ;;  # PyPI: CUDA on Linux, MPS on macOS
+    esac || die "PyTorch install failed"
+    info "Installing CASTLE ..."
+    if [[ "$backend" == "cuda" ]]; then
+        # Linux + NVIDIA: add the GPU accelerators (cuML, xformers).
+        uv pip install --python "$PY" -e "$INSTALL_DIR[gpu]" \
+            --extra-index-url https://pypi.nvidia.com || die "CASTLE install failed"
     else
-        uv pip install --python "$py" \
-            torch torchvision --index-url "https://download.pytorch.org/whl/$cuda"
+        uv pip install --python "$PY" -e "$INSTALL_DIR" || die "CASTLE install failed"
     fi
+    ok "Python environment ready"
+}
 
-    # Install CASTLE itself (skip xformers & cuml-cu12 on CPU / macOS to avoid build errors)
-    info "Installing $pkg …"
-    if [[ "$cuda" == "cpu" ]] || [[ "$OS" == "Darwin" ]]; then
-        # Install without GPU-specific extras that would fail on CPU/macOS
-        uv pip install --python "$py" "$pkg" \
-            --no-deps 2>/dev/null || true
-        # Install deps manually, skipping problematic ones
-        uv pip install --python "$py" \
-            torchmetrics numpy scipy scikit-learn h5py matplotlib plotly \
-            av opencv-python-headless Pillow umap-learn gradio \
-            typer rich tqdm natsort termcolor gdown 2>/dev/null || true
-    else
-        uv pip install --python "$py" "$pkg"
-    fi
+# ── 6. Checkpoints (verified by SHA-256) ─────────────────────────────────────
+sha256_of() {
+    if command -v sha256sum &>/dev/null; then sha256sum "$1" | cut -d' ' -f1
+    else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
 
-    ok "CASTLE installed"
-
-    # Symlink ckpt/ into the package so DEFAULT_CKPT_DIR resolves correctly
-    # config.py uses: Path(__file__).resolve().parent.parent.parent / 'ckpt'
-    # For pip install → site-packages/castle/core/config.py → 3 up = site-packages/
-    local config_py
-    config_py=$("$py" -c "import castle.core.config as c; print(c.__file__)" 2>/dev/null || true)
-    if [[ -n "$config_py" ]]; then
-        local pkg_base
-        pkg_base=$(cd "$(dirname "$config_py")/../.." && pwd)
-        mkdir -p "$CASTLE_CKPT"
-        if [[ ! -e "$pkg_base/ckpt" ]]; then
-            ln -sf "$CASTLE_CKPT" "$pkg_base/ckpt"
-            info "Linked $pkg_base/ckpt → $CASTLE_CKPT"
+get_checkpoints() {
+    mkdir -p "$CKPT"
+    local failed=() entry file src sha dest
+    for entry in "${CHECKPOINTS[@]}"; do
+        IFS='|' read -r file src sha <<<"$entry"
+        dest="$CKPT/$file"
+        if [[ -f "$dest" && "$(sha256_of "$dest")" == "$sha" ]]; then ok "Already present: $file"; continue; fi
+        info "Downloading $file ..."
+        if [[ "$src" == gdrive:* ]]; then
+            "$PY" -m gdown "${src#gdrive:}" -O "$dest" || true
+        else
+            curl -fL --progress-bar -o "$dest" "$src" || true
         fi
+        if [[ -f "$dest" && "$(sha256_of "$dest")" == "$sha" ]]; then
+            ok "Downloaded $file"
+        else
+            rm -f "$dest"
+            failed+=("$entry")
+        fi
+    done
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        err "These model files could not be downloaded (Google Drive may be rate-limiting):"
+        for entry in "${failed[@]}"; do
+            IFS='|' read -r file src sha <<<"$entry"
+            [[ "$src" == gdrive:* ]] && src="https://drive.google.com/file/d/${src#gdrive:}/view"
+            err "    $file   <-  $src"
+        done
+        err "Download them in a browser, put them in $CKPT, then run the installer again."
+        die "Checkpoints missing"
     fi
 }
 
-# ── Download checkpoints ────────────────────────────────────────────────────
-download_file() {
-    local url="$1" dest="$2"
-    if [[ -f "$dest" ]]; then
-        ok "Already exists: $(basename "$dest")"
-        return
-    fi
-    info "Downloading $(basename "$dest") …"
-    curl -fL --progress-bar -o "$dest" "$url"
-    ok "Downloaded $(basename "$dest")"
+# ── 7. Self-check ────────────────────────────────────────────────────────────
+self_check() {
+    "$PY" -c "import torch, gradio, av, cv2, castle.core.models, castle.service.clip_service; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())" \
+        || die "Import check failed"
 }
 
-download_gdrive() {
-    local id="$1" dest="$2"
-    if [[ -f "$dest" ]]; then
-        ok "Already exists: $(basename "$dest")"
-        return
-    fi
-    info "Downloading $(basename "$dest") from Google Drive …"
-    # Use gdown from the castle venv (it's a dependency)
-    local py="$CASTLE_VENV/bin/python"
-    "$py" -m gdown "$id" -O "$dest" 2>&1 || {
-        # Fallback: try direct URL
-        local fallback="https://drive.google.com/uc?export=download&id=$id&confirm=t"
-        warn "gdown failed — trying direct download …"
-        curl -fL --progress-bar -o "$dest" "$fallback" || die "Failed to download $(basename "$dest")"
-    }
-    ok "Downloaded $(basename "$dest")"
-}
+# ── Run ──────────────────────────────────────────────────────────────────────
+install_uv
+get_source
+BACKEND="$(detect_backend)"
+info "PyTorch backend: $BACKEND"
+install_env "$BACKEND"
+if $NO_CHECKPOINTS; then warn "Skipping checkpoint download (--no-checkpoints)"; else get_checkpoints; fi
+self_check
 
-download_checkpoints() {
-    if [[ "$NO_CHECKPOINTS" == true ]]; then
-        warn "Skipping checkpoint download (--no-checkpoints)"
-        return
-    fi
-
-    mkdir -p "$CASTLE_CKPT"
-    info "Downloading model checkpoints to $CASTLE_CKPT …"
-
-    download_file   "$SAM_URL"   "$CASTLE_CKPT/$SAM_FILE"
-    download_gdrive "$DEAOT_GDRIVE_ID" "$CASTLE_CKPT/$DEAOT_FILE"
-    download_file   "$DINOV2_URL" "$CASTLE_CKPT/$DINOV2_FILE"
-
-    ok "All checkpoints ready"
-}
-
-# ── Global command wrapper ───────────────────────────────────────────────────
-setup_command() {
-    mkdir -p "$CASTLE_BIN"
-
-    cat > "$CASTLE_BIN/castle" <<'WRAPPER'
-#!/usr/bin/env bash
-CASTLE_HOME="${CASTLE_HOME:-$HOME/.castle}"
-exec "$CASTLE_HOME/venv/bin/castle" "$@"
-WRAPPER
-    chmod +x "$CASTLE_BIN/castle"
-
-    # Symlink into ~/.local/bin
-    mkdir -p "$HOME/.local/bin"
-    ln -sf "$CASTLE_BIN/castle" "$HOME/.local/bin/castle"
-
-    # Check if ~/.local/bin is on PATH
-    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
-        warn "\$HOME/.local/bin is not in your PATH."
-        warn "Add it by appending to your shell config:"
-        warn "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
-    fi
-
-    ok "Global 'castle' command installed"
-}
-
-# ── Version marker ───────────────────────────────────────────────────────────
-write_version() {
-    local py="$CASTLE_VENV/bin/python"
-    local ver
-    ver=$("$py" -c "import castle; print(castle.__version__)" 2>/dev/null || \
-          "$py" -c "from importlib.metadata import version; print(version('castle-ai'))" 2>/dev/null || \
-          echo "${CASTLE_VERSION:-unknown}")
-    echo "$ver" > "$CASTLE_HOME/version"
-    echo "$ver"
-}
-
-# ── Summary ──────────────────────────────────────────────────────────────────
-print_summary() {
-    local ver="$1" cuda="$2"
-    local gpu_info
-    gpu_info=$(gpu_display "$cuda")
-
-    local sam_ok="✗" deaot_ok="✗" dinov2_ok="✗"
-    [[ -f "$CASTLE_CKPT/$SAM_FILE" ]]   && sam_ok="✓"
-    [[ -f "$CASTLE_CKPT/$DEAOT_FILE" ]] && deaot_ok="✓"
-    [[ -f "$CASTLE_CKPT/$DINOV2_FILE" ]] && dinov2_ok="✓"
-
-    printf "\n"
-    printf "  ${GREEN}✅ CASTLE installed successfully!${NC}\n"
-    printf "\n"
-    printf "  ${BOLD}Version:${NC}  %s\n" "$ver"
-    printf "  ${BOLD}Location:${NC} %s\n" "$CASTLE_HOME"
-    printf "  ${BOLD}GPU:${NC}      %s\n" "$gpu_info"
-    printf "  ${BOLD}Models:${NC}   SAM %s  DeAOT %s  DINOv2 %s\n" "$sam_ok" "$deaot_ok" "$dinov2_ok"
-    printf "\n"
-    printf "  Run ${CYAN}castle --help${NC} to get started.\n"
-    printf "  Run ${CYAN}castle gui${NC}    to launch the desktop GUI.\n"
-    printf "\n"
-    printf "  To uninstall:\n"
-    printf "    curl -fsSL https://castle-ai.github.io/install.sh | bash -s -- --uninstall\n"
-    printf "\n"
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Main
-# ══════════════════════════════════════════════════════════════════════════════
-main() {
-    detect_platform
-    install_uv
-
-    local cuda
-    cuda=$(detect_cuda)
-    info "Compute backend: $cuda"
-
-    install_castle "$cuda"
-    download_checkpoints
-    setup_command
-
-    local ver
-    ver=$(write_version)
-    print_summary "$ver" "$cuda"
-}
-
-main
+printf "\n"
+ok "CASTLE is installed in $INSTALL_DIR"
+printf "  Start CASTLE (keep the terminal open while you use it):\n"
+printf "      ${CYAN}cd \"%s\" && ./.venv/bin/python app.py${NC}\n" "$INSTALL_DIR"
+printf "  Then open http://127.0.0.1:7860 in your browser.\n\n"
+echo "CASTLE_INSTALL_RESULT=OK"
+exit 0

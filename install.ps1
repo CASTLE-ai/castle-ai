@@ -1,24 +1,31 @@
-# CASTLE One-Line Installer — Windows PowerShell
-# Usage:
-#   irm https://castle-ai.github.io/install.ps1 | iex
-#   powershell -ExecutionPolicy ByPass -c "irm https://castle-ai.github.io/install.ps1 | iex"
+# CASTLE installer - Windows PowerShell
 #
-# Options (set as environment variables before piping):
-#   $env:CASTLE_CPU_ONLY       = "1"   # Force CPU-only PyTorch
-#   $env:CASTLE_NO_CHECKPOINTS = "1"   # Skip model download (~2 GB)
-#   $env:CASTLE_VERSION        = "0.0.18"  # Specific version
-#   $env:CASTLE_UNINSTALL      = "1"   # Remove CASTLE
+# Installs the current CASTLE (the `dev` branch of CASTLE-ai/castle-ai) into one
+# folder: source code, a Python 3.10 environment (.venv) and the model
+# checkpoints (ckpt). Picks CPU or CUDA PyTorch automatically.
 #
-# Or run the script directly with parameters:
-#   .\install.ps1 -CpuOnly -NoCheckpoints -Version "0.0.18"
-#   .\install.ps1 -Uninstall
+# Usage (PowerShell):
+#   powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.ps1 | iex"
+#
+# Options as environment variables (for the piped one-liner) or parameters:
+#   $env:CASTLE_INSTALL_DIR    = "C:\castle"  # -InstallDir  (default: $env:USERPROFILE\castle)
+#   $env:CASTLE_CPU_ONLY       = "1"          # -CpuOnly     force CPU PyTorch
+#   $env:CASTLE_NO_CHECKPOINTS = "1"          # -NoCheckpoints
+#   $env:CASTLE_UNINSTALL      = "1"          # -Uninstall   (keeps the projects folder)
+#
+# Exit codes: 0 = installed, 1 = failed, 2 = stopped before installing because
+# the install folder path contains non-ASCII characters (see message).
+# The last line printed is always CASTLE_INSTALL_RESULT=OK or =FAIL / =STOPPED.
+#
+# Kept ASCII-only: Windows PowerShell 5.1 reads BOM-less scripts in the system
+# code page (cp950 on Traditional Chinese Windows).
 # ---------------------------------------------------------------------------
 
 [CmdletBinding()]
 param(
+    [string]$InstallDir = "",
     [switch]$CpuOnly,
     [switch]$NoCheckpoints,
-    [string]$Version = "",
     [switch]$Uninstall,
     [switch]$Help
 )
@@ -26,339 +33,210 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'   # faster Invoke-WebRequest
 
-# ── Read env-var overrides (for piped usage) ─────────────────────────────────
-if ($env:CASTLE_CPU_ONLY       -eq "1") { $CpuOnly       = $true }
-if ($env:CASTLE_NO_CHECKPOINTS -eq "1") { $NoCheckpoints  = $true }
-if ($env:CASTLE_UNINSTALL      -eq "1") { $Uninstall      = $true }
-if ($env:CASTLE_VERSION -and -not $Version) { $Version = $env:CASTLE_VERSION }
-
-$CASTLE_HOME   = if ($env:CASTLE_HOME) { $env:CASTLE_HOME } else { "$env:USERPROFILE\.castle" }
-$CASTLE_BIN    = "$CASTLE_HOME\bin"
-$CASTLE_CKPT   = "$CASTLE_HOME\ckpt"
-$CASTLE_VENV   = "$CASTLE_HOME\venv"
-$PYTHON_VER    = "3.10"
-
-# ── Checkpoint URLs ──────────────────────────────────────────────────────────
-$SAM_URL       = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
-$SAM_FILE      = "sam_vit_b_01ec64.pth"
-
-$DEAOT_GDRIVE  = "1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ"
-$DEAOT_FILE    = "R50_DeAOTL_PRE_YTB_DAV.pth"
-
-$DINOV2_URL    = "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_reg4_pretrain.pth"
-$DINOV2_FILE   = "dinov2_vitb14_reg4_pretrain.pth"
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-function Write-Info  { param([string]$Msg) Write-Host "ℹ  $Msg" -ForegroundColor Blue }
-function Write-Ok    { param([string]$Msg) Write-Host "✓  $Msg" -ForegroundColor Green }
-function Write-Warn  { param([string]$Msg) Write-Host "⚠  $Msg" -ForegroundColor Yellow }
-function Write-Err   { param([string]$Msg) Write-Host "✗  $Msg" -ForegroundColor Red }
-function Exit-Fatal  { param([string]$Msg) Write-Err $Msg; exit 1 }
-
-function Show-Banner {
-    Write-Host ""
-    Write-Host "  ╔═══════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║          CASTLE Installer             ║" -ForegroundColor Cyan
-    Write-Host "  ║  Combined Approach for Segmentation   ║" -ForegroundColor Cyan
-    Write-Host "  ║  and Tracking with Latent Extraction  ║" -ForegroundColor Cyan
-    Write-Host "  ╚═══════════════════════════════════════╝" -ForegroundColor Cyan
-    Write-Host ""
-}
-
-# ── Help ─────────────────────────────────────────────────────────────────────
-if ($Help) {
-    Show-Banner
-    Write-Host @"
-  Options (as parameters):
-    -CpuOnly          Force CPU-only PyTorch
-    -NoCheckpoints    Skip model download (~2 GB)
-    -Version VER      Install a specific version
-    -Uninstall        Remove CASTLE
-    -Help             Show this message
-
-  Options (as env vars, for piped usage):
-    `$env:CASTLE_CPU_ONLY       = "1"
-    `$env:CASTLE_NO_CHECKPOINTS = "1"
-    `$env:CASTLE_VERSION        = "0.0.18"
-    `$env:CASTLE_UNINSTALL      = "1"
-"@
-    exit 0
-}
-
-# ── Uninstall ────────────────────────────────────────────────────────────────
-if ($Uninstall) {
-    Show-Banner
-    Write-Info "Uninstalling CASTLE …"
-    if (Test-Path $CASTLE_HOME) { Remove-Item -Recurse -Force $CASTLE_HOME }
-
-    # Remove from user PATH
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($userPath -and $userPath.Contains($CASTLE_BIN)) {
-        $newPath = ($userPath -split ";" | Where-Object { $_ -ne $CASTLE_BIN }) -join ";"
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-        Write-Info "Removed $CASTLE_BIN from user PATH"
-    }
-
-    Write-Ok "CASTLE uninstalled."
-    exit 0
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Main
-# ══════════════════════════════════════════════════════════════════════════════
-Show-Banner
-
-# ── Platform check ───────────────────────────────────────────────────────────
 if ($env:OS -ne "Windows_NT") {
-    Exit-Fatal "This script is for Windows. Use install.sh on Linux/macOS."
+    Write-Host "[XX] This script is for Windows. Use install.sh on Linux/macOS." -ForegroundColor Red
+    Write-Host "CASTLE_INSTALL_RESULT=FAIL"
+    exit 1
 }
-$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-Write-Info "Platform: Windows $arch"
 
-# ── Install uv ───────────────────────────────────────────────────────────────
+# -- Read env-var overrides (for piped usage) --------------------------------
+if ($env:CASTLE_CPU_ONLY       -eq "1") { $CpuOnly       = $true }
+if ($env:CASTLE_NO_CHECKPOINTS -eq "1") { $NoCheckpoints = $true }
+if ($env:CASTLE_UNINSTALL      -eq "1") { $Uninstall     = $true }
+$ExplicitDir = $false
+if ($InstallDir) { $ExplicitDir = $true }
+elseif ($env:CASTLE_INSTALL_DIR) { $InstallDir = $env:CASTLE_INSTALL_DIR; $ExplicitDir = $true }
+else { $InstallDir = "$env:USERPROFILE\castle" }
+
+$REPO_ZIP   = "https://github.com/CASTLE-ai/castle-ai/archive/refs/heads/dev.zip"
+$PYTHON_VER = "3.10"
+$Venv       = Join-Path $InstallDir ".venv"
+$Py         = Join-Path $Venv "Scripts\python.exe"
+$Ckpt       = Join-Path $InstallDir "ckpt"
+
+# -- Checkpoints: file name, source, SHA-256 ---------------------------------
+$CHECKPOINTS = @(
+    @{ File = "sam_vit_b_01ec64.pth"
+       Url  = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+       Sha  = "ec2df62732614e57411cdcf32a23ffdf28910380d03139ee0f4fcbe91eb8c912" },
+    @{ File = "R50_DeAOTL_PRE_YTB_DAV.pth"
+       Gdrive = "1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ"
+       Sha  = "7e8a8d83310739bac02817f6bf48b6bbe2bbd7d5325722f1084088eb3aee1e06" },
+    @{ File = "dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth"
+       Gdrive = "18doehnHWWnz9zBtOdgYZ3XMTpgPYbYZ6"
+       Sha  = "73cec8be7427c8655ceced13ce62f6e20a1fa90d1b4d4a550df17a1144081a7c" }
+)
+
+# -- Helpers -----------------------------------------------------------------
+function Write-Info { param([string]$Msg) Write-Host "[..] $Msg" -ForegroundColor Cyan }
+function Write-Ok   { param([string]$Msg) Write-Host "[OK] $Msg" -ForegroundColor Green }
+function Write-Warn { param([string]$Msg) Write-Host "[!!] $Msg" -ForegroundColor Yellow }
+function Write-Err  { param([string]$Msg) Write-Host "[XX] $Msg" -ForegroundColor Red }
+function Exit-Fail {
+    param([string]$Msg)
+    Write-Err $Msg
+    Write-Host "CASTLE_INSTALL_RESULT=FAIL"
+    exit 1
+}
+
+if ($Help) {
+    Write-Host "Usage: .\install.ps1 [-InstallDir DIR] [-CpuOnly] [-NoCheckpoints] [-Uninstall]"
+    Write-Host "Same options as env vars for the piped one-liner:"
+    Write-Host "  CASTLE_INSTALL_DIR, CASTLE_CPU_ONLY=1, CASTLE_NO_CHECKPOINTS=1, CASTLE_UNINSTALL=1"
+    exit 0
+}
+
+
+# -- Uninstall (keeps projects\) ---------------------------------------------
+if ($Uninstall) {
+    if (-not (Test-Path $InstallDir)) { Write-Ok "Nothing to remove at $InstallDir"; exit 0 }
+    Get-ChildItem -LiteralPath $InstallDir -Force | Where-Object { $_.Name -ne "projects" } |
+        Remove-Item -Recurse -Force
+    Write-Ok "CASTLE removed from $InstallDir (the projects folder, if any, was kept)."
+    exit 0
+}
+
+Write-Host ""
+Write-Host "  CASTLE installer (Windows)" -ForegroundColor Cyan
+Write-Host "  Install folder: $InstallDir"
+Write-Host ""
+
+# -- 1. Install folder must be decided by the user if it is non-ASCII --------
+# Some video/image libraries fail on paths with e.g. Chinese characters, which a
+# Chinese Windows user name puts into the default location.
+if ((-not $ExplicitDir) -and ($InstallDir -match '[^\x00-\x7F]')) {
+    Write-Warn "The install folder contains non-English characters:"
+    Write-Warn "    $InstallDir"
+    Write-Warn "Some video tools can fail on such paths. Choose one and run the installer again:"
+    Write-Warn '  a) an English-only folder (recommended), e.g.  $env:CASTLE_INSTALL_DIR = "C:\castle"'
+    Write-Warn "  b) keep this folder anyway:                     `$env:CASTLE_INSTALL_DIR = `"$InstallDir`""
+    Write-Host "CASTLE_INSTALL_RESULT=STOPPED"
+    exit 2
+}
+
+# -- 2. uv (brings its own Python; no system Python needed) ------------------
 function Install-Uv {
-    $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
-    if ($uvCmd) {
-        Write-Ok "uv already installed: $(& uv --version)"
-        return
-    }
-    Write-Info "Installing uv …"
+    if (Get-Command uv -ErrorAction SilentlyContinue) { Write-Ok "uv found: $(& uv --version)"; return }
+    Write-Info "Installing uv ..."
     Invoke-Expression "& { $(Invoke-RestMethod https://astral.sh/uv/install.ps1) }"
-
-    # Refresh PATH
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" +
                 [Environment]::GetEnvironmentVariable("Path", "Machine")
-
-    $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
-    if (-not $uvCmd) { Exit-Fatal "uv installation failed — 'uv' not found on PATH" }
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { Exit-Fail "uv installation failed - 'uv' not found on PATH" }
     Write-Ok "uv installed: $(& uv --version)"
 }
 
-# ── CUDA detection ───────────────────────────────────────────────────────────
+# -- 3. Source code (dev branch zip; no git needed) --------------------------
+function Get-Source {
+    Write-Info "Downloading CASTLE (dev branch) ..."
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("castle-" + [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    try {
+        $zip = Join-Path $tmp "castle.zip"
+        Invoke-WebRequest -Uri $REPO_ZIP -OutFile $zip -UseBasicParsing
+        Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+        $src = Get-ChildItem -LiteralPath $tmp -Directory | Select-Object -First 1
+        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+        # Overwrite code in place; projects\ and downloaded ckpt files are not in the zip.
+        Copy-Item -Path (Join-Path $src.FullName "*") -Destination $InstallDir -Recurse -Force
+    }
+    catch { Exit-Fail "Could not download or unpack CASTLE: $_" }
+    finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Ok "Source code in $InstallDir"
+}
+
+# -- 4. PyTorch backend -------------------------------------------------------
 function Get-CudaBackend {
     if ($CpuOnly) { return "cpu" }
-
-    # Try nvidia-smi
-    $nvSmi = $null
-    foreach ($candidate in @("nvidia-smi", "C:\Windows\System32\nvidia-smi.exe")) {
-        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($cmd) { $nvSmi = $cmd.Source; break }
-    }
+    $nvSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     if (-not $nvSmi) { return "cpu" }
-
     try {
-        $output = & $nvSmi 2>$null
-        $match  = $output | Select-String "CUDA Version:\s+([\d.]+)"
+        $match = (& $nvSmi.Source 2>$null) | Select-String "CUDA Version:\s+([\d.]+)"
         if (-not $match) { return "cpu" }
-        $cudaVer = $match.Matches[0].Groups[1].Value
-        $parts   = $cudaVer -split "\."
-        $major   = [int]$parts[0]
-        $minor   = [int]$parts[1]
-
+        $parts = $match.Matches[0].Groups[1].Value -split "\."
+        $major = [int]$parts[0]; $minor = [int]$parts[1]
         if ($major -ge 12) {
-            if ($minor -ge 6) { return "cu126" }
-            elseif ($minor -ge 4) { return "cu124" }
-            else { return "cu121" }
+            if ($minor -ge 6) { return "cu126" } elseif ($minor -ge 4) { return "cu124" } else { return "cu121" }
         }
         elseif ($major -eq 11 -and $minor -ge 8) { return "cu118" }
-        else {
-            Write-Warn "CUDA $cudaVer is too old for current PyTorch — falling back to CPU"
-            return "cpu"
-        }
+        Write-Warn "CUDA $($match.Matches[0].Groups[1].Value) is too old for current PyTorch - using CPU"
+        return "cpu"
     }
     catch { return "cpu" }
 }
 
-# ── GPU display ──────────────────────────────────────────────────────────────
-function Get-GpuDisplay {
+# -- 5. Python environment ----------------------------------------------------
+function Install-Env {
     param([string]$Cuda)
-    if ($Cuda -eq "cpu") { return "CPU only" }
-    try {
-        $name    = (& nvidia-smi --query-gpu=name --format=csv,noheader 2>$null | Select-Object -First 1).Trim()
-        $output  = & nvidia-smi 2>$null
-        $match   = $output | Select-String "CUDA Version:\s+([\d.]+)"
-        $cudaVer = if ($match) { $match.Matches[0].Groups[1].Value } else { $Cuda }
-        if ($name) { return "CUDA $cudaVer ($name)" }
-        return "CUDA ($Cuda)"
+    if (-not (Test-Path $Py)) {
+        Write-Info "Creating Python $PYTHON_VER environment ..."
+        & uv venv $Venv --python $PYTHON_VER
+        if ($LASTEXITCODE -ne 0) { Exit-Fail "uv venv failed" }
     }
-    catch { return "CUDA ($Cuda)" }
+    Write-Info "Installing PyTorch ($Cuda) ..."
+    & uv pip install --python $Py torch torchvision --index-url "https://download.pytorch.org/whl/$Cuda"
+    if ($LASTEXITCODE -ne 0) { Exit-Fail "PyTorch install failed" }
+    # Core only: the GPU accelerators (cuML, xformers) have no Windows builds.
+    Write-Info "Installing CASTLE ..."
+    & uv pip install --python $Py -e $InstallDir
+    if ($LASTEXITCODE -ne 0) { Exit-Fail "CASTLE install failed" }
+    Write-Ok "Python environment ready"
 }
 
-# ── Install CASTLE ───────────────────────────────────────────────────────────
-function Install-Castle {
-    param([string]$Cuda)
-
-    $pkg = "castle-ai"
-    if ($Version) { $pkg = "castle-ai==$Version" }
-    $py  = "$CASTLE_VENV\Scripts\python.exe"
-
-    # Create / reuse venv
-    if (Test-Path $CASTLE_VENV) {
-        Write-Info "Reusing existing venv at $CASTLE_VENV"
-    } else {
-        Write-Info "Creating Python $PYTHON_VER venv …"
-        & uv venv $CASTLE_VENV --python $PYTHON_VER
-    }
-
-    # PyTorch
-    Write-Info "Installing PyTorch (backend: $Cuda) …"
-    if ($Cuda -eq "cpu") {
-        & uv pip install --python $py torch torchvision --index-url https://download.pytorch.org/whl/cpu
-    } else {
-        & uv pip install --python $py torch torchvision --index-url "https://download.pytorch.org/whl/$Cuda"
-    }
-
-    # CASTLE
-    Write-Info "Installing $pkg …"
-    try {
-        & uv pip install --python $py $pkg
-    }
-    catch {
-        Write-Warn "Full install failed — trying without GPU-specific extras …"
-        & uv pip install --python $py $pkg --no-deps 2>$null
-        & uv pip install --python $py `
-            torchmetrics numpy scipy scikit-learn h5py matplotlib plotly `
-            av opencv-python-headless Pillow umap-learn gradio `
-            typer rich tqdm natsort termcolor gdown 2>$null
-    }
-    Write-Ok "CASTLE installed"
-
-    # Symlink ckpt/ into package for DEFAULT_CKPT_DIR resolution
-    try {
-        $configPy = & $py -c "import castle.core.config as c; print(c.__file__)" 2>$null
-        if ($configPy) {
-            $pkgBase = (Resolve-Path (Join-Path (Split-Path $configPy) "..\.." )).Path
-            $ckptTarget = Join-Path $pkgBase "ckpt"
-            if (-not (Test-Path $CASTLE_CKPT)) { New-Item -ItemType Directory -Path $CASTLE_CKPT -Force | Out-Null }
-            if (-not (Test-Path $ckptTarget)) {
-                # Use junction (works without admin on Windows)
-                cmd /c mklink /J "$ckptTarget" "$CASTLE_CKPT" 2>$null | Out-Null
-                Write-Info "Linked $ckptTarget → $CASTLE_CKPT"
-            }
+# -- 6. Checkpoints (verified by SHA-256) ------------------------------------
+function Get-Checkpoints {
+    New-Item -ItemType Directory -Path $Ckpt -Force | Out-Null
+    $failed = @()
+    foreach ($c in $CHECKPOINTS) {
+        $dest = Join-Path $Ckpt $c.File
+        if ((Test-Path $dest) -and ((Get-FileHash $dest -Algorithm SHA256).Hash -eq $c.Sha)) {
+            Write-Ok "Already present: $($c.File)"; continue
+        }
+        Write-Info "Downloading $($c.File) ..."
+        try {
+            if ($c.Url) { Invoke-WebRequest -Uri $c.Url -OutFile $dest -UseBasicParsing }
+            else { & $Py -m gdown $c.Gdrive -O $dest }
+        }
+        catch { }
+        if ((Test-Path $dest) -and ((Get-FileHash $dest -Algorithm SHA256).Hash -eq $c.Sha)) {
+            Write-Ok "Downloaded $($c.File)"
+        }
+        else {
+            Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+            $failed += $c
         }
     }
-    catch { Write-Warn "Could not auto-link checkpoint directory — you may need to set CASTLE_CKPT manually" }
-}
-
-# ── Download checkpoints ────────────────────────────────────────────────────
-function Download-File {
-    param([string]$Url, [string]$Dest)
-    if (Test-Path $Dest) {
-        Write-Ok "Already exists: $(Split-Path $Dest -Leaf)"
-        return
+    if ($failed.Count -gt 0) {
+        Write-Err "These model files could not be downloaded (Google Drive may be rate-limiting):"
+        foreach ($c in $failed) {
+            $src = if ($c.Url) { $c.Url } else { "https://drive.google.com/file/d/$($c.Gdrive)/view" }
+            Write-Err "    $($c.File)   <-  $src"
+        }
+        Write-Err "Download them in a browser, put them in $Ckpt, then run the installer again."
+        Exit-Fail "Checkpoints missing"
     }
-    Write-Info "Downloading $(Split-Path $Dest -Leaf) …"
-    $ProgressPreference = 'Continue'
-    Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing
-    $ProgressPreference = 'SilentlyContinue'
-    Write-Ok "Downloaded $(Split-Path $Dest -Leaf)"
 }
 
-function Download-GDrive {
-    param([string]$Id, [string]$Dest)
-    if (Test-Path $Dest) {
-        Write-Ok "Already exists: $(Split-Path $Dest -Leaf)"
-        return
-    }
-    Write-Info "Downloading $(Split-Path $Dest -Leaf) from Google Drive …"
-    $py = "$CASTLE_VENV\Scripts\python.exe"
-    try {
-        & $py -m gdown $Id -O $Dest 2>&1
-    }
-    catch {
-        Write-Warn "gdown failed — trying direct download …"
-        $url = "https://drive.google.com/uc?export=download&id=$Id&confirm=t"
-        Invoke-WebRequest -Uri $url -OutFile $Dest -UseBasicParsing
-    }
-    if (-not (Test-Path $Dest)) { Exit-Fatal "Failed to download $(Split-Path $Dest -Leaf)" }
-    Write-Ok "Downloaded $(Split-Path $Dest -Leaf)"
+# -- 7. Self-check ------------------------------------------------------------
+function Test-Install {
+    & $Py -c "import torch, gradio, av, cv2, castle.core.models, castle.service.clip_service; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+    if ($LASTEXITCODE -ne 0) { Exit-Fail "Import check failed" }
 }
 
-function Download-Checkpoints {
-    if ($NoCheckpoints) {
-        Write-Warn "Skipping checkpoint download (--no-checkpoints)"
-        return
-    }
-    if (-not (Test-Path $CASTLE_CKPT)) { New-Item -ItemType Directory -Path $CASTLE_CKPT -Force | Out-Null }
-    Write-Info "Downloading model checkpoints to $CASTLE_CKPT …"
-
-    Download-File   -Url $SAM_URL       -Dest "$CASTLE_CKPT\$SAM_FILE"
-    Download-GDrive -Id  $DEAOT_GDRIVE  -Dest "$CASTLE_CKPT\$DEAOT_FILE"
-    Download-File   -Url $DINOV2_URL    -Dest "$CASTLE_CKPT\$DINOV2_FILE"
-
-    Write-Ok "All checkpoints ready"
-}
-
-# ── Global command ───────────────────────────────────────────────────────────
-function Setup-Command {
-    if (-not (Test-Path $CASTLE_BIN)) { New-Item -ItemType Directory -Path $CASTLE_BIN -Force | Out-Null }
-
-    # Create castle.cmd wrapper
-    $cmd = @"
-@echo off
-set "CASTLE_HOME=%USERPROFILE%\.castle"
-"%CASTLE_HOME%\venv\Scripts\castle.exe" %*
-"@
-    Set-Content -Path "$CASTLE_BIN\castle.cmd" -Value $cmd -Encoding ASCII
-
-    # Add to user PATH if not already there
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if (-not $userPath -or -not $userPath.Contains($CASTLE_BIN)) {
-        $newPath = if ($userPath) { "$CASTLE_BIN;$userPath" } else { $CASTLE_BIN }
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-        $env:Path = "$CASTLE_BIN;$env:Path"
-        Write-Info "Added $CASTLE_BIN to user PATH"
-        Write-Warn "Restart your terminal for PATH changes to take effect."
-    }
-
-    Write-Ok "Global 'castle' command installed"
-}
-
-# ── Version marker ───────────────────────────────────────────────────────────
-function Write-VersionMarker {
-    $py = "$CASTLE_VENV\Scripts\python.exe"
-    try {
-        $ver = & $py -c "from importlib.metadata import version; print(version('castle-ai'))" 2>$null
-    } catch { $ver = $null }
-    if (-not $ver) { $ver = if ($Version) { $Version } else { "unknown" } }
-    Set-Content -Path "$CASTLE_HOME\version" -Value $ver
-    return $ver
-}
-
-# ── Summary ──────────────────────────────────────────────────────────────────
-function Show-Summary {
-    param([string]$Ver, [string]$Cuda)
-    $gpuInfo = Get-GpuDisplay $Cuda
-
-    $samOk   = if (Test-Path "$CASTLE_CKPT\$SAM_FILE")   { "✓" } else { "✗" }
-    $deaotOk = if (Test-Path "$CASTLE_CKPT\$DEAOT_FILE") { "✓" } else { "✗" }
-    $dinoOk  = if (Test-Path "$CASTLE_CKPT\$DINOV2_FILE") { "✓" } else { "✗" }
-
-    Write-Host ""
-    Write-Host "  ✅ CASTLE installed successfully!" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  Version:  $Ver"
-    Write-Host "  Location: $CASTLE_HOME"
-    Write-Host "  GPU:      $gpuInfo"
-    Write-Host "  Models:   SAM $samOk  DeAOT $deaotOk  DINOv2 $dinoOk"
-    Write-Host ""
-    Write-Host "  Run " -NoNewline; Write-Host "castle --help" -ForegroundColor Cyan -NoNewline; Write-Host " to get started."
-    Write-Host "  Run " -NoNewline; Write-Host "castle gui" -ForegroundColor Cyan -NoNewline; Write-Host "    to launch the desktop GUI."
-    Write-Host ""
-    Write-Host "  To uninstall:"
-    Write-Host '    powershell -c "$env:CASTLE_UNINSTALL=1; irm https://castle-ai.github.io/install.ps1 | iex"'
-    Write-Host ""
-}
-
-# ── Run ──────────────────────────────────────────────────────────────────────
+# -- Run ----------------------------------------------------------------------
 Install-Uv
-
+Get-Source
 $cuda = Get-CudaBackend
-Write-Info "Compute backend: $cuda"
+Write-Info "PyTorch backend: $cuda"
+Install-Env -Cuda $cuda
+if ($NoCheckpoints) { Write-Warn "Skipping checkpoint download (CASTLE_NO_CHECKPOINTS)" } else { Get-Checkpoints }
+Test-Install
 
-Install-Castle -Cuda $cuda
-Download-Checkpoints
-Setup-Command
-
-$ver = Write-VersionMarker
-Show-Summary -Ver $ver -Cuda $cuda
+Write-Host ""
+Write-Ok "CASTLE is installed in $InstallDir"
+Write-Host "  Start CASTLE (keep the window open while you use it):"
+Write-Host "      cd `"$InstallDir`"" -ForegroundColor Cyan
+Write-Host "      .\.venv\Scripts\python.exe app.py" -ForegroundColor Cyan
+Write-Host "  Then open http://127.0.0.1:7860 in your browser."
+Write-Host ""
+Write-Host "CASTLE_INSTALL_RESULT=OK"
+exit 0

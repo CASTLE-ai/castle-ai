@@ -1,0 +1,13 @@
+# GPU-only accelerators for Linux + NVIDIA (CUDA 12). Install on top of the core
+# requirements (requirements.txt) and a CUDA build of torch:
+#     pip install -r requirements.txt -r requirements-gpu.txt
+# Not available on Windows/macOS; CASTLE falls back to umap-learn/sklearn and
+# PyTorch attention without them. Exposed to pip as the `castle-ai[gpu]` extra.
+
+# RAPIDS cuML (GPU UMAP/DBSCAN) is only published on the NVIDIA index.
+--extra-index-url https://pypi.nvidia.com
+cuml-cu12
+
+# xformers wheels must match the CUDA build of torch.
+--extra-index-url https://download.pytorch.org/whl/cu126
+xformers>=0.0.20,<1.0

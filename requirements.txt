@@ -1,3 +1,6 @@
+# Core runtime dependencies — CPU-installable on Linux, macOS and Windows.
+# GPU-only accelerators (cuML, xformers) live in requirements-gpu.txt.
+
 # Core ML
 torch>=2.0,<3.0
 torchvision>=0.15,<1.0
@@ -46,13 +49,3 @@ psutil>=5.9,<8.0
 
 # Download
 gdown>=4.6,<6.0
-
-# GPU Acceleration
-xformers>=0.0.20,<1.0
-
-# NVIDIA packages
---extra-index-url https://pypi.nvidia.com
-cuml-cu12
-
-# PyTorch packages
---extra-index-url https://download.pytorch.org/whl/cu126

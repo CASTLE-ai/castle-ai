@@ -1,48 +1,34 @@
 from setuptools import setup, find_packages
 
-# Packages that require a non-PyPI index (NVIDIA RAPIDS) or are GPU-only
-# accelerators. They must NOT land in install_requires, or `pip install castle-ai`
-# from PyPI fails outright (cuml-cu12 is not on PyPI) — CASTLE already falls back
-# to sklearn/umap-learn on CPU when these are absent. Install them explicitly with
-# `pip install castle-ai[gpu]` (plus the NVIDIA extra-index, see requirements.txt).
-GPU_ONLY = {"cuml-cu12", "xformers"}
-
 
 def readme():
     with open("README.md", encoding="UTF-8") as readme_file:
         return readme_file.read()
 
 
-def _pkg_name(line: str) -> str:
-    """Bare distribution name from a requirement line (strip version/markers)."""
-    for sep in (">=", "<=", "==", "~=", ">", "<", "!=", ";", "["):
-        idx = line.find(sep)
-        if idx != -1:
-            line = line[:idx]
-    return line.strip().lower()
+def read_requirements(path):
+    """Package lines of a requirements file.
 
-
-def read_requirements():
-    """Parse requirements.txt into (core, gpu_only).
-
-    Comments and pip flag lines (``--extra-index-url`` …) are ignored. Packages
-    in GPU_ONLY are split out so the default install stays CPU-installable from
-    PyPI; they are re-exposed via the ``gpu`` extra.
+    Comments and pip flag lines (``--extra-index-url`` …) are ignored.
+    ``requirements.txt`` is the CPU-installable core; ``requirements-gpu.txt``
+    holds the GPU-only accelerators (cuML needs the NVIDIA index), re-exposed via
+    the ``gpu`` extra so ``pip install castle-ai`` never pulls a non-PyPI package.
     """
-    core, gpu = [], []
+    reqs = []
     try:
-        with open("requirements.txt", encoding="UTF-8") as req_file:
+        with open(path, encoding="UTF-8") as req_file:
             for line in req_file:
                 line = line.strip()
                 if not line or line.startswith("#") or line.startswith("-"):
                     continue
-                (gpu if _pkg_name(line) in GPU_ONLY else core).append(line)
+                reqs.append(line)
     except IOError:
         pass
-    return core, gpu
+    return reqs
 
 
-_core, _gpu = read_requirements()
+_core = read_requirements("requirements.txt")
+_gpu = read_requirements("requirements-gpu.txt")
 
 configuration = {
     "name": "castle-ai",
@@ -87,7 +73,7 @@ configuration = {
     "install_requires": _core,
     "extras_require": {
         # GPU acceleration (RAPIDS cuML UMAP/DBSCAN + xformers attention).
-        # Needs the NVIDIA extra-index — see requirements.txt.
+        # Needs the NVIDIA extra-index — see requirements-gpu.txt.
         "gpu": _gpu,
         # `castle ethogram export-nwb`
         "nwb": ["pynwb>=2.5"],

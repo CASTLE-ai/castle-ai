@@ -1,13 +1,11 @@
-# Local development environment (GPU workstation).
+# Local development environment.
 #
-# Pulls the full runtime stack from requirements.txt — including the GPU-only
-# packages cuml-cu12 / xformers via the NVIDIA & PyTorch extra-indexes declared
-# there — then adds the test / lint / type-check / optional-feature tooling that
-# CASTLE's QC gate relies on. Previously this file drifted from requirements.txt
-# (it omitted ruff and several runtime deps such as transformers/typer/rich),
-# so a fresh `pip install -r requirements-dev.txt` could not build a working env.
+# Pulls the core runtime stack from requirements.txt, then adds the test / lint /
+# type-check / optional-feature tooling that CASTLE's QC gate relies on. On a
+# Linux + NVIDIA workstation add the GPU accelerators as well:
+#     pip install -r requirements-dev.txt -r requirements-gpu.txt
 #
-# CPU-only or CI install (no NVIDIA index needed):
+# CPU-only or CI install (equivalent, from setup.py):
 #     pip install -e ".[dev,nwb,hdbscan]"
 -r requirements.txt
 

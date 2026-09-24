@@ -1,6 +1,7 @@
 include LICENSE.txt
 include README.md
 include requirements.txt
+include requirements-gpu.txt
 include requirements-colab.txt
 
 # Vendored third-party license notices (must ship for redistribution):

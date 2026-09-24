@@ -70,3 +70,15 @@ def test_castle_faulthandler_opt_out():
     )
     out = subprocess.check_output([sys.executable, "-c", code], text=True, env=env).splitlines()
     assert out[0] == "False"  # opt-out → no SIGUSR1 handler registered
+
+
+def test_faulthandler_off_by_default_on_windows(monkeypatch):
+    import faulthandler
+    from castle.core import _early_env
+
+    calls = []
+    monkeypatch.setattr(_early_env.os, "name", "nt")
+    monkeypatch.delenv("CASTLE_FAULTHANDLER", raising=False)
+    monkeypatch.setattr(faulthandler, "enable", lambda *a, **k: calls.append("enable"))
+    _early_env._enable_fault_diagnostics()
+    assert calls == []

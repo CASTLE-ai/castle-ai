@@ -36,6 +36,13 @@ def _enable_fault_diagnostics() -> None:
     additionally dumps on fatal signals (SIGSEGV / SIGABRT). Opt out with
     ``CASTLE_FAULTHANDLER=0``.
 
+    Off by default on Windows (opt in with ``CASTLE_FAULTHANDLER=1``): there
+    ``enable()`` installs a *vectored* exception handler, which sees first-chance
+    exceptions, so an access violation that a native DLL raises and handles
+    itself (e.g. while ``import av`` loads FFmpeg in a spawned worker) is still
+    printed as "Windows fatal exception: access violation" with a full stack —
+    alarming noise for users, while SIGUSR1 dumps do not exist there anyway.
+
     stdlib-only (``faulthandler`` / ``signal``); preserves the "import castle
     pulls in no heavy libraries" invariant. Signal registration only works on
     the main thread and SIGUSR1 only exists on POSIX, so a non-main-thread or
@@ -43,7 +50,8 @@ def _enable_fault_diagnostics() -> None:
     still applies). DataLoader workers re-import castle (spawn) or inherit the
     handler (fork), so ``kill -USR1`` works on a wedged worker PID too.
     """
-    if os.environ.get("CASTLE_FAULTHANDLER", "1").strip().lower() in _FALSEY:
+    default = "0" if os.name == "nt" else "1"
+    if os.environ.get("CASTLE_FAULTHANDLER", default).strip().lower() in _FALSEY:
         return
     try:
         faulthandler.enable()

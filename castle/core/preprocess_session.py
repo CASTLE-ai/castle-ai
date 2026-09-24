@@ -72,13 +72,13 @@ def load_session_meta(
 def save_session_meta(
     storage_path: str, project_name: str, session_id: str, meta: dict
 ) -> None:
-    """Atomic write via tmp + rename."""
+    """Atomic write via tmp + replace (rename cannot overwrite on Windows)."""
     session_dir = get_session_dir(storage_path, project_name, session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
     meta_path = session_dir / "session_meta.json"
     tmp = meta_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    tmp.rename(meta_path)
+    tmp.replace(meta_path)
 
 
 def list_sessions(storage_path: str, project_name: str) -> list[dict]:

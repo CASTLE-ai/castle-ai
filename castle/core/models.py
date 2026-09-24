@@ -40,6 +40,14 @@ def _hub_repo(name: str) -> str:
     return f'{base}:{ref}' if ref else base
 
 
+# torch.hub only accepts a ref that is currently a branch/tag head; a pinned
+# commit stops validating as soon as upstream main moves (fresh machines then
+# fail with "Cannot find <sha>"). The validation also calls the GitHub API,
+# which rate-limits a classroom sharing one IP. The zipball download itself
+# works for any commit, so skip the check.
+_HUB_KWARGS = dict(trust_repo=True, skip_validation=True)
+
+
 def _verify_ckpt_sha256(path, expected: str) -> None:
     """Raise if the checkpoint at *path* does not match *expected* SHA-256.
 
@@ -288,7 +296,7 @@ class DINOv2Encoder(VisualEncoder):
     def load_model(self):
         repo = _hub_repo('dinov2')
         logger.info(f"Loading DINOv2: {self.model_name} from {repo}")
-        self.model = torch.hub.load(repo, self.model_name, trust_repo=True)
+        self.model = torch.hub.load(repo, self.model_name, **_HUB_KWARGS)
         self.model.eval().to(self.device)
 
     def preprocess_batch(self, frame_batch, mask_batch, roi_id):
@@ -407,7 +415,7 @@ class DINOv3Encoder(VisualEncoder):
         # 2. Create Model Architecture (Hub, pinned commit)
         repo = _hub_repo('dinov3')
         try:
-            self.model = torch.hub.load(repo, self.model_type, pretrained=False, trust_repo=True)
+            self.model = torch.hub.load(repo, self.model_type, pretrained=False, **_HUB_KWARGS)
         except Exception as e:
             raise RuntimeError(f"Failed to load DINOv3 from torch.hub ({repo})") from e
 

@@ -40,6 +40,10 @@ termcolor>=2.0,<4.0
 # Cross-platform file locking (concurrency safety for project config & preprocess sessions)
 filelock>=3.12,<4.0
 
+# Free-RAM check before CPU extraction (castle/core/memory_guard.py); without it
+# the guard silently reports "no risk" and a large batch can exhaust RAM.
+psutil>=5.9,<8.0
+
 # Download
 gdown>=4.6,<6.0
 

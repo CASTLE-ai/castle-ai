@@ -1,168 +1,90 @@
-My environment:
-NVIDIA-SMI 565.57.01              Driver Version: 565.57.01      CUDA Version: 12.7  
+# Installing CASTLE
 
-Python 3.10.12
+One command installs the current CASTLE (the `dev` branch) into a single folder:
+the source code, its own Python 3.10 environment (`.venv`), and the three model
+checkpoints (`ckpt`, about 1 GB). The installer detects your operating system and
+GPU and chooses the matching PyTorch build — there is nothing to select.
 
-Linux raiso-nang-dorm 5.15.0-136-generic #147-Ubuntu SMP Sat Mar 15 15:53:30 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux
+Installing through an AI assistant (Claude Code, Codex, …)? Give it
+[AGENTS.md](AGENTS.md).
 
-Package                  Version
------------------------- ------------
-aiofiles                 24.1.0
-annotated-types          0.7.0
-anyio                    4.10.0
-av                       12.1.0
-Brotli                   1.1.0
-cachetools               6.2.0
-certifi                  2025.8.3
-charset-normalizer       3.4.3
-click                    8.2.1
-cloudpickle              3.1.1
-contourpy                1.3.2
-cuda-bindings            12.9.2
-cuda-pathfinder          1.2.1
-cuda-python              12.9.2
-cudf-cu12                25.8.0
-cuml-cu12                25.8.0
-cupy-cuda12x             13.6.0
-cuvs-cu12                25.8.0
-cycler                   0.12.1
-dask                     2025.7.0
-dask-cuda                25.8.0
-dask-cudf-cu12           25.8.0
-distributed              2025.7.0
-distributed-ucxx-cu12    0.45.1
-exceptiongroup           1.3.0
-fastapi                  0.116.1
-fastrlock                0.8.3
-ffmpy                    0.6.1
-filelock                 3.19.1
-fonttools                4.59.2
-fsspec                   2025.7.0
-gradio                   5.44.1
-gradio_client            1.12.1
-groovy                   0.1.2
-h11                      0.16.0
-h5py                     3.14.0
-hf-xet                   1.1.9
-httpcore                 1.0.9
-httpx                    0.28.1
-huggingface-hub          0.34.4
-idna                     3.10
-importlib_metadata       8.7.0
-iniconfig                2.1.0
-Jinja2                   3.1.6
-joblib                   1.5.2
-kiwisolver               1.4.9
-libcudf-cu12             25.8.0
-libcuml-cu12             25.8.0
-libcuvs-cu12             25.8.0
-libkvikio-cu12           25.8.0
-libraft-cu12             25.8.0
-librmm-cu12              25.8.0
-libucx-cu12              1.18.1
-libucxx-cu12             0.45.1
-llvmlite                 0.44.0
-locket                   1.0.0
-markdown-it-py           4.0.0
-MarkupSafe               3.0.2
-matplotlib               3.10.6
-mdurl                    0.1.2
-mpmath                   1.3.0
-msgpack                  1.1.1
-narwhals                 2.2.0
-natsort                  8.4.0
-networkx                 3.3
-numba                    0.61.2
-numba-cuda               0.14.1
-numpy                    2.2.6
-nvidia-cublas-cu12       12.6.4.1
-nvidia-cuda-cccl-cu12    12.9.27
-nvidia-cuda-cupti-cu12   12.6.80
-nvidia-cuda-nvcc-cu12    12.9.86
-nvidia-cuda-nvrtc-cu12   12.6.77
-nvidia-cuda-runtime-cu12 12.6.77
-nvidia-cudnn-cu12        9.10.2.21
-nvidia-cufft-cu12        11.3.0.4
-nvidia-cufile-cu12       1.11.1.6
-nvidia-curand-cu12       10.3.7.77
-nvidia-cusolver-cu12     11.7.1.2
-nvidia-cusparse-cu12     12.5.4.2
-nvidia-cusparselt-cu12   0.7.1
-nvidia-ml-py             12.575.51
-nvidia-nccl-cu12         2.27.3
-nvidia-nvjitlink-cu12    12.6.85
-nvidia-nvtx-cu12         12.6.77
-nvtx                     0.2.13
-opencv-python            4.12.0.88
-orjson                   3.11.3
-packaging                25.0
-pandas                   2.3.2
-partd                    1.4.2
-pillow                   11.3.0
-pip                      22.0.2
-plotly                   6.3.0
-pluggy                   1.6.0
-psutil                   7.0.0
-pyarrow                  19.0.1
-pydantic                 2.11.7
-pydantic_core            2.33.2
-pydub                    0.25.1
-Pygments                 2.19.2
-pylibcudf-cu12           25.8.0
-pylibraft-cu12           25.8.0
-pynndescent              0.5.13
-pynvjitlink-cu12         0.7.0
-pynvml                   12.0.0
-pyparsing                3.2.3
-pytest                   8.4.1
-python-dateutil          2.9.0.post0
-python-multipart         0.0.20
-pytz                     2025.2
-PyYAML                   6.0.2
-raft-dask-cu12           25.8.0
-rapids-dask-dependency   25.8.0
-rapids-logger            0.1.1
-requests                 2.32.5
-rich                     14.1.0
-rmm-cu12                 25.8.0
-ruff                     0.12.11
-safehttpx                0.1.6
-scikit-learn             1.7.1
-scipy                    1.15.3
-semantic-version         2.10.0
-setuptools               59.6.0
-shellingham              1.5.4
-six                      1.17.0
-sniffio                  1.3.1
-sortedcontainers         2.4.0
-starlette                0.47.3
-sympy                    1.13.3
-tblib                    3.1.0
-threadpoolctl            3.6.0
-tomli                    2.2.1
-tomlkit                  0.13.3
-toolz                    1.0.0
-torch                    2.8.0+cu126
-torchvision              0.23.0+cu126
-tornado                  6.5.2
-tqdm                     4.67.1
-treelite                 4.4.1
-triton                   3.4.0
-typer                    0.17.3
-typing_extensions        4.15.0
-typing-inspection        0.4.1
-tzdata                   2025.2
-ucx-py-cu12              0.45.0
-ucxx-cu12                0.45.1
-umap-learn               0.5.9.post2
-urllib3                  2.5.0
-uvicorn                  0.35.0
-websockets               15.0.1
-zict                     3.0.0
+Requirements: internet access, about 5 GB of free disk space (about 10 GB with an NVIDIA GPU), and 16 GB of RAM
+recommended ([details](docs/getting-started/gpu-requirements.md)). An NVIDIA GPU is
+optional; without one CASTLE runs on the CPU, only more slowly.
 
----
+## Step 1 — Install
 
-## Troubleshooting: clustering / UMAP is slow on a large prepared cache
+**Windows** — open *PowerShell* (Start menu → type `PowerShell`) and paste:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.ps1 | iex"
+```
+
+**macOS / Linux** — open *Terminal* and paste:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.sh | bash
+```
+
+**It worked if** the last line is:
+
+```text
+CASTLE_INSTALL_RESULT=OK
+```
+
+The default install folder is `castle` in your home folder
+(`C:\Users\<you>\castle` on Windows, `~/castle` on macOS/Linux). If the last line
+says `STOPPED` or `FAIL`, see [Troubleshooting](#troubleshooting).
+
+## Step 2 — Start CASTLE
+
+**Windows** (PowerShell):
+
+```powershell
+cd $env:USERPROFILE\castle
+.\.venv\Scripts\python.exe app.py
+```
+
+**macOS / Linux**:
+
+```bash
+cd ~/castle && ./.venv/bin/python app.py
+```
+
+**It worked if** the window shows `Running on local URL:`. Then open **http://127.0.0.1:7860** in your browser. Keep the window open while
+you use CASTLE; closing it stops CASTLE.
+
+If you installed into another folder, `cd` into that folder instead.
+
+## Installer options
+
+Set these before the install command (Windows: in the same PowerShell window;
+macOS/Linux: append after `bash -s --`).
+
+| What | Windows | macOS / Linux |
+|---|---|---|
+| Install into another folder | `$env:CASTLE_INSTALL_DIR = "C:\castle"` | `... \| bash -s -- --install-dir /path/to/castle` |
+| Force CPU (ignore the GPU) | `$env:CASTLE_CPU_ONLY = "1"` | `... \| bash -s -- --cpu-only` |
+| Skip the model download | `$env:CASTLE_NO_CHECKPOINTS = "1"` | `... \| bash -s -- --no-checkpoints` |
+| Uninstall (keeps `projects`) | `$env:CASTLE_UNINSTALL = "1"` | `... \| bash -s -- --uninstall` |
+
+Running the installer again updates CASTLE to the latest `dev` version. Your
+`projects` folder and the downloaded checkpoints are kept.
+
+## Troubleshooting
+
+| Symptom | What to do |
+|---|---|
+| Last line `CASTLE_INSTALL_RESULT=STOPPED`, message about non-English characters | Your home folder path contains e.g. Chinese characters, which some video tools cannot handle. Pick an English-only folder (recommended) and run again, e.g. Windows: `$env:CASTLE_INSTALL_DIR = "C:\castle"`, then the install command. To keep the suggested folder anyway, set it the same way to that folder. |
+| `These model files could not be downloaded` | Google Drive limits how often a file is downloaded. Open the listed links in a browser, save the files into the `ckpt` folder inside the install folder, and run the installer again (it checks the files and continues). |
+| `uv installation failed` or `Could not download` | Check the internet connection (some school or company networks block GitHub or astral.sh) and run the command again. |
+| The browser cannot open `http://0.0.0.0:7860` | Use **http://127.0.0.1:7860** instead. |
+| Windows Firewall asks about Python when CASTLE starts | Either answer works; CASTLE on your own computer is not affected. |
+| `Unsupported video: variable frame rate (VFR)` when adding a video | CASTLE only supports constant-frame-rate video. Re-export the video with a constant frame rate, then add it again. |
+| A project or behavior name is refused | Names cannot contain `\ / : * ? " < > \|`, end with a period or space, or be a Windows device name such as `CON`. |
+| Tracking or extraction is slow | Expected without an NVIDIA GPU. As a rough guide, a 6-second 500×500 clip took about 7 minutes to track and 12 minutes to extract on a 4-core CPU. |
+
+### Clustering / UMAP is slow on a large prepared cache (NVIDIA GPU)
 
 On a large prepared cache (~1M datapoints) the first UMAP can take many minutes.
 This is almost always **scale, not a CPU fallback** — GPU UMAP is running, it just
@@ -182,8 +104,6 @@ libraries. So on a typical `*-cu12` pip install that has both torch and cuML,
   changes the embedding on big data.
 - `n_neighbors`: 100 → 30–50.
 - Explore `k'`: use fewer PCA dimensions.
-
----
 
 ### Rare case: cuML genuinely can't import → CPU fallback
 
@@ -208,19 +128,16 @@ older system CUDA (e.g. `/usr/local/cuda` → CUDA 11) so cuML resolves the wron
 
 ```bash
 # prepend the venv's nvidia-wheel lib dirs so the matched cu12 libs win
-export LD_LIBRARY_PATH="$(find "$VIRTUAL_ENV/lib"/python*/site-packages/nvidia -name lib -type d | tr '\n' ':')$LD_LIBRARY_PATH"
-python app.py
+cd ~/castle
+export LD_LIBRARY_PATH="$(find .venv/lib/python*/site-packages/nvidia -name lib -type d | tr '\n' ':')$LD_LIBRARY_PATH"
+./.venv/bin/python app.py
 ```
 
 Prefer this over deleting/upgrading the system CUDA: the venv already ships a
 complete, version-matched CUDA 12 stack, so it doesn't need the system toolkit
 at all, and touching `/usr/local/cuda` can break other projects pinned to it.
 
-**conda / Docker installs** generally don't hit this — conda puts the CUDA libs
-in the env's `lib/` (already on the path), and the RAPIDS Docker images set it up
-correctly.
+## For developers
 
-**No GPU?** That's fine — CASTLE runs on CPU. For large prepared caches, lower the
-UMAP `n_epochs` (the presets use 5000; ~500 is plenty), `n_neighbors`, and the
-Explore `k'` to keep CPU UMAP tractable.
-zipp                     3.23.0
+To work on CASTLE itself (editable install, tests, linting), see
+[CONTRIBUTING.md](CONTRIBUTING.md).

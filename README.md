@@ -24,7 +24,7 @@
 
 📚 **Full documentation**: [castle-ai.github.io/castle-ai](https://castle-ai.github.io/castle-ai/)
 
-- [Installation Guide](https://castle-ai.github.io/castle-ai/getting-started/installation/)
+- [Installation Guide](https://github.com/CASTLE-ai/castle-ai/blob/dev/INSTALLATION.md)
 - [Quick Start](https://castle-ai.github.io/castle-ai/getting-started/quickstart/)
 - [Tutorials](https://castle-ai.github.io/castle-ai/tutorials/overview/)
 - [API Reference](https://castle-ai.github.io/castle-ai/reference/api/)
@@ -78,84 +78,20 @@
 
 ## Quick Start
 
-### Option 1 (Colab)
-[![Open In Colab (free accounts are vary slow)](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/CASTLE-ai/castle-ai/blob/main/notebooks/colab.ipynb)
-[![CASTLE Quick start @Colab](https://img.shields.io/badge/YouTube-CASTLE%20Demo-red?logo=youtube)](https://youtu.be/qzZlixEaKvQ)
+Install the current version (Windows: paste into PowerShell):
 
-### Option 2 (Local Installation)
-
-1.  **Clone & Environment**:
-    ```bash
-    git clone https://github.com/CASTLE-ai/castle-ai.git
-    cd castle-ai
-    python -m venv .venv
-    source .venv/bin/activate
-    pip install -r requirements.txt
-    ```
-
-2.  **Download Checkpoints**:
-    Sometime the ckpt download may be blocked by Google. So you can download the models from the web by copying the links to the Chrome browser and downloading them.
-    ```text
-    https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
-    https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_reg4_pretrain.pth
-    https://drive.google.com/file/d/1g4E-F0RPOx9Nd6J7tU9AE1TjsouL4oZq/edit
-    https://drive.google.com/file/d/1QoChMkTVxdYZ_eBlZhK2acq9KMQZccPJ/edit
-    ```
-    Alternatively, you can use the download_ckpt.sh script:
-    ```bash
-    ./download_ckpt.sh
-    ```
-    Format:
-    ```text
-    castle-ai
-    ├── castle
-    └── ckpt
-        ├── dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth   # default encoder (DINOv3)
-        ├── dinov2_vitb14_reg4_pretrain.pth                # optional DINOv2 alternative
-        ├── R50_DeAOTL_PRE_YTB_DAV.pth
-        ├── sam_vit_b_01ec64.pth
-        └── SwinB_DeAOTL_PRE_YTB_DAV.pth
-    ```
-    > **Note:** The current default encoder is **DINOv3** (`dinov3_vitb16`); its checkpoint is fetched automatically on first use (Google Drive via `gdown`). DINOv2 (`dinov2_vitb14_reg4_pretrain`) remains a selectable alternative.
-
-### Option 3 (Docker — GPU recommended)
-
-> **Requirements**: [Docker](https://docs.docker.com/get-docker/) ≥ 24, and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) for GPU mode.
-
-#### GPU (recommended)
-
-```bash
-# Pull or build
-git clone https://github.com/CASTLE-ai/castle-ai.git && cd castle-ai
-
-# Build + run with GPU support
-docker compose up --build
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.ps1 | iex"
 ```
 
-The Gradio UI will be available at [http://localhost:7860](http://localhost:7860).  
-Model checkpoints are downloaded automatically on first start and cached in a Docker volume.
-
-#### CPU-only (no NVIDIA GPU required)
+macOS / Linux (paste into Terminal):
 
 ```bash
-docker compose -f docker-compose.cpu.yml up --build
+curl -fsSL https://raw.githubusercontent.com/CASTLE-ai/castle-ai/dev/install.sh | bash
 ```
 
-#### Quick one-liner (pre-built image)
-
-```bash
-# GPU (recommended)
-docker run --gpus all -p 7860:7860 -v $(pwd)/projects:/data castle-ai/castle
-
-# CPU only
-docker run -p 7860:7860 -v $(pwd)/projects:/data castle-ai/castle:cpu
-```
-
-#### Pre-embed checkpoints at build time (~4 GB larger image, zero first-run delay)
-
-```bash
-docker build --build-arg DOWNLOAD_CKPT=1 -t castle-ai/castle .
-```
+Step-by-step guide, options and troubleshooting: [INSTALLATION.md](https://github.com/CASTLE-ai/castle-ai/blob/dev/INSTALLATION.md).
+Installing through an AI assistant: [AGENTS.md](https://github.com/CASTLE-ai/castle-ai/blob/dev/AGENTS.md).
 
 ---
 

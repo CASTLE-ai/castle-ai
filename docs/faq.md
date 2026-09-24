@@ -47,7 +47,7 @@
 **Solutions**:
 
 1. Ensure you're in the correct virtual environment
-2. Reinstall dependencies: `pip install -r requirements.txt`
+2. Run the installer again — it repairs the environment ([INSTALLATION.md](https://github.com/CASTLE-ai/castle-ai/blob/dev/INSTALLATION.md))
 3. Check you're running from the repository root (not a subdirectory)
 
 ---

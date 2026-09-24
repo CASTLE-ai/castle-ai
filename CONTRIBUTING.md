@@ -10,7 +10,7 @@ Thanks for helping improve CASTLE! This guide covers contributing **code** and
 CASTLE targets **Python ≥ 3.10**.
 
 ```bash
-git clone https://github.com/CASTLE-ai/castle-ai.git
+git clone -b dev https://github.com/CASTLE-ai/castle-ai.git
 cd castle-ai
 python -m venv .venv && source .venv/bin/activate
 

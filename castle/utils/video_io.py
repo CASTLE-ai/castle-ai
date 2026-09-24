@@ -125,6 +125,13 @@ class VideoIO:
         """
         return video.get_frame(frame_idx)
         
+# Forward gaps up to this many frames are decoded through instead of seeking.
+# A seek restarts decoding at the previous keyframe (often 1-10 s back), so
+# decoding a few frames forward is cheaper for strided reads (every bin_size-th
+# frame) such as the annotator grid video.
+_MAX_FORWARD_DECODE = 32
+
+
 class VideoReader:
     """
     影片讀取器
@@ -293,12 +300,19 @@ class VideoReader:
             except Exception as e:
                 raise RuntimeError(f"直接讀取影格 0 失敗: {e}")
 
-        # 檢索是否為順序讀取
-        if frame_index == self._current_index + 1:
+        # 檢索是否為順序讀取（或往後跳幾格）：直接往下解碼，比 seek 回關鍵影格再解碼快。
+        # 以 bin_size 取樣（每 N 格取 1 格）的讀取者因此不必每格都 seek。
+        gap = frame_index - self._current_index
+        if 0 < gap <= _MAX_FORWARD_DECODE:
             try:
-                frame = next(self.container.decode(self.video_stream))
+                decoder = self.container.decode(self.video_stream)
+                for _ in range(gap):
+                    frame = next(decoder)
                 self._current_index = frame_index
-                return frame.to_rgb().to_ndarray()
+                # 往後跳多格時確認落點正確（時間戳推算的格號），不對就改用 seek
+                if gap == 1 or frame.pts is None or int(frame.pts * self.pts2index) == frame_index:
+                    return frame.to_rgb().to_ndarray()
+                logger.debug(f"往下解碼到影格 {frame_index} 時落點不符，改用 seek 方式")
             except (StopIteration, av.error.EOFError):
                 # 順序讀取失敗（到達檔案結尾或其他原因），改用 seek 方式
                 logger.debug(f"順序讀取影格 {frame_index} 失敗，改用 seek 方式")

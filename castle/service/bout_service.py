@@ -467,6 +467,11 @@ def generate_grid_video(
                 rng = (0, total_bins)
         cell_ranges.append(rng)
 
+    # One reader per cell: frames are written row-by-row across all cells, so a
+    # shared reader would seek back and forth between bouts on every frame.
+    # With its own reader each cell only decodes forward.
+    cell_readers: List[Dict[str, Any]] = [{} for _ in selected]
+
     for frame_offset in range(n_frames):
         grid_rows_imgs = []
         for row in range(grid_cols):
@@ -479,7 +484,9 @@ def generate_grid_video(
                     bin_idx = centre - half_len + frame_offset
                     cell_lo, cell_hi = cell_ranges[cell_idx]
                     if cell_lo <= bin_idx < cell_hi:
-                        frame = get_annotator_frame(annotator_data, int(bin_idx))
+                        frame = get_annotator_frame(
+                            annotator_data, int(bin_idx), readers=cell_readers[cell_idx],
+                        )
                     else:
                         frame = None
 
@@ -547,6 +554,12 @@ def generate_grid_video(
         writer.write(grid_frame)
 
     writer.release()
+    for _readers in cell_readers:
+        for _r in _readers.values():
+            try:
+                _r.close()
+            except Exception:  # noqa: BLE001 — cleanup only
+                pass
     for _h in _mask_cache.values():
         if _h is not None:
             try:

@@ -138,3 +138,18 @@ def test_add_video_rejects_vfr(tmp_path) -> None:
     ok, msg = add_video_to_project(str(tmp_path), "proj", str(path), "vfr.mp4")
     assert not ok
     assert "variable frame rate" in msg
+
+
+def test_strided_forward_reads_match_fresh_seeks(tmp_path) -> None:
+    """Reading every 3rd frame (forward-decode path) returns the same frames as
+    opening a fresh reader per index (seek path)."""
+    from castle.utils.video_io import VideoReader
+
+    path = tmp_path / "cfr.mp4"
+    _write_video_with_pts(path, [int(i * 1000 / 30) for i in range(60)])
+
+    with VideoReader(path) as reader:
+        strided = {i: reader[i] for i in range(1, 60, 3)}
+    for i in (1, 22, 58):
+        with VideoReader(path) as fresh:
+            np.testing.assert_array_equal(strided[i], fresh[i])

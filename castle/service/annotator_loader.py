@@ -393,6 +393,7 @@ def _load_cluster_from_time_series(
 def get_annotator_frame(
     annotator_data: "AnnotatorData",
     bin_idx: int,
+    readers: Optional[Dict[str, VideoReader]] = None,
 ) -> Optional[np.ndarray]:
     """Return the representative video frame for a given global bin index.
 
@@ -407,6 +408,10 @@ def get_annotator_frame(
     Args:
         annotator_data: Loaded :class:`AnnotatorData` instance.
         bin_idx: Global bin index (0-based).
+        readers: Optional caller-owned ``{video_path: VideoReader}`` dict used
+            instead of the shared cache, so a caller reading several
+            interleaved streams (the grid video's cells) gives each its own
+            reader that only ever moves forward. The caller closes them.
 
     Returns:
         Frame as ``(H, W, 3)`` uint8 numpy array, or *None* on failure.
@@ -427,7 +432,7 @@ def get_annotator_frame(
             return None
         video_path = os.path.join(annotator_data.source_path, video_name)
         try:
-            reader = _get_cached_reader(annotator_data, video_path)
+            reader = _reader_for(annotator_data, video_path, readers)
             return reader.get_frame(frame_idx)
         except Exception as exc:
             logger.warning("Frame read failed for %s[%d]: %s", video_name, frame_idx, exc)
@@ -446,7 +451,7 @@ def get_annotator_frame(
         frame_idx = remaining * bin_size + bin_size // 2
 
         try:
-            reader = _get_cached_reader(annotator_data, video_path)
+            reader = _reader_for(annotator_data, video_path, readers)
             return reader.get_frame(frame_idx)
         except Exception as exc:
             logger.error(
@@ -460,6 +465,19 @@ def get_annotator_frame(
         len(annotator_data.cluster),
     )
     return None
+
+
+def _reader_for(
+    annotator_data: "AnnotatorData",
+    video_path: str,
+    readers: Optional[Dict[str, VideoReader]],
+) -> VideoReader:
+    """The caller's own reader for *video_path* if a dict is given, else the shared cache."""
+    if readers is None:
+        return _get_cached_reader(annotator_data, video_path)
+    if video_path not in readers:
+        readers[video_path] = VideoReader(video_path)
+    return readers[video_path]
 
 
 def _get_cached_reader(annotator_data: "AnnotatorData", video_path: str) -> VideoReader:

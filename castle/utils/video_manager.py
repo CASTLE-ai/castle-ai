@@ -50,6 +50,15 @@ def add_video_to_project(storage_path, project_name, video_source_path, video_na
         if video_name in config['source']:
             return False, "Video already exists in this project"
         
+        # Reject videos whose frames the reader cannot index (VFR beyond ±1
+        # frame) up front, instead of failing after tracking has already run.
+        from castle.utils.video_io import find_unindexable_frame
+        if find_unindexable_frame(video_source_path) is not None:
+            return False, (
+                "Unsupported video: variable frame rate (VFR). "
+                "CASTLE only supports constant-frame-rate videos."
+            )
+
         # Create sources directory if not exists
         source_dir_path = os.path.join(project_path, 'sources')
         os.makedirs(source_dir_path, exist_ok=True)

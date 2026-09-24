@@ -574,6 +574,32 @@ class VideoReader:
             logger.error(f"關閉影片讀取器時發生錯誤: {e}")
 
 
+def find_unindexable_frame(video_path: Union[str, Path]) -> Optional[int]:
+    """Return the first frame index :class:`VideoReader` cannot locate, or ``None``.
+
+    ``VideoReader`` serves index ``i`` (``0 <= i < stream.frames``) with the
+    frame whose ``int(pts * time_base * average_rate)`` is within ±1 of ``i``.
+    Variable-frame-rate (VFR) videos whose timestamps drift further than that
+    break random access mid-pipeline (typically during latent extraction). This
+    applies the same rule to packet timestamps only (no decoding), so mild VFR
+    that the reader tolerates still passes.
+    """
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        if not stream.average_rate or stream.time_base is None:
+            return None  # nothing to compare against; leave it to the reader
+        pts2index = stream.time_base * stream.average_rate
+        indices = {
+            int(pkt.pts * pts2index) for pkt in container.demux(stream)
+            if pkt.pts is not None and pkt.size > 0
+        }
+        n_frames = stream.frames or len(indices)
+    for i in range(n_frames):
+        if not ({i - 1, i, i + 1} & indices):
+            return i
+    return None
+
+
 class VideoWriter:
     """
     影片寫入器

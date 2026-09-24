@@ -82,3 +82,59 @@ def test_writer_roundtrip(tmp_path) -> None:
     # Codec rounding tolerance ±10
     assert abs(first_green - 40) < 15
     assert abs(last_green - 200) < 15
+
+
+def _write_video_with_pts(path, pts_ms) -> None:
+    """Encode 32x32 frames at the given millisecond timestamps (VFR if uneven)."""
+    import av
+    from fractions import Fraction
+
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("libx264", rate=30)
+        stream.width = stream.height = 32
+        stream.pix_fmt = "yuv420p"
+        stream.codec_context.time_base = Fraction(1, 1000)
+        for i, t in enumerate(pts_ms):
+            img = np.full((32, 32, 3), (i * 3) % 256, dtype=np.uint8)
+            frame = av.VideoFrame.from_ndarray(img, format="rgb24")
+            frame.pts = t
+            frame.time_base = Fraction(1, 1000)
+            for pkt in stream.encode(frame):
+                container.mux(pkt)
+        for pkt in stream.encode():
+            container.mux(pkt)
+
+
+def test_find_unindexable_frame_accepts_constant_rate(synthetic_video) -> None:
+    from castle.utils.video_io import find_unindexable_frame
+
+    assert find_unindexable_frame(synthetic_video) is None
+
+
+def test_find_unindexable_frame_matches_reader_on_vfr(tmp_path) -> None:
+    """A burst of dense frames followed by sparse ones is flagged at the same
+    index where VideoReader random access actually fails."""
+    from castle.utils.video_io import VideoReader, find_unindexable_frame
+
+    path = tmp_path / "vfr.mp4"
+    _write_video_with_pts(path, [10 * i for i in range(50)] + [500 + 500 * i for i in range(20)])
+
+    bad = find_unindexable_frame(path)
+    assert bad is not None
+    with VideoReader(path) as reader:
+        with pytest.raises(Exception):
+            reader[bad]
+
+
+def test_add_video_rejects_vfr(tmp_path) -> None:
+    from castle.utils.video_manager import add_video_to_project
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "config.json").write_text('{"source": []}', encoding="utf-8")
+    path = tmp_path / "vfr.mp4"
+    _write_video_with_pts(path, [10 * i for i in range(50)] + [500 + 500 * i for i in range(20)])
+
+    ok, msg = add_video_to_project(str(tmp_path), "proj", str(path), "vfr.mp4")
+    assert not ok
+    assert "variable frame rate" in msg

@@ -3,39 +3,46 @@ os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 import platform
 import atexit
 from argparse import ArgumentParser
-import gradio as gr
-from castle.ui import create_ui
-from castle.ui.main_ui import CASTLE_JS, CASTLE_CSS
 
 # System configuration
 OS_SYS = platform.uname().system
 COLAB_GPU = 'COLAB_GPU' in os.environ
 
-# Seed all global RNGs at startup so GUI-driven runs are reproducible by default
-# (honours CASTLE_SEED; mirrors the CLI's --seed). This does NOT lock UMAP — the
-# Behavior Microscope keeps its own per-stage seed / re-roll control.
-from castle.core.seed import set_global_seed
-try:
-    _CASTLE_SEED = int(os.environ.get('CASTLE_SEED', '42'))
-except ValueError:
-    _CASTLE_SEED = 42
-set_global_seed(_CASTLE_SEED)
+# Windows starts DataLoader/ProcessPool workers with *spawn*, which re-imports
+# this file as ``__mp_main__`` in every worker. Without this guard each worker
+# re-imports Gradio, re-parses argv and rebuilds the whole UI — slow, and enough
+# extra RAM per worker to push an 8 GB laptop into swap. Imports by uvicorn/gunicorn
+# (``__name__ == 'app'``) and direct runs still build the app as before.
+if __name__ != '__mp_main__':
+    import gradio as gr
+    from castle.ui import create_ui
+    from castle.ui.main_ui import CASTLE_JS, CASTLE_CSS
 
-# Parse command line arguments
-parser = ArgumentParser()
-parser.add_argument("--root", dest="root")
-parser.add_argument("--share", action="store_true", default=False, 
-                    help="Share the Gradio app via public URL")
-args = parser.parse_args()
+    # Seed all global RNGs at startup so GUI-driven runs are reproducible by default
+    # (honours CASTLE_SEED; mirrors the CLI's --seed). This does NOT lock UMAP — the
+    # Behavior Microscope keeps its own per-stage seed / re-roll control.
+    from castle.core.seed import set_global_seed
+    try:
+        _CASTLE_SEED = int(os.environ.get('CASTLE_SEED', '42'))
+    except ValueError:
+        _CASTLE_SEED = 42
+    set_global_seed(_CASTLE_SEED)
 
-# Create application
-app = create_ui(OS_SYS, args.root)
+    # Parse command line arguments
+    parser = ArgumentParser()
+    parser.add_argument("--root", dest="root")
+    parser.add_argument("--share", action="store_true", default=False, 
+                        help="Share the Gradio app via public URL")
+    args = parser.parse_args()
 
-# Enable the Gradio queue at module scope.  Generators, gr.Progress(), and
-# `.then()` chains all require the queue; keeping it inside the __main__
-# guard disabled all streaming whenever app.py was imported by a production
-# server (uvicorn/gunicorn) instead of run directly.
-app.queue(max_size=20)
+    # Create application
+    app = create_ui(OS_SYS, args.root)
+
+    # Enable the Gradio queue at module scope.  Generators, gr.Progress(), and
+    # `.then()` chains all require the queue; keeping it inside the __main__
+    # guard disabled all streaming whenever app.py was imported by a production
+    # server (uvicorn/gunicorn) instead of run directly.
+    app.queue(max_size=20)
 
 
 def _castle_shutdown():

@@ -126,3 +126,45 @@ def open_encoder(out_path: str, fps, w: int, h: int):
             except OSError:
                 pass
     raise RuntimeError(f"no usable video encoder (last error: {last_exc})")
+
+
+def transcode_to_h264(src_path: str, dst_path: str) -> None:
+    """Re-encode *src_path* (e.g. a ``cv2.VideoWriter`` mp4v file) to a
+    browser-playable H.264/yuv420p MP4 at *dst_path* via PyAV.
+
+    PyAV wheels bundle libx264, so unlike shelling out to ``ffmpeg`` this works
+    on machines without ffmpeg on PATH (stock Windows) and never decodes
+    ffmpeg's console output. Raises on failure and removes a partial *dst_path*.
+    """
+    import av  # type: ignore
+    import numpy as np
+
+    in_container = av.open(src_path)
+    out_container = None
+    ok = False
+    try:
+        in_stream = in_container.streams.video[0]
+        w = max(int(in_stream.codec_context.width) & ~1, 2)
+        h = max(int(in_stream.codec_context.height) & ~1, 2)
+        try:
+            fps = float(in_stream.average_rate)
+        except Exception:  # noqa: BLE001
+            fps = 30.0
+        out_container, out_stream, _codec = open_encoder(dst_path, fps, w, h)
+        for frame in in_container.decode(in_stream):
+            rgb = frame.to_rgb().to_ndarray()[:h, :w]
+            vf = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb), format="rgb24")
+            for pkt in out_stream.encode(vf):
+                out_container.mux(pkt)
+        for pkt in out_stream.encode():
+            out_container.mux(pkt)
+        ok = True
+    finally:
+        if out_container is not None:
+            out_container.close()
+        in_container.close()
+        if not ok and os.path.exists(dst_path):
+            try:
+                os.remove(dst_path)
+            except OSError:
+                pass

@@ -7,7 +7,6 @@ A bout is a consecutive sequence of frames assigned to the same cluster.
 
 import os
 import logging
-import subprocess
 import tempfile
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
@@ -19,55 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 def _transcode_to_h264(video_path: str) -> None:
-    """Re-encode *video_path* in-place to H.264 using ffmpeg libx264.
+    """Re-encode *video_path* in-place to H.264 (see ``clip_service.transcode_to_h264``)."""
+    from castle.service.clip_service import transcode_to_h264
 
-    The file is written to a temporary path first, then atomically
-    replaces the original so that a partial failure leaves the mp4v
-    file intact.
-
-    Args:
-        video_path: Path to an MP4 file written with the mp4v codec.
-    """
-    tmp_path = video_path + ".h264tmp.mp4"
-    try:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                video_path,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-crf",
-                "23",
-                "-movflags",
-                "+faststart",
-                tmp_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            os.replace(tmp_path, video_path)
-        else:
-            logger.warning(
-                "ffmpeg H.264 transcode failed for %s (keeping mp4v). stderr: %s",
-                video_path,
-                result.stderr[-300:],
-            )
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-    except FileNotFoundError:
-        logger.warning("ffmpeg not found — keeping mp4v codec for %s", video_path)
-    except Exception as exc:
-        logger.warning("H.264 transcode error for %s: %s", video_path, exc)
-        if os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+    transcode_to_h264(video_path)
 
 
 # find_bouts is a pure bout-segmentation algorithm, so it now lives in
@@ -604,59 +558,22 @@ def generate_grid_video(
         raw_path, len(selected), n_frames,
     )
 
-    # --- Transcode to H.264 ---
+    # --- Transcode to H.264 (PyAV libx264; no ffmpeg binary needed) ---
+    import shutil
+    from castle.core.video_encoder import transcode_to_h264
+
     try:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                raw_path,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-crf",
-                "23",
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+faststart",
-                cache_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            try:
-                os.unlink(raw_path)
-            except OSError:
-                pass
-            logger.info("Grid video transcoded to H.264: %s", cache_path)
-            return cache_path
-        else:
-            logger.warning(
-                "ffmpeg transcode failed (returncode=%d). stderr: %s",
-                result.returncode,
-                result.stderr[-400:],
-            )
-            # Fall back to the raw mp4v file
-            import shutil
-            shutil.copyfile(raw_path, cache_path)
-            try:
-                os.unlink(raw_path)
-            except OSError:
-                pass
-            return cache_path
-    except FileNotFoundError:
-        logger.warning("ffmpeg not found — returning mp4v grid video")
-        import shutil
-        shutil.copyfile(raw_path, cache_path)
+        transcode_to_h264(raw_path, cache_path)
+        logger.info("Grid video transcoded to H.264: %s", cache_path)
+    except Exception as exc:  # noqa: BLE001 — fall back to the raw mp4v file
+        logger.warning("H.264 transcode failed, returning mp4v grid video: %s", exc)
         try:
-            os.unlink(raw_path)
-        except OSError:
-            pass
-        return cache_path
-    except Exception as exc:
-        logger.error("Unexpected error during H.264 transcode: %s", exc)
-        return None
+            shutil.copyfile(raw_path, cache_path)
+        except OSError as copy_exc:
+            logger.error("Could not write grid video %s: %s", cache_path, copy_exc)
+            return None
+    try:
+        os.unlink(raw_path)
+    except OSError:
+        pass
+    return cache_path

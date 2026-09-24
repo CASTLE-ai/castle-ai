@@ -15,7 +15,6 @@ using the same session-selector pattern as ``annotator_ui.py``.
 import logging
 import os
 import shutil
-import subprocess
 import tempfile
 from typing import Optional, Tuple
 
@@ -304,16 +303,12 @@ def generate_ethogram_video(
     chosen = None
     status = "**❌ Video generation failed.**"
     try:
-        ret = subprocess.run(
-            ["ffmpeg", "-y", "-i", raw_path,
-             "-vcodec", "libx264", "-crf", "23", "-pix_fmt", "yuv420p", final_path],
-            capture_output=True, timeout=600,
-        )
-        if ret.returncode == 0 and os.path.exists(final_path):
-            chosen = final_path
-            status = "**✅ Ethogram video ready for download!**"
+        from castle.core.video_encoder import transcode_to_h264
+        transcode_to_h264(raw_path, final_path)
+        chosen = final_path
+        status = "**✅ Ethogram video ready for download!**"
     except Exception as exc:
-        logger.warning("ffmpeg re-encode failed: %s", exc)
+        logger.warning("H.264 re-encode failed: %s", exc)
     if chosen is None and os.path.exists(raw_path):
         chosen = raw_path
         status = "**✅ Ethogram video ready (mp4v fallback).**"

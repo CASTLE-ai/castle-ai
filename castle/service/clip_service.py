@@ -2,7 +2,7 @@
 
 When the user clicks a point in the UMAP scatter plot we render a short
 mp4 around the corresponding frame with the ROI contour overlaid. The
-implementation is pure :mod:`cv2` + ``ffmpeg`` (via subprocess) and was
+implementation is pure :mod:`cv2` + PyAV (H.264 via bundled libx264) and was
 historically tangled into ``castle/ui/cluster_handlers.py``.
 
 This module exposes a single public entry point
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import tempfile
 from typing import Any, Optional, Tuple
 
@@ -33,41 +32,25 @@ __all__ = [
 
 
 def transcode_to_h264(video_path: str) -> None:
-    """Re-encode *video_path* in place to H.264 via ``ffmpeg libx264``.
+    """Re-encode *video_path* in place to H.264 (browser-playable).
 
     Writes to a sibling ``.h264tmp.mp4`` first and then atomically
     replaces the original, so a partial failure leaves the source
-    intact. Tolerant of missing ``ffmpeg`` — logs a warning and leaves
-    the file as-is.
+    intact. Uses PyAV's bundled libx264 (no ``ffmpeg`` binary needed);
+    on failure logs a warning and leaves the file as-is.
 
     Args:
         video_path: Path to an MP4 currently encoded with another codec
             (typically the ``mp4v`` output from :class:`cv2.VideoWriter`).
     """
+    from castle.core.video_encoder import transcode_to_h264 as _av_transcode
+
     tmp_path = video_path + ".h264tmp.mp4"
     try:
-        result = subprocess.run(
-            [
-                "ffmpeg", "-y", "-i", video_path,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                "-movflags", "+faststart",
-                tmp_path,
-            ],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            os.replace(tmp_path, video_path)
-        else:
-            logger.warning(
-                "ffmpeg H.264 transcode failed for %s (keeping mp4v). stderr: %s",
-                video_path, result.stderr[-300:],
-            )
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-    except FileNotFoundError:
-        logger.warning("ffmpeg not found — keeping mp4v codec for %s", video_path)
+        _av_transcode(video_path, tmp_path)
+        os.replace(tmp_path, video_path)
     except Exception as exc:
-        logger.warning("H.264 transcode error for %s: %s", video_path, exc)
+        logger.warning("H.264 transcode error for %s (keeping mp4v): %s", video_path, exc)
         if os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
@@ -253,6 +236,7 @@ def generate_clip_with_roi_overlay(
     play_fps = min(max(float(fps) if fps else float(video_fps), 1.0), 120.0)
     h, w = frames[0].shape[:2]
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp.close()  # only the name is used; an open handle blocks os.replace on Windows
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(tmp.name, fourcc, play_fps, (w, h))
     for fr in frames:
